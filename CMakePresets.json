@@ -1,0 +1,140 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "windows-msvc-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cl.exe",
+                "CMAKE_CXX_COMPILER": "cl.exe"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "x64-msvc-debug",
+            "displayName": "x64 MSVC Debug",
+            "inherits": "windows-msvc-base",
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "x64-msvc-release",
+            "displayName": "x64 MSVC Release",
+            "inherits": "x64-msvc-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "windows-clang-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "x64-clang-debug",
+            "inherits": "windows-clang-base",
+            "displayName": "x64 Clang Debug",
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "x64-clang-release",
+            "inherits": "x64-clang-debug",
+            "displayName": "x64 Clang Release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+          "name": "android-arm64-debug",
+          "displayName": "Android ARM64 Debug",
+          "generator": "Ninja",
+          "binaryDir": "${sourceDir}/build/${presetName}",
+          "installDir": "${sourceDir}/install/${presetName}",
+          "cacheVariables": {
+            "CMAKE_BUILD_TYPE": "Debug",
+            "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+            "ANDROID_ABI": "arm64-v8a",
+            "ANDROID_PLATFORM": "android-24"
+          }
+        },
+        {
+          "name": "android-arm64-release",
+          "inherits": "android-arm64-debug",
+          "displayName": "Android ARM64 Release",
+          "cacheVariables": {
+            "CMAKE_BUILD_TYPE": "Release",
+            "CMAKE_SHARED_LINKER_FLAGS_RELEASE": "-s",
+            "CMAKE_EXE_LINKER_FLAGS_RELEASE": "-s"
+          }
+        },
+        {
+            "name": "linux-debug",
+            "displayName": "Linux Debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "vendor": {
+                "microsoft.com/VisualStudioRemoteSettings/CMake/1.0": {
+                    "sourceDir": "$env{HOME}/.vs/$ms{projectDirName}"
+                }
+            }
+        },
+        {
+            "name": "macos-debug",
+            "displayName": "macOS Debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "vendor": {
+                "microsoft.com/VisualStudioRemoteSettings/CMake/1.0": {
+                    "sourceDir": "$env{HOME}/.vs/$ms{projectDirName}"
+                }
+            }
+        }
+    ]
+}

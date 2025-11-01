@@ -1,0 +1,55 @@
+#include "mcdevtool/addon.h"
+#include <fstream>
+#include <iterator>
+#include <nlohmann/json.hpp>
+
+namespace MCDevTool::Addon {
+    namespace fs = std::filesystem;
+    using json = nlohmann::json;
+
+    // 根据JSON内容解析pack信息
+    void parseJsonPackInfo(std::string_view jsonContent, PackInfo& out) {
+        auto manifestJson = json::parse(jsonContent, nullptr, false, true);
+        if(manifestJson.is_discarded()) {
+            // 解析失败
+            return;
+        }
+        auto header = manifestJson.value("header", json::object());
+        out.name = header.value("name", "");
+        out.uuid = header.value("uuid", "");
+        auto modules = manifestJson.value("modules", json::array());
+        // 包类型判定依据需要通过遍历modules数组匹配
+        for(const auto& module : modules) {
+            auto typeStr = module.value("type", "");
+            if(typeStr == "data") {
+                out.type = PackType::BEHAVIOR;
+                break;
+            } else if(typeStr == "resources") {
+                out.type = PackType::RESOURCE;
+                break;
+            }
+        }
+    }
+
+    // 根据路径解析pack
+    PackInfo parsePackInfo(const fs::path& packPath) {
+        auto manifestPath = packPath / "manifest.json";
+        PackInfo info {
+            .name = "",
+            .uuid = "",
+            .type = PackType::UNKNOWN,
+        };
+    
+        if(!fs::is_directory(packPath) || !fs::is_regular_file(manifestPath)) {
+            // 无效的路径/结构
+            return info;
+        }
+        // 解析JSON
+        std::ifstream manifestFile(manifestPath, std::ios::binary);
+        std::string content((std::istreambuf_iterator<char>(manifestFile)),
+                             std::istreambuf_iterator<char>());
+        manifestFile.close();
+        parseJsonPackInfo(content, info);
+        return info;
+    }
+}

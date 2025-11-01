@@ -1,0 +1,31 @@
+{
+    /**
+        MCDEV配置文件 若不存在字段将以此处默认值为基准
+    **/
+    // 用于包含需要加载的MOD目录(默认值) 允许相对路径和绝对路径(相对路径以工作区为基准)
+    "included_mod_dirs": [
+        "./"
+    ],
+    // 指定游戏exe路径(string)
+    "game_executable_path": "",
+    // 生成的世界种子 若为null则随机生成(null / int)
+    "world_seed": null,
+    // 是否在启动时重置并新生成世界
+    "reset_world": false,
+    // 用于渲染的世界名称 (string)
+    "world_name": "MC_DEV_WORLD",
+    // 目录存档名(ASCII STRING)
+    "world_folder_name": "MC_DEV_WORLD",
+    // 是否附加测试MOD(boolean)，若启用将在生成的世界中包含热更新脚本(R键触发检测)并重定向输出流。
+    "include_test_mod": true,
+    // 是否过滤游戏日志(将过滤部分C++信息)，需配合 include_test_mod 使用
+    "filter_cpp_game_log": true,
+    // 生成的世界类型(0.旧版有限世界 1.无限世界 2.超平坦) (int)
+    "world_type": 1,
+    // 游戏模式(0.生存 1.创造 2.冒险) (int)
+    "game_mode": 1,
+    // 是否启用作弊(boolean)
+    "enable_cheats": true,
+    // 是否死亡不掉落(boolean)
+    "keep_inventory": true
+}
