@@ -1,6 +1,7 @@
 #include "mcdevtool/env.h"
 #include <cstdlib>
 #include <utility>  // std::move
+#include <iostream>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -155,14 +156,18 @@ namespace MCDevTool {
             // if(!std::filesystem::is_symlink(destPath)) {
             //     std::filesystem::create_directory_symlink(sourceDir, destPath);
             // }
-            CREATE_JUNCTION(sourceDir, destPath);
+            if(!CREATE_JUNCTION(sourceDir, destPath)) {
+                std::cerr << "行为包软链接创建失败: " << sourceDir.filename().string() << "\n";
+            }
         } else if(info.type == Addon::PackType::RESOURCE) {
             auto destPath = getResourcePacksPath() / sourceDir.filename();
             // std::filesystem::create_directories(destPath.parent_path());
             // if(!std::filesystem::is_symlink(destPath)) {
             //     std::filesystem::create_directory_symlink(sourceDir, destPath);
             // }
-            CREATE_JUNCTION(sourceDir, destPath);
+            if(!CREATE_JUNCTION(sourceDir, destPath)) {
+                std::cerr << "资源包软链接创建失败: " << sourceDir.filename().string() << "\n";
+            }
         }
         return info;
     }

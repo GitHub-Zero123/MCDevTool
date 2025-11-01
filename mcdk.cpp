@@ -223,7 +223,8 @@ static void startGame(const nlohmann::json& config) {
     auto resPacksManifest = nlohmann::json::array();
     for(const auto& pack : linkedPacks) {
         nlohmann::json packEntry {
-            { "pack_id", pack.uuid }
+            { "pack_id", pack.uuid },
+            { "version", nlohmann::json::parse(pack.version) },
         };
         if(pack.type == MCDevTool::Addon::PackType::BEHAVIOR) {
             behPacksManifest.push_back(std::move(packEntry));

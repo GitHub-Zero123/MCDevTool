@@ -13,10 +13,11 @@ namespace MCDevTool::Addon {
     struct PackInfo {
         std::string name;
         std::string uuid;
+        std::string version;
         PackType type;
 
         explicit operator bool() const {
-            return !uuid.empty() && type != PackType::UNKNOWN;
+            return !uuid.empty() && !version.empty() && type != PackType::UNKNOWN;
         }
     };
 
