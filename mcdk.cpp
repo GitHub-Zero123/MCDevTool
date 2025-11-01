@@ -244,8 +244,10 @@ static void startGame(const nlohmann::json& config) {
 }
 
 int main() {
+#ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+#endif
 
     #ifdef NDEBUG
     try {

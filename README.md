@@ -16,7 +16,7 @@
         {
             "label": "RUN MC DEV",
             "type": "shell",
-            "command": "mcdk",
+            "command": "cmd /c mcdk",
             "group": {
                 "kind": "build",
                 "isDefault": true
