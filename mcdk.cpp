@@ -151,6 +151,38 @@ static std::vector<uint8_t> createUserLevel(const nlohmann::json& config) {
     return levelDat;
 }
 
+// 启动游戏exe并附着终端
+static void launchGameExe(const std::filesystem::path& exePath) {
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(&pi, sizeof(pi));
+
+    // 创建进程
+    if(!CreateProcessA(
+        exePath.string().c_str(),   // 可执行文件路径
+        nullptr,                    // 命令行参数
+        nullptr,                    // 进程属性
+        nullptr,                    // 线程属性
+        FALSE,                      // 是否继承句柄
+        0,                          // 创建标志
+        nullptr,                    // 使用父进程的环境变量
+        nullptr,                    // 使用父进程的工作目录
+        &si,                        // 指向 STARTUPINFO 结构体的指针
+        &pi                         // 指向 PROCESS_INFORMATION 结构体的指针
+    )) {
+        throw std::runtime_error("无法启动游戏可执行文件，CreateProcess失败。");
+    }
+
+    // 等待进程结束
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    // 关闭进程和线程句柄
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+}
+
 // 启动游戏
 static void startGame(const nlohmann::json& config) {
     auto gameExePath = std::filesystem::u8path(config.value("game_executable_path", ""));
@@ -207,6 +239,8 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream resManifestFile(worldsPath / "netease_world_resource_packs.json");
     resManifestFile << resPacksManifest.dump(4);
     resManifestFile.close();
+
+    launchGameExe(gameExePath);
 }
 
 int main() {

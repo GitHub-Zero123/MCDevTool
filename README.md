@@ -29,7 +29,7 @@
                 {
                     "owner": "python",
                     "fileLocation": ["relative", "${workspaceFolder}"],
-                    // 匹配Python异常堆栈信息(该规则可能不准确 仅供参考)
+                    // 匹配Python异常堆栈信息(该规则可能不准确，仅供参考)
                     "pattern": [
                         {
                             "regexp": "  File \"(.*)\", line (\\d+), in .*",
