@@ -7,7 +7,7 @@
 ## 在vscode中使用
 您可以在**vscode**中配置任务以便直接运行**mcdk**，例如：
 
-```json
+```jsonc
 // .vscode/tasks.json
 // 可通过 Ctrl+Shift+B 快捷键执行
 {
@@ -58,7 +58,7 @@
 
 ## mcdev.json 配置参数
 MCDEV配置文件，若不存在字段将以此处默认值为基准。
-```json
+```jsonc
 {
     // 首次运行将会自动生成 .mcdev.json 文件
     // 用于包含需要加载的MOD目录(默认值) 允许相对路径和绝对路径(相对路径以工作区为基准)
