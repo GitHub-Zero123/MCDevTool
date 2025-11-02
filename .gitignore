@@ -365,5 +365,6 @@ FodyWeavers.xsd
 /.idea/
 /.vscode/
 /.vs/
+/.selfTest/
 
 /build/

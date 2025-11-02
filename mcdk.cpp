@@ -23,6 +23,10 @@ static nlohmann::json createDefaultConfig() {
     std::string u8input;
     std::cout << "请输入游戏可执行文件路径：";
     std::getline(std::cin, u8input);
+    if(u8input.size() > 2 && u8input[0] == '"' && u8input[u8input.size() - 1] == '"') {
+        // 字符串形式的路径，去掉头尾部引号
+        u8input = u8input.substr(1, u8input.size() - 2);
+    }
     std::filesystem::path exePath = std::filesystem::u8path(u8input);
     if(!std::filesystem::is_regular_file(exePath)) {
         std::cerr << "路径无效，文件不存在。\n";
@@ -39,6 +43,8 @@ static nlohmann::json createDefaultConfig() {
         {"world_name", "MC_DEV_WORLD"},
         // 世界文件夹名称
         {"world_folder_name", "MC_DEV_WORLD"},
+        // 是否自动进入游戏存档
+        {"auto_join_game", true},
         // 包含调试模组(提供R键热更新以及py输出流标记)
         {"include_debug_mod", true},
         // 世界类型 0-旧版 1-无限 2-平坦
@@ -151,6 +157,79 @@ static std::vector<uint8_t> createUserLevel(const nlohmann::json& config) {
     return levelDat;
 }
 
+#ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
+
+// 启动游戏exe并附着终端
+// static void launchGameExe(const std::filesystem::path& exePath, std::string_view config="") {
+//     STARTUPINFOA si;
+//     PROCESS_INFORMATION pi;
+//     ZeroMemory(&si, sizeof(si));
+//     si.cb = sizeof(si);
+//     ZeroMemory(&pi, sizeof(pi));
+
+//     char* cmdLine = nullptr;
+//     if(!config.empty()) {
+//         std::string configArg = " config=" + std::string(config);
+//         cmdLine = configArg.data();
+//     }
+
+//     // 创建进程
+//     if(!CreateProcessA(
+//         exePath.string().c_str(),   // 可执行文件路径
+//         cmdLine,  // 命令行参数
+//         nullptr,                    // 进程属性
+//         nullptr,                    // 线程属性
+//         FALSE,                      // 是否继承句柄
+//         0,                        // 创建标志
+//         nullptr,                    // 使用父进程的环境变量
+//         nullptr,               // 使用父进程的工作目录
+//         &si,                        // 指向 STARTUPINFO 结构体的指针
+//         &pi                  // 指向 PROCESS_INFORMATION 结构体的指针
+//     )) {
+//         throw std::runtime_error("无法启动游戏可执行文件，CreateProcess失败。");
+//     }
+
+//     // 等待进程结束
+//     WaitForSingleObject(pi.hProcess, INFINITE);
+
+//     // 关闭进程和线程句柄
+//     CloseHandle(pi.hProcess);
+//     CloseHandle(pi.hThread);
+// }
+
+static void launchGameExe(const std::filesystem::path& exePath, std::string_view config="") {
+    STARTUPINFOA si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+
+    std::string cmd = "\"" + exePath.string() + "\"";
+    if (!config.empty()) {
+        cmd += " config=\"" + std::string(config) + "\"";
+    }
+
+    std::vector<char> cmdBuf(cmd.begin(), cmd.end());
+    cmdBuf.push_back('\0');
+
+    if (!CreateProcessA(
+        nullptr,
+        cmdBuf.data(),
+        nullptr, nullptr,
+        FALSE,
+        0,
+        nullptr,
+        exePath.parent_path().string().c_str(),   // ✅ 设置工作目录为游戏目录
+        &si,
+        &pi
+    )) {
+        throw std::runtime_error("无法启动游戏可执行文件，CreateProcess失败。");
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+}
+
+#else
+
 // 启动游戏exe并附着终端
 static void launchGameExe(const std::filesystem::path& exePath) {
     STARTUPINFOA si;
@@ -182,6 +261,8 @@ static void launchGameExe(const std::filesystem::path& exePath) {
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
 }
+
+#endif
 
 // 启动游戏
 static void startGame(const nlohmann::json& config) {
@@ -241,7 +322,29 @@ static void startGame(const nlohmann::json& config) {
     resManifestFile << resPacksManifest.dump(4);
     resManifestFile.close();
 
+#ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
+    auto autoJoinGame = config.value("auto_join_game", true);;
+    if(!autoJoinGame) {
+        launchGameExe(gameExePath);
+        return;
+    }
+    auto configPath = worldsPath / "dev_config.cppconfig";
+    // 创建dev_config
+    nlohmann::json devConfig {
+        // {"version", "3.6.0.129998"},
+        {"world_info", {
+            {"level_id", worldFolderName}
+        }},
+        // 生成自己的path
+        {"path", configPath.generic_string()}
+    };
+    std::ofstream configFile(configPath);
+    configFile << devConfig.dump(4);
+    configFile.close();
+    launchGameExe(gameExePath, configPath.generic_string());
+#else
     launchGameExe(gameExePath);
+#endif
 }
 
 int main() {

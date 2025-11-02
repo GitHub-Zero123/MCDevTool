@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from .QuModLibs.QuMod import *
 from .QuModLibs.Util import QConstInit
+from common.utils import xupdate
 import sys
 lambda: "By Zero123"
 
@@ -14,10 +15,9 @@ class STD_OUT_WRAPPER(object):
         return getattr(self.baseIO, name)
 
     def write(self, text, **args):
-        if isinstance(text, str) and text.strip():
-            self.lastText = text
-            return self.baseIO.write("[Python] " + str(text), **args)
-        return self.baseIO.write(text, **args)
+        if text in ("\n", "\r\n"):
+            return self.baseIO.write(str(text), **args)
+        return self.baseIO.write("[Python] " + str(text), **args)
 
     def close(self):
         return self.baseIO.close()
@@ -54,14 +54,16 @@ def SERVER_INIT():
     from .QuModLibs.Systems.Loader.Server import LoaderSystem
     LoaderSystem.REG_DESTROY_CALL_FUNC(_DESTROY)
 
-def RELOAD_MOD():
+def _RELOAD_MOD():
     import os
-    import gui
-    from common.utils import xupdate
     appdata = os.path.join(os.getenv("APPDATA"), "MinecraftPE_Netease")
     neteasePath = os.path.join(appdata, "games", "com.netease")
     behaviorPath = os.path.join(neteasePath, "behavior_packs")
-    if xupdate.updata_all(behaviorPath):
+    return xupdate.updata_all(behaviorPath)
+
+def RELOAD_MOD():
+    import gui
+    if _RELOAD_MOD():
         gui.set_left_corner_notify_msg("[Dev] Scripts reloaded successfully.")
     else:
         gui.set_left_corner_notify_msg("[Dev] No script updates found.")
@@ -90,3 +92,8 @@ def CLIENT_INIT():
         "OnKeyPressInGame",
         CLOnKeyPressInGame
     )
+
+try:
+    _RELOAD_MOD()
+except:
+    pass

@@ -75,6 +75,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "world_name": "MC_DEV_WORLD",
     // 目录存档名(ASCII STRING)
     "world_folder_name": "MC_DEV_WORLD",
+    // 是否自动进入游戏存档(实验性功能，尚未完善，需另行编译)
+    "auto_join_game": true,
     // 是否附加调试MOD(boolean)，若启用将在生成的世界中包含热更新脚本(R键触发检测)并重定向输出流使其附加[Python]前缀可供筛选搜索。
     "include_debug_mod": true,
     // 生成的世界类型(0.旧版有限世界 1.无限世界 2.超平坦) (int)
