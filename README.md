@@ -19,6 +19,12 @@
             "label": "RUN MC DEV",
             "type": "shell",
             "command": "cmd /c mcdk",
+            // 仅过滤Python相关日志(需启用debug调试mod)
+            // "command": "cmd",
+            // "args": [
+            //     "/c",
+            //     "mcdk 2>&1 | findstr /C:\"[Python] \""
+            // ],
             "group": {
                 "kind": "build",
                 "isDefault": true
