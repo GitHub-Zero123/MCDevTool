@@ -94,7 +94,14 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     // 是否启用作弊(boolean)
     "enable_cheats": true,
     // 是否死亡不掉落(boolean)
-    "keep_inventory": true
+    "keep_inventory": true,
+    // 用户自定义名称(默认"developer")
+    "user_name": "developer",
+    // 用户自定义皮肤信息（默认缺失字段自动生成）
+    "skin_info": {
+        "slim": false,
+        "skin": "完整贴图路径.png"
+    }
 }
 ```
 

@@ -325,17 +325,24 @@ static void startGame(const nlohmann::json& config) {
             resPacksManifest.push_back(std::move(packEntry));
         }
     }
-
-    std::ofstream behManifestFile(worldsPath / "netease_world_behavior_packs.json");;
+    auto autoJoinGame = config.value("auto_join_game", true);
+    std::string targetBehJson = "netease_world_behavior_packs.json";
+    std::string targetResJson = "netease_world_resource_packs.json";
+    if(autoJoinGame) {
+        // 使用国际版标准协议 避免网易串改
+        targetBehJson = "world_behavior_packs.json";
+        targetResJson = "world_resource_packs.json";
+    }
+    std::ofstream behManifestFile(worldsPath / targetBehJson);
     behManifestFile << behPacksManifest.dump(4);
     behManifestFile.close();
 
-    std::ofstream resManifestFile(worldsPath / "netease_world_resource_packs.json");
+    std::ofstream resManifestFile(worldsPath / targetResJson);
     resManifestFile << resPacksManifest.dump(4);
     resManifestFile.close();
 
 #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
-    auto autoJoinGame = config.value("auto_join_game", true);;
+    
     if(!autoJoinGame) {
         launchGameExe(gameExePath);
         return;
@@ -350,7 +357,7 @@ static void startGame(const nlohmann::json& config) {
         {"player_info", {
             {"urs", ""},
             {"user_id", 0},
-            {"user_name", config.value("user_name", "developer")},
+            {"user_name", config.value("user_name", "developer") },
         }},
     };
     if(config.contains("skin_info") && config["skin_info"].is_object()) {
@@ -360,7 +367,7 @@ static void startGame(const nlohmann::json& config) {
         // 自动生成skin_info
         devConfig["skin_info"] = {
             {"slim", false},
-            {"skin", gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png"}
+            {"skin", (gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png").generic_string() }
         };
     }
     std::ofstream configFile(configPath);
