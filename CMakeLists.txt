@@ -23,6 +23,7 @@ add_library(mcdevtool OBJECT
     src/env.cpp
     src/level.cpp
     src/addon.cpp
+    src/utils.cpp
 )
 target_compile_features(mcdevtool PRIVATE cxx_std_23)
 target_compile_definitions(mcdevtool PRIVATE _CRT_SECURE_NO_WARNINGS)

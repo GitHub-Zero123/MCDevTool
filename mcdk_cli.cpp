@@ -5,6 +5,8 @@
 #include "libs/CLI11.hpp"
 
 static void ENV_INFO() {
+    std::cout << "MCStudioDownload: " << MCDevTool::autoSearchMCStudioDownloadGamePath().value_or("").generic_string() << "\n";
+    std::cout << "Minecraft.Windows.exe: " << MCDevTool::autoMatchLatestGameExePath().value_or("").generic_string() << "\n";
     std::cout << "MinecraftPE_Netease: " << MCDevTool::getMinecraftDataPath().generic_string() << "\n";
     std::cout << "games/com.netease: " << MCDevTool::getGamesComNeteasePath().generic_string() << "\n";
     std::cout << "behavior_packs: " << MCDevTool::getBehaviorPacksPath().generic_string() << "\n";
@@ -17,7 +19,7 @@ int MCDK_CLI_PARSE(int argc, wchar_t* argv[]) {
     CLI::App app{"MCDK CLI"};
     app.require_subcommand(1);
 
-    // 定义命令 列出环境信息
+    // 定义命令 列出环境信息B
     app.add_subcommand("envinfo", "列出当前环境信息")->callback([]() {
         ENV_INFO();
     });

@@ -1,4 +1,5 @@
 #include "mcdevtool/env.h"
+#include "mcdevtool/utils.h"
 #include <cstdlib>
 #include <utility>  // std::move
 #include <iostream>
@@ -8,6 +9,20 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winioctl.h>
+
+// 获取所有逻辑驱动器
+static std::vector<std::string> WIN32_GET_ALL_DRIVES() {
+    char buffer[256];
+    DWORD len = GetLogicalDriveStringsA(sizeof(buffer), buffer);
+
+    std::vector<std::string> drives;
+    char* p = buffer;
+    while (*p) {
+        drives.emplace_back(p);
+        p += strlen(p) + 1;
+    }
+    return drives;
+}
 
 // 无需管理员权限 软链接目录
 static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::filesystem::path& link) {
@@ -132,6 +147,80 @@ namespace MCDevTool {
     std::filesystem::path getDependenciesPacksPath() {
         // 依赖包并非官方目录 仅供开发工具使用
         return getGamesComNeteasePath() / "_dependencies_packs";
+    }
+
+#ifdef _WIN32
+    static std::optional<std::filesystem::path> _gamePathCache;
+    static bool _hasNoGamePath = false;
+
+    // 自动搜索MCStudioDownload游戏路径（如果存在）
+    std::optional<std::filesystem::path> autoSearchMCStudioDownloadGamePath() {
+        if(_gamePathCache || _hasNoGamePath) {
+            return _gamePathCache;
+        }
+        auto drives = WIN32_GET_ALL_DRIVES();
+        for (const auto& drive : drives) {
+            std::filesystem::path path = drive + "MCStudioDownload/game/MinecraftPE_Netease";
+            if (std::filesystem::is_directory(path)) {
+                // 遍历子文件夹 匹配存在Minecraft.Windows.exe
+                for (const auto& entry : std::filesystem::directory_iterator(path)) {
+                    if (entry.is_directory()) {
+                        auto exePath = entry.path() / "Minecraft.Windows.exe";
+                        if (std::filesystem::is_regular_file(exePath)) {
+                            _gamePathCache = path;
+                            return path;
+                        }
+                    }
+                }
+            }
+        }
+        _hasNoGamePath = true;
+        return std::nullopt;
+    }
+#else
+    // 自动搜索MCStudioDownload游戏路径（如果存在）
+    std::optional<std::filesystem::path> autoSearchMCStudioDownloadGamePath() {
+        return std::nullopt;
+    }
+#endif
+    static std::optional<std::filesystem::path> _cacheLastestGamePath;
+
+    // 自动匹配最新版本游戏可执行文件路径（如果存在）
+    std::optional<std::filesystem::path> autoMatchLatestGameExePath() {
+        if(_cacheLastestGamePath) {
+            return _cacheLastestGamePath;
+        }
+        auto gamePath = autoSearchMCStudioDownloadGamePath();
+        if(!gamePath) {
+            return std::nullopt;
+        }
+        // 遍历子目录多个版本号文件夹
+        std::optional<std::filesystem::path> latestExePath;
+        MCDevTool::Utils::Version latestVersion;
+        uint64_t latestVersionNum = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(gamePath.value())) {
+            if (entry.is_directory()) {
+                std::string folderName = entry.path().filename().string();
+                // 文件夹版本号解析
+                MCDevTool::Utils::Version ver {folderName};
+                if(!ver) {
+                    continue;
+                }
+                auto exePath = entry.path() / "Minecraft.Windows.exe";
+                if (std::filesystem::is_regular_file(exePath)) {
+                    // 比较版本号大小
+                    if (latestVersionNum == 0 || latestVersion < ver) {
+                        latestVersion = std::move(ver);
+                        latestExePath = exePath;
+                        latestVersionNum++;
+                    }
+                }
+            }
+        }
+        if(latestExePath) {
+            _cacheLastestGamePath = latestExePath;
+        }
+        return latestExePath;
     }
 
     // 清理运行时行为包目录

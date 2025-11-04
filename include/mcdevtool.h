@@ -2,3 +2,4 @@
 #include "./mcdevtool/env.h"
 #include "./mcdevtool/level.h"
 #include "./mcdevtool/addon.h"
+#include "./mcdevtool/utils.h"

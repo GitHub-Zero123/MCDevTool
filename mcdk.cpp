@@ -21,14 +21,21 @@
 #include <windows.h>
 
 static nlohmann::json createDefaultConfig() {
-    std::string u8input;
-    std::cout << "请输入游戏可执行文件路径：";
-    std::getline(std::cin, u8input);
-    if(u8input.size() > 2 && u8input[0] == '"' && u8input[u8input.size() - 1] == '"') {
-        // 字符串形式的路径，去掉头尾部引号
-        u8input = u8input.substr(1, u8input.size() - 2);
+    std::filesystem::path exePath;
+    auto autoExePath = MCDevTool::autoMatchLatestGameExePath();
+    if(!autoExePath.has_value()) {
+        // 无法自动匹配到游戏exe路径，要求用户输入
+        std::string u8input;
+        std::cout << "请输入游戏可执行文件路径：";
+        std::getline(std::cin, u8input);
+        if(u8input.size() > 2 && u8input[0] == '"' && u8input[u8input.size() - 1] == '"') {
+            // 针对字符串形式路径解析
+            u8input = u8input.substr(1, u8input.size() - 2);
+        }
+        exePath = std::filesystem::u8path(u8input);
+    } else {
+        exePath = autoExePath.value();
     }
-    std::filesystem::path exePath = std::filesystem::u8path(u8input);
     if(!std::filesystem::is_regular_file(exePath)) {
         std::cerr << "路径无效，文件不存在。\n";
         exit(1);
