@@ -3,6 +3,7 @@
 #include <string_view>
 #include <cstdint>
 #include <optional>
+#include <filesystem>
 
 namespace MCDevTool::Level {
     struct LevelOptions {
@@ -18,6 +19,12 @@ namespace MCDevTool::Level {
         std::string_view worldName, // 世界名称
         const LevelOptions& options={}
     );
+
+    // 更新level.dat时间轴为当前时间
+    void updateLevelDatLastPlayed(std::vector<uint8_t>& levelDatData);
+
+    // 更新文件level.dat的时间轴并立即保存
+    void updateLevelDatLastPlayedInFile(const std::filesystem::path& filePath);
 
     // 获取level.dat模板
     std::vector<uint8_t>& getLevelDatTemplate();

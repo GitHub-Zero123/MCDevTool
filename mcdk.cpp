@@ -293,6 +293,9 @@ static void startGame(const nlohmann::json& config) {
         auto levelDat = createUserLevel(config);
         levelFile.write(reinterpret_cast<const char*>(levelDat.data()), levelDat.size());
         levelFile.close();
+    } else {
+        // 更新level.dat的最后游玩时间 确保在游戏内显示为最新游玩
+        MCDevTool::Level::updateLevelDatLastPlayedInFile(worldsPath / "level.dat");
     }
 
     // 生成清单文件 netease_world_behavior_packs.json / netease_world_resource_packs.json

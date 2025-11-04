@@ -1,6 +1,7 @@
 #include "mcdevtool/level.h"
 #include <ctime>
 #include <iterator>
+#include <fstream>
 #include <random>
 #include <nbt/NBT.hpp>
 
@@ -53,6 +54,46 @@ namespace MCDevTool::Level {
         // 转换为 std::vector<uint8_t>
         return std::vector<uint8_t>(std::make_move_iterator(release.begin()),
                                     std::make_move_iterator(release.end()));
+    }
+
+    // 更新level.dat时间轴为当前时间
+    void updateLevelDatLastPlayed(std::vector<uint8_t>& levelDatData) {
+        auto content = std::string_view{reinterpret_cast<const char*>(levelDatData.data()), levelDatData.size()};
+        auto compoundTagOpt = nbt::io::parseFromContent(content);
+        if(!compoundTagOpt.has_value()) {
+            throw std::runtime_error("无法解析level.dat数据");
+        }
+        auto& compoundTag = compoundTagOpt.value();
+        // 更新 LastPlayed 字段
+        compoundTag["LastPlayed"] = nbt::LongTag(static_cast<int64_t>(std::time(nullptr)));
+        // 重新生成二进制 NBT 数据
+        auto release = compoundTag.toBinaryNbtWithHeader();
+        // 更新输入数据
+        levelDatData.assign(std::make_move_iterator(release.begin()),
+                            std::make_move_iterator(release.end()));
+    }
+
+    // 更新文件level.dat的时间轴并立即保存
+    void updateLevelDatLastPlayedInFile(const std::filesystem::path& filePath) {
+        // 读取文件内容
+        std::ifstream inputFile(filePath, std::ios::binary);
+        if(!inputFile) {
+            throw std::runtime_error("无法打开level.dat文件进行读取: " + filePath.string());
+        }
+        std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(inputFile)),
+                                       std::istreambuf_iterator<char>());
+        inputFile.close();
+
+        // 更新 LastPlayed 字段
+        updateLevelDatLastPlayed(fileData);
+
+        // 写回文件
+        std::ofstream outputFile(filePath, std::ios::binary |  std::ios::trunc);
+        if(!outputFile) {
+            throw std::runtime_error("无法打开level.dat文件进行写入: " + filePath.string());
+        }
+        outputFile.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
+        outputFile.close();
     }
 
     // 获取level.dat模板
