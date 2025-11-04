@@ -105,3 +105,4 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 | [NBT](https://github.com/GlacieTeam/NBT) | 用于构建 `level.dat` 等 NBT 格式文件 | 依赖 BinaryStream 和 Zlib |
 | [BinaryStream](https://github.com/GlacieTeam/BinaryStream) | NBT 的底层二进制读写支持 | NBT 内部依赖 |
 | [Zlib](https://zlib.net) | NBT 数据压缩与解压缩 | NBT 内部依赖 |
+| [CLI11](https://github.com/CLIUtils/CLI11) | 命令行参数解析 | Header-only |

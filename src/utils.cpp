@@ -1,5 +1,7 @@
 #include "mcdevtool/utils.h"
+#include <algorithm>
 #include <string>
+#include <ctime>
 
 namespace MCDevTool::Utils {
     Version::Version(std::string_view versionStr) {
@@ -67,5 +69,54 @@ namespace MCDevTool::Utils {
             }
         }
         return a.size() < b.size();
+    }
+
+	static char _RANDOM_HEX() {
+		int value = rand() % 16;
+		return (value < 10) ? ('0' + value) : ('A' + (value - 10));
+	}
+
+	static void _GENERATE_UUID(char* uuid) {
+		static bool _init = false;
+		if (!_init) {
+			_init = true;	// 初始化种子
+			srand((unsigned int)std::time(NULL));
+		}
+		const int UUID_LENGTH = 36; // UUID 长度（包含分隔符）
+		const char* format = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"; // UUID 模板
+		for (int i = 0; i < UUID_LENGTH; ++i) {
+			switch (format[i]) {
+			case 'x':
+				uuid[i] = _RANDOM_HEX();
+				break;
+			case '4':
+				uuid[i] = '4'; // 固定版本号为 4
+				break;
+			case 'y':
+				uuid[i] = "89AB"[rand() % 4]; // 固定 variant 为 8, 9, A 或 B
+				break;
+			case '-':
+				uuid[i] = '-'; // 分隔符
+				break;
+			default:
+				break;
+			}
+		}
+
+		uuid[UUID_LENGTH] = '\0'; // 添加字符串结束符
+	}
+
+    // 生成随机UUID字符串
+    std::string createRandomUUID() {
+		char uuid[37];
+		_GENERATE_UUID(uuid);
+		return std::string(uuid, sizeof(uuid) - 1);
+    }
+
+    // 生成去除-符号的UUID字符串
+    std::string createCompactUUID() {
+        std::string rawUUID = createRandomUUID();
+        rawUUID.erase(std::remove(rawUUID.begin(), rawUUID.end(), '-'), rawUUID.end());
+        return rawUUID;
     }
 }

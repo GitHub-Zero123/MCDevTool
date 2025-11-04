@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include <vector>
 #include <cstdint>
 #include <string_view>
@@ -17,4 +18,10 @@ namespace MCDevTool::Utils {
     private:
         std::vector<uint32_t> components;
     };
+
+    // 生成随机UUID字符串
+    std::string createRandomUUID();
+
+    // 生成去除-符号的UUID字符串
+    std::string createCompactUUID();
 } // namespace MCDevTool::Utils

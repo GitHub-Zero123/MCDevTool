@@ -1,6 +1,9 @@
 #pragma once
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
+#include <cstdint>
 #include <filesystem>
 
 namespace MCDevTool::Addon {
@@ -38,4 +41,8 @@ namespace MCDevTool::Addon {
 
     // 根据路径解析网易pack
     NeteasePackInfo parseNeteasePackInfo(const std::filesystem::path& packPath);
+
+    // 创建空的AddonManifest 返回行为包与资源包的manifest字符串
+    std::pair<std::string, std::string> createEmptyAddonManifest(
+        const std::string& name="", const std::vector<uint32_t>& version = {1, 0, 0});
 } // namespace MCDevTool::Addon
