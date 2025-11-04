@@ -16,6 +16,8 @@
 #include <mcdevtool/level.h>
 #include <nlohmann/json.hpp>
 
+#define MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
+
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -62,7 +64,11 @@ static nlohmann::json createDefaultConfig() {
         // 是否启用作弊
         { "enable_cheats", true },
         // 保留物品栏
-        { "keep_inventory", true }
+        { "keep_inventory", true },
+        // user_name可选参数
+        // { "user_name", "developer" },
+        // skin info(可选参数)
+        // { "skin_info", nlohmann::json::object() },
     };
     // 游戏可执行文件路径
     auto u8Path = exePath.generic_u8string();
@@ -337,13 +343,26 @@ static void startGame(const nlohmann::json& config) {
     auto configPath = worldsPath / "dev_config.cppconfig";
     // 创建dev_config
     nlohmann::json devConfig {
-        // {"version", "3.6.0.129998"},
         {"world_info", {
             {"level_id", worldFolderName}
         }},
-        // 生成自己的path
-        {"path", configPath.generic_string()}
+        {"room_info", nlohmann::json::object()},
+        {"player_info", {
+            {"urs", ""},
+            {"user_id", 0},
+            {"user_name", config.value("user_name", "developer")},
+        }},
     };
+    if(config.contains("skin_info") && config["skin_info"].is_object()) {
+        // 用户自定义skin_info
+        devConfig["skin_info"] = config["skin_info"];
+    } else {
+        // 自动生成skin_info
+        devConfig["skin_info"] = {
+            {"slim", false},
+            {"skin", gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png"}
+        };
+    }
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
     configFile.close();
@@ -355,6 +374,8 @@ static void startGame(const nlohmann::json& config) {
 
 #ifdef MCDK_ENABLE_CLI
 int MCDK_CLI_PARSE(int argc, wchar_t* argv[]);
+#else
+int MCDK_CLI_PARSE(int argc, char* argv[]);
 #endif
 
 #ifdef _WIN32

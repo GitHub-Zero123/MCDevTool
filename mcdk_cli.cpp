@@ -52,7 +52,11 @@ static void CREATE_EMPTY_ADDON_PROJECT(const std::string& name) {
     std::cout << "资源包路径: " << resourcePackPath.generic_string() << "\n";
 }
 
+#ifdef _WIN32
 int MCDK_CLI_PARSE(int argc, wchar_t* argv[]) {
+#else
+int MCDK_CLI_PARSE(int argc, char* argv[]) {
+#endif
     CLI::App app{"MCDK CLI"};
     app.require_subcommand(1);
 

@@ -102,7 +102,6 @@ namespace MCDevTool::Utils {
 				break;
 			}
 		}
-
 		uuid[UUID_LENGTH] = '\0'; // 添加字符串结束符
 	}
 

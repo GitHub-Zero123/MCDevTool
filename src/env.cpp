@@ -24,7 +24,7 @@ static std::vector<std::string> WIN32_GET_ALL_DRIVES() {
     return drives;
 }
 
-// 无需管理员权限 软链接目录
+// 软链接目录
 static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::filesystem::path& link) {
 
     std::filesystem::create_directories(link.parent_path());
