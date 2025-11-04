@@ -11,7 +11,6 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     if(MSVC)
         add_compile_options(/utf-8 /EHsc)
         # set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Release>:>")
-        # 判断release
         if(CMAKE_BUILD_TYPE STREQUAL "Release")
             add_compile_options(/MT)
         endif()

@@ -1,5 +1,7 @@
 #include <iostream>
 #include <mcdevtool/env.h>
+// #define CLI11_HAS_RTTI 0
+// #define CLI11_HAS_FILESYSTEM 0
 #include "libs/CLI11.hpp"
 
 static void ENV_INFO() {
