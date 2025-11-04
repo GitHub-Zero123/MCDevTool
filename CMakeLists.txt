@@ -38,7 +38,7 @@ if(MC_DEV_TOOL_BUILD_MCDK)
     target_compile_features(mcdk PRIVATE cxx_std_23)
     target_link_libraries(mcdk PRIVATE mcdevtool)
     target_include_directories(mcdk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann
-        ${CMAKE_CURRENT_SOURCE_DIR}/mods/Resource/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/mods/Resource
     )
 endif()
 

@@ -85,6 +85,10 @@ static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::file
 static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::filesystem::path& link) = delete
 #endif
 
+static void normalizeUUIDString(std::string& uuidStr) {
+    uuidStr.erase(std::remove(uuidStr.begin(), uuidStr.end(), '-'), uuidStr.end());
+}
+
 namespace MCDevTool {
     static std::filesystem::path appDataCachePath;
 
@@ -151,7 +155,9 @@ namespace MCDevTool {
         auto info = Addon::parsePackInfo(sourceDir);
         if(!info) { return info; }
         if(info.type == Addon::PackType::BEHAVIOR) {
-            auto destPath = getBehaviorPacksPath() / sourceDir.filename();
+            auto uuid = info.uuid;
+            normalizeUUIDString(uuid);
+            auto destPath = getBehaviorPacksPath() / uuid;
             // std::filesystem::create_directories(destPath.parent_path());
             // if(!std::filesystem::is_symlink(destPath)) {
             //     std::filesystem::create_directory_symlink(sourceDir, destPath);
@@ -160,7 +166,9 @@ namespace MCDevTool {
                 std::cerr << "行为包软链接创建失败: " << sourceDir.filename().string() << "\n";
             }
         } else if(info.type == Addon::PackType::RESOURCE) {
-            auto destPath = getResourcePacksPath() / sourceDir.filename();
+            auto uuid = info.uuid;
+            normalizeUUIDString(uuid);
+            auto destPath = getResourcePacksPath() / uuid;
             // std::filesystem::create_directories(destPath.parent_path());
             // if(!std::filesystem::is_symlink(destPath)) {
             //     std::filesystem::create_directory_symlink(sourceDir, destPath);
