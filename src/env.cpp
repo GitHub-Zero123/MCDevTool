@@ -130,7 +130,8 @@ namespace MCDevTool {
 
     // 获取依赖包目录
     std::filesystem::path getDependenciesPacksPath() {
-        return getGamesComNeteasePath() / "dependencies_packs";
+        // 依赖包并非官方目录 仅供开发工具使用
+        return getGamesComNeteasePath() / "_dependencies_packs";
     }
 
     // 清理运行时行为包目录

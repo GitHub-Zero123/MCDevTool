@@ -9,6 +9,7 @@
 #include <optional>
 #include <stdexcept>
 #include <cstdint>
+#include <algorithm>
 #include <INCLUDE_MOD.h>
 #include <mcdevtool/env.h>
 #include <mcdevtool/addon.h>
@@ -34,27 +35,27 @@ static nlohmann::json createDefaultConfig() {
     }
     nlohmann::json config {
         // 包含的mod目录，支持多个
-        {"included_mod_dirs", nlohmann::json::array({"./"})},
+        { "included_mod_dirs", nlohmann::json::array({"./"}) },
         // 世界随机种子 留空则随机生成
-        {"world_seed", nullptr},
+        { "world_seed", nullptr },
         // 是否重置世界
-        {"reset_world", false},
+        { "reset_world", false },
         // 世界名称
-        {"world_name", "MC_DEV_WORLD"},
+        { "world_name", "MC_DEV_WORLD" },
         // 世界文件夹名称
-        {"world_folder_name", "MC_DEV_WORLD"},
+        { "world_folder_name", "MC_DEV_WORLD" },
         // 是否自动进入游戏存档
-        {"auto_join_game", true},
+        { "auto_join_game", true },
         // 包含调试模组(提供R键热更新以及py输出流标记)
-        {"include_debug_mod", true},
+        { "include_debug_mod", true },
         // 世界类型 0-旧版 1-无限 2-平坦
-        {"world_type", 1},
+        { "world_type", 1 },
         // 游戏模式 0-生存 1-创造 2-冒险
-        {"game_mode", 1},
+        { "game_mode", 1 },
         // 是否启用作弊
-        {"enable_cheats", true},
+        { "enable_cheats", true },
         // 保留物品栏
-        {"keep_inventory", true}
+        { "keep_inventory", true }
     };
     // 游戏可执行文件路径
     auto u8Path = exePath.generic_u8string();
@@ -104,12 +105,8 @@ MCDevTool::Addon::PackInfo registerDebugMod() {
     } else {
         throw std::runtime_error("调试MOD的PackType类型未知，无法注册。");
     }
-    std::string uuidNoDash;
-    for(char c : info.uuid) {
-        if(c != '-') {
-            uuidNoDash.push_back(c);
-        }
-    }
+    std::string uuidNoDash = info.uuid;
+    uuidNoDash.erase(std::remove(uuidNoDash.begin(), uuidNoDash.end(), '-'), uuidNoDash.end());
     auto target = outDir / uuidNoDash;
     // 写入ADDON数据到目标目录
     if(std::filesystem::exists(target)) {
@@ -216,7 +213,7 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
         FALSE,
         0,
         nullptr,
-        exePath.parent_path().string().c_str(),   // ✅ 设置工作目录为游戏目录
+        nullptr,   // 使用父进程的工作目录
         &si,
         &pi
     )) {
@@ -261,7 +258,6 @@ static void launchGameExe(const std::filesystem::path& exePath) {
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
 }
-
 #endif
 
 // 启动游戏
@@ -347,15 +343,25 @@ static void startGame(const nlohmann::json& config) {
 #endif
 }
 
-int main() {
-#ifdef _WIN32
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
+#ifdef MCDK_ENABLE_CLI
+int MCDK_CLI_PARSE(int argc, wchar_t* argv[]);
 #endif
 
+#ifdef _WIN32
+int wmain(int argc, wchar_t* argv[]) {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#else
+int main(int argc, char* argv[]) {
+#endif
     #ifdef NDEBUG
     try {
     #endif
+        #ifdef MCDK_ENABLE_CLI
+        if(argc > 1) {
+            return MCDK_CLI_PARSE(argc, argv);
+        }
+        #endif
         auto config = userParseConfig();
         startGame(config);
     #ifdef NDEBUG

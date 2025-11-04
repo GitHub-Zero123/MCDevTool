@@ -1,6 +1,7 @@
 #include "mcdevtool/addon.h"
 #include <fstream>
 #include <iterator>
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
 namespace MCDevTool::Addon {

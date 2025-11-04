@@ -4,6 +4,7 @@ project(MC_DEV_TOOL_ROOT LANGUAGES CXX C)
 
 option(MC_DEV_TOOL_BUILD_TEST "BUILD TEST EXECUTABLE" OFF)
 option(MC_DEV_TOOL_BUILD_MCDK "BUILD MCDK EXECUTABLE" ON)
+option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" ON)
 
 # By Zero123
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
@@ -40,6 +41,11 @@ if(MC_DEV_TOOL_BUILD_MCDK)
     target_include_directories(mcdk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann
         ${CMAKE_CURRENT_SOURCE_DIR}/mods/Resource
     )
+
+    if(MC_DEV_TOOL_MCDK_ENABLE_CLI)
+        target_compile_definitions(mcdk PRIVATE MCDK_ENABLE_CLI)
+        target_sources(mcdk PRIVATE mcdk_cli.cpp)
+    endif()
 endif()
 
 # Test Executable
