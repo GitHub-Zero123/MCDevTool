@@ -1,0 +1,29 @@
+{
+    "addon_dirs": [
+        "./"
+    ],
+    "game_info": {
+        "pe_path": "D:\\MCStudioDownload\\game\\MinecraftPE_Netease\\PCLauncher_x64\\Minecraft.Windows.exe"
+    },
+    "game_rule": {
+        "default_game_mode": 1,
+        "enable_cheats": true,
+        "keep_inventory": true
+    },
+    "player_info": {
+        "user_id": -1,
+        "user_name": "Steve",
+        "email": "minecraft@netease.com"
+    },
+    "skin_info": {
+        "slim": true,
+        "skin": "D:\\MCStudioDownload\\componentcache\\support\\steve\\steve.png"
+    },
+    "world_info": {
+        "seed": 0,
+        "world_type": 1,
+        "override": true,
+        "level_name": "World",
+        "level_id": "__development_world__"
+    }
+}
