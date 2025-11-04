@@ -14,10 +14,19 @@ namespace MCDevTool::Addon {
         std::string name;
         std::string uuid;
         std::string version;
-        PackType type;
+        PackType type = PackType::UNKNOWN;
 
         explicit operator bool() const {
             return !uuid.empty() && !version.empty() && type != PackType::UNKNOWN;
+        }
+    };
+
+    struct NeteasePackInfo {
+        PackInfo baseInfo;
+        std::vector<std::string> dependencies;
+
+        explicit operator bool() const {
+            return static_cast<bool>(baseInfo);
         }
     };
 
@@ -26,4 +35,7 @@ namespace MCDevTool::Addon {
 
     // 根据路径解析pack
     PackInfo parsePackInfo(const std::filesystem::path& packPath);
+
+    // 根据路径解析网易pack
+    NeteasePackInfo parseNeteasePackInfo(const std::filesystem::path& packPath);
 } // namespace MCDevTool::Addon

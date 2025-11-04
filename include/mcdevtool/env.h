@@ -16,6 +16,8 @@ namespace MCDevTool {
     std::filesystem::path getBehaviorPacksPath();
     // 获取资源包目录
     std::filesystem::path getResourcePacksPath();
+    // 获取依赖包目录
+    std::filesystem::path getDependenciesPacksPath();
     // 清理运行时行为包目录
     void cleanRuntimeBehaviorPacks();
     // 清理运行时资源包目录

@@ -34,25 +34,40 @@ namespace MCDevTool::Addon {
     }
 
     // 根据路径解析pack
-    PackInfo parsePackInfo(const fs::path& packPath) {
+    void _parsePackInfo(const fs::path& packPath, PackInfo& out) {
         auto manifestPath = packPath / "manifest.json";
-        PackInfo info {
-            .name = "",
-            .uuid = "",
-            .version = "",
-            .type = PackType::UNKNOWN,
-        };
-    
+
         if(!fs::is_directory(packPath) || !fs::is_regular_file(manifestPath)) {
             // 无效的路径/结构
-            return info;
+            return;
         }
         // 解析JSON
         std::ifstream manifestFile(manifestPath, std::ios::binary);
         std::string content((std::istreambuf_iterator<char>(manifestFile)),
                              std::istreambuf_iterator<char>());
         manifestFile.close();
-        parseJsonPackInfo(content, info);
+        parseJsonPackInfo(content, out);
+    }
+
+    // 根据路径解析pack
+    PackInfo parsePackInfo(const fs::path& packPath) {
+        PackInfo info;
+        _parsePackInfo(packPath, info);
         return info;
+    }
+
+    // 根据路径解析网易pack
+    NeteasePackInfo parseNeteasePackInfo(const fs::path& packPath) {
+        NeteasePackInfo neteaseInfo;
+        _parsePackInfo(packPath, neteaseInfo.baseInfo);
+        if(!neteaseInfo.baseInfo || neteaseInfo.baseInfo.type != PackType::BEHAVIOR) {
+            return neteaseInfo;
+        }
+        // 官方暂未定义依赖文件 此处代码仅作占位
+        auto dependenciesPath = packPath / "dependencies.json";
+        if(!fs::is_regular_file(dependenciesPath)) {
+            return neteaseInfo;
+        }
+        return neteaseInfo;
     }
 }

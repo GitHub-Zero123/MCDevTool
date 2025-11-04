@@ -128,6 +128,11 @@ namespace MCDevTool {
         return getGamesComNeteasePath() / "resource_packs";
     }
 
+    // 获取依赖包目录
+    std::filesystem::path getDependenciesPacksPath() {
+        return getGamesComNeteasePath() / "dependencies_packs";
+    }
+
     // 清理运行时行为包目录
     void cleanRuntimeBehaviorPacks() {
         auto runtimeBPPath = getBehaviorPacksPath();
