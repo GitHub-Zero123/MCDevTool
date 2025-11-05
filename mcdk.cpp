@@ -22,6 +22,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+// 字符串关键字替换
+static void stringReplace(std::string& str, const std::string& from, const std::string& to) {
+    size_t start_pos = 0;
+    while((start_pos = str.find(from, start_pos)) != std::string::npos) {
+        str.replace(start_pos, from.length(), to);
+        start_pos += to.length();
+    }
+}
+
 static nlohmann::json createDefaultConfig() {
     std::filesystem::path exePath;
     auto autoExePath = MCDevTool::autoMatchLatestGameExePath();
@@ -69,6 +78,8 @@ static nlohmann::json createDefaultConfig() {
         // { "user_name", "developer" },
         // skin info(可选参数)
         // { "skin_info", nlohmann::json::object() },
+        // 自定义debug参数
+        // { "debug_options", nlohmann::json::object() },
     };
     // 游戏可执行文件路径
     auto u8Path = exePath.generic_u8string();
@@ -105,7 +116,7 @@ static nlohmann::json userParseConfig() {
 }
 
 // 注册调试MOD
-MCDevTool::Addon::PackInfo registerDebugMod() {
+MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config) {
     auto manifest = INCLUDE_MOD_RES::resourceMap.at("manifest.json");
     std::string manifestContent(reinterpret_cast<const char*>(manifest.first), manifest.second);
     MCDevTool::Addon::PackInfo info;
@@ -125,11 +136,24 @@ MCDevTool::Addon::PackInfo registerDebugMod() {
     if(std::filesystem::exists(target)) {
         std::filesystem::remove_all(target);
     }
+    // 生成格式化的字面量json
+    auto DEBUG_OPTIONS = config.value("debug_options", nlohmann::json::object()).dump();
+    // 替换为python boolean格式
+    stringReplace(DEBUG_OPTIONS, "true", "True");
+    stringReplace(DEBUG_OPTIONS, "false", "False");
+    stringReplace(DEBUG_OPTIONS, "null", "None");
     for(const auto& [resName, resData] : INCLUDE_MOD_RES::resourceMap) {
         auto resPath = target / std::filesystem::u8path(resName);
         std::filesystem::create_directories(resPath.parent_path());
         std::ofstream resFile(resPath, std::ios::binary);
-        resFile.write(reinterpret_cast<const char*>(resData.first), resData.second);
+        if(resName.ends_with("modMain.py")) {
+            // 替换关键字实现传参
+            std::string modMainContent(reinterpret_cast<const char*>(resData.first), resData.second);
+            stringReplace(modMainContent, "\"{#debug_options}\"", DEBUG_OPTIONS);
+            resFile.write(modMainContent.data(), modMainContent.size());
+        } else {
+            resFile.write(reinterpret_cast<const char*>(resData.first), resData.second);
+        }
         resFile.close();
     }
     return info;
@@ -283,7 +307,7 @@ static void startGame(const nlohmann::json& config) {
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
     // link debug MOD
     if(config.value("include_debug_mod", true)) {
-        auto debugMod = registerDebugMod();
+        auto debugMod = registerDebugMod(config);
         std::cout << "已注册调试MOD：" << debugMod.uuid << "\n";
         linkedPacks.push_back(std::move(debugMod));
     }

@@ -2,8 +2,15 @@
 from .QuModLibs.QuMod import *
 from .QuModLibs.Util import QConstInit
 from common.utils import xupdate
+from json import loads
 import sys
 lambda: "By Zero123"
+
+_DEBUG_INFO = "{#debug_options}"
+try:
+    DEBUG_CONFIG = loads(_DEBUG_INFO) if not isinstance(_DEBUG_INFO, dict) else _DEBUG_INFO
+except:
+    DEBUG_CONFIG = {}
 
 REF = 0
 
@@ -68,12 +75,29 @@ def RELOAD_MOD():
     else:
         gui.set_left_corner_notify_msg("[Dev] No script updates found.")
 
+def RELOAD_ADDON():
+    import gui
+    import clientlevel
+    clientlevel.refresh_addons()
+    gui.set_left_corner_notify_msg("[Dev] Add-ons reloaded successfully.")
+
+def RELOAD_WORLD():
+    import mc_game_ctrl
+    import world
+    if mc_game_ctrl.instance.is_in_mc_game():
+        world.request_leave_game()
+        mc_game_ctrl.instance.is_in_single_game = False
+
 def CLOnKeyPressInGame(args={}):
     if args["isDown"] != "0":
         return
     key = args["key"]
-    if key == "82":
+    if key == str(DEBUG_CONFIG.get("reload_key", "82")):
         RELOAD_MOD()
+    elif key == str(DEBUG_CONFIG.get("reload_world_key", "")):
+        RELOAD_WORLD()
+    elif key == str(DEBUG_CONFIG.get("reload_addon_key", "")):
+        RELOAD_ADDON()
 
 @PRE_CLIENT_LOADER_HOOK
 def CLIENT_INIT():

@@ -101,6 +101,16 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "skin_info": {
         "slim": false,
         "skin": "完整贴图路径.png"
+    },
+    // 自定义debug参数(选填可缺失)
+    "debug_options": {
+        // 键码查阅：https://mc.163.com/dev/mcmanual/mc-dev/mcdocs/1-ModAPI-beta/%E6%9E%9A%E4%B8%BE%E5%80%BC/KeyBoardType.html
+        // 绑定热更新快捷键
+        "reload_key": "82",
+        // 绑定重载世界快捷键
+        "reload_world_key": "",
+        // 绑定重载Addon快捷键(适用于静态资源文件如动画)
+        "reload_addon_key": ""
     }
 }
 ```
