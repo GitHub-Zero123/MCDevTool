@@ -82,11 +82,8 @@ def RELOAD_ADDON():
     gui.set_left_corner_notify_msg("[Dev] Add-ons reloaded successfully.")
 
 def RELOAD_WORLD():
-    import mc_game_ctrl
-    import world
-    if mc_game_ctrl.instance.is_in_mc_game():
-        world.request_leave_game()
-        mc_game_ctrl.instance.is_in_single_game = False
+    import clientlevel
+    clientlevel.restart_local_game()
 
 def CLOnKeyPressInGame(args={}):
     if args["isDown"] != "0":
