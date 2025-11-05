@@ -26,35 +26,22 @@ class NbtTagType:
 class NbtObject(object):
     def __repr__(self):
         # type: () -> str
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @property
     def tag_type(self):
         # type: () -> NbtTagType
-        raise NotImplementedError()
-
-    @property
-    def bytes(self):
-        # type: () -> str
         raise NotImplementedError
 
     @property
-    def dump(self):
+    def binary(self):
         # type: () -> str
         raise NotImplementedError
 
+    def deserialize(self):
+        # type: () -> str
+        return chr(self.tag_type) + self.binary
 
-class NbtJsonEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, NbtObject):
-            return repr(obj)
-        return super(NbtJsonEncoder, self).default(obj)
-
-    def encode(self, obj):
-        print obj
-        json_str = super(NbtJsonEncoder, self).encode(obj)
-        print json_str
-        return obj
 
 class NbtEnd(NbtObject):
     def __repr__(self):
@@ -67,9 +54,9 @@ class NbtEnd(NbtObject):
         return NbtTagType.END
 
     @property
-    def dump(self):
+    def binary(self):
         # type: () -> str
-        raise chr(self.tag_type)
+        return ""
 
 
 class NbtByte(NbtObject):
@@ -91,14 +78,9 @@ class NbtByte(NbtObject):
         return NbtTagType.BYTE
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("b", self.__value)
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtShort(NbtObject):
@@ -120,14 +102,9 @@ class NbtShort(NbtObject):
         return NbtTagType.SHORT
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("<h", self.__value)
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtInt(NbtObject):
@@ -149,14 +126,9 @@ class NbtInt(NbtObject):
         return NbtTagType.INT
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("<i", self.__value)
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtLong(NbtObject):
@@ -178,14 +150,9 @@ class NbtLong(NbtObject):
         return NbtTagType.LONG
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("<q", self.__value)
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtFloat(NbtObject):
@@ -205,14 +172,9 @@ class NbtFloat(NbtObject):
         return NbtTagType.FLOAT
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("<f", self.__value)
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtDouble(NbtObject):
@@ -232,14 +194,9 @@ class NbtDouble(NbtObject):
         return NbtTagType.DOUBLE
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("<d", self.__value)
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtByteArray(NbtObject):
@@ -264,14 +221,9 @@ class NbtByteArray(NbtObject):
         return NbtTagType.BYTE_ARRAY
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("<i", len(self.__value)) + "".join([struct.pack("B", x & 0xFF) for x in self.__value])
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtString(NbtObject):
@@ -291,15 +243,10 @@ class NbtString(NbtObject):
         return NbtTagType.STRING
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         string = self.__value.encode("utf-8")
         return struct.pack("<h", len(string)) + string
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtList(NbtObject):
@@ -327,14 +274,9 @@ class NbtList(NbtObject):
         return NbtTagType.LIST
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
-        return struct.pack("<i", len(self.__value)) + "".join([element.bytes for element in self.__value])
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
+        return struct.pack("<i", len(self.__value)) + "".join([element.binary for element in self.__value])
 
 
 class NbtCompound(NbtObject):
@@ -359,19 +301,14 @@ class NbtCompound(NbtObject):
         return NbtTagType.COMPOUND
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         content = ""
         for key, value in self.__value.iteritems():
             content += chr(value.tag_type)
-            content += key.bytes
-            content += value.bytes
+            content += key.binary
+            content += value.binary
         return content + chr(NbtTagType.END)
-
-    @property
-    def dump(self):
-        # type: () -> str
-        return chr(self.tag_type) + self.bytes
 
 
 class NbtIntArray(NbtObject):
@@ -396,14 +333,9 @@ class NbtIntArray(NbtObject):
         return NbtTagType.INT_ARRAY
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("<i", len(self.__value)) + "".join([struct.pack("<i", integer) for integer in self.__value])
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
 
 
 class NbtLongArray(NbtObject):
@@ -428,176 +360,9 @@ class NbtLongArray(NbtObject):
         return NbtTagType.LONG_ARRAY
 
     @property
-    def bytes(self):
+    def binary(self):
         # type: () -> str
         return struct.pack("<i", len(self.__value)) + "".join([struct.pack("<q", integer) for integer in self.__value])
-
-    @property
-    def dump(self):
-        # type: () -> str
-        raise chr(self.tag_type) + self.bytes
-
-
-class NbtLoader(object):
-    dispatcher = dict()
-
-    def __init__(self, content, start=0, stop=-1):
-        # type: (str, int, int) -> None
-        if not isinstance(content, str):
-            raise RuntimeError
-
-        length = len(content)
-        if start < 0:
-            raise RuntimeError
-        elif start >= length:
-            raise RuntimeError
-
-        if stop == -1:
-            stop = len(content)
-        elif stop < start:
-            raise RuntimeError
-
-        self.__stop = stop
-        self.__start = start
-        self.__index = start
-        self.__content = content
-
-    def __read(self, length):
-        # type: (int) -> str
-        start = self.__index
-        self.__index += length
-        if self.__index > self.__stop:
-            raise EOFError
-        return str(self.__content[start:self.__index])
-
-    def __read_byte(self):
-        # type: () -> int
-        return struct.unpack("b", self.__read(1))[0]
-
-    def __read_word(self):
-        # type: () -> int
-        return struct.unpack("<h", self.__read(2))[0]
-
-    def __read_dword(self):
-        # type: () -> int
-        return struct.unpack("<i", self.__read(4))[0]
-
-    def __read_qword(self):
-        # type: () -> long
-        return struct.unpack("<q", self.__read(8))[0]
-
-    def __read_float(self):
-        # type: () -> float
-        return struct.unpack("<f", self.__read(4))[0]
-
-    def __read_double(self):
-        # type: () -> float
-        return struct.unpack("<d", self.__read(8))[0]
-
-    def __read_content(self, length):
-        # type: (int) -> str
-        return self.__read(length)
-
-    def __load_end(self):
-        # type: () -> NbtEnd
-        return NbtEnd()
-
-    dispatcher[NbtTagType.END] = __load_end
-
-    def __load_byte(self):
-        # type: () -> NbtByte
-        return NbtByte(self.__read_byte())
-
-    dispatcher[NbtTagType.BYTE] = __load_byte
-
-    def __load_short(self):
-        # type: () -> NbtShort
-        return NbtShort(self.__read_word())
-
-    dispatcher[NbtTagType.SHORT] = __load_short
-
-    def __load_int(self):
-        # type: () -> NbtInt
-        return NbtInt(self.__read_dword())
-
-    dispatcher[NbtTagType.INT] = __load_int
-
-    def __load_long(self):
-        # type: () -> NbtLong
-        return NbtLong(self.__read_qword())
-
-    dispatcher[NbtTagType.LONG] = __load_long
-
-    def __load_float(self):
-        # type: () -> NbtFloat
-        return NbtFloat(self.__read_float())
-
-    dispatcher[NbtTagType.FLOAT] = __load_float
-
-    def __load_double(self):
-        # type: () -> NbtDouble
-        return NbtDouble(self.__read_double())
-
-    dispatcher[NbtTagType.DOUBLE] = __load_double
-
-    def __load_byte_array(self):
-        # type: () -> NbtByteArray
-        return NbtByteArray([ord(byte) & 0xFF for byte in self.__read_content(self.__read_dword())])
-
-    dispatcher[NbtTagType.BYTE_ARRAY] = __load_byte_array
-
-    def __load_string(self):
-        # type: () -> NbtString
-        return NbtString(self.__read_content(self.__read_word()).decode("utf-8"))
-
-    dispatcher[NbtTagType.STRING] = __load_string
-
-    def __load_list(self):
-        # type: () -> NbtList
-        element_type, element_count = self.__read_byte(), self.__read_dword()
-
-        if element_type == NbtTagType.END:
-            return []
-
-        if element_type not in self.dispatcher:
-            raise TypeError
-
-        return NbtList([self.dispatcher[element_type](self) for _ in xrange(element_count)])
-
-    dispatcher[NbtTagType.LIST] = __load_list
-
-    def __load_compound(self):
-        # type: () -> NbtCompound
-        compound = {}
-        while True:
-            tag_type = self.__read_byte()
-            if tag_type == NbtTagType.END:
-                break
-            if tag_type not in self.dispatcher:
-                raise TypeError
-
-            key = self.__load_string()
-            value = self.dispatcher[tag_type](self)
-            compound[key] = value
-        return NbtCompound(compound)
-
-    dispatcher[NbtTagType.COMPOUND] = __load_compound
-
-    def __load_int_array(self):
-        # type: () -> NbtIntArray
-        return NbtIntArray([self.__read_dword() for _ in xrange(self.__read_dword())])
-
-    dispatcher[NbtTagType.INT_ARRAY] = __load_int_array
-
-    def __load_long_array(self):
-        # type: () -> NbtLongArray
-        return NbtLongArray([self.__read_qword() for _ in xrange(self.__read_dword())])
-
-    dispatcher[NbtTagType.LONG_ARRAY] = __load_long_array
-
-    def load(self):
-        # type: () -> None
-        return self.dispatcher[self.__read_byte()](self)
 
 
 def check_python_version():
@@ -661,7 +426,16 @@ def _make_dir(dir_path, override):
     os.makedirs(dir_path)
 
 
-def generate_level_dat(config):
+def build_world(start_info, worlds_path):
+    # type: (dict, str) -> str
+    level_id = start_info["level_id"]
+    override_world = start_info["override_world"]
+    world_dir_path = os.path.join(worlds_path, level_id)
+    _make_dir(world_dir_path, override_world)
+    return world_dir_path
+
+
+def generate_level_dat(game_settings):
     # type: (dict) -> str
     data = NbtCompound({
         NbtString(""): NbtCompound({
@@ -705,21 +479,21 @@ def generate_level_dat(config):
             NbtString("bonusChestEnabled"): NbtByte(0),
             NbtString("bonusChestSpawned"): NbtByte(0),
             NbtString("CenterMapsToOrigin"): NbtByte(0),
-            NbtString("cheatsEnabled"): NbtByte(config["game_rule"]["enable_cheats"]),
+            NbtString("cheatsEnabled"): NbtByte(game_settings["enable_cheats"]),
             NbtString("codebuilder"): NbtByte(0),
             NbtString("commandblockoutput"): NbtByte(1),
-            NbtString("commandblocksenabled"): NbtByte(1),
+            NbtString("commandblocksenabled"): NbtByte(game_settings["command_blocks_enabled"]),
             NbtString("commandsEnabled"): NbtByte(0),
             NbtString("ConfirmedPlatformLockedContent"): NbtByte(0),
-            NbtString("dodaylightcycle"): NbtByte(1),
-            NbtString("doentitiydrops"): NbtByte(1),
-            NbtString("dofiretick"): NbtByte(1),
-            NbtString("doimmediaterespawn"): NbtByte(0),
+            NbtString("dodaylightcycle"): NbtByte(game_settings["do_daylight_cycle"]),
+            NbtString("doentitiydrops"): NbtByte(game_settings["do_entity_drops"]),
+            NbtString("dofiretick"): NbtByte(game_settings["do_fire_tick"]),
+            NbtString("doimmediaterespawn"): NbtByte(game_settings["do_immediate_respawn"]),
             NbtString("doinsomnia"): NbtByte(1),
-            NbtString("domobloot"): NbtByte(1),
-            NbtString("domobspawning"): NbtByte(1),
-            NbtString("dotiledrops"): NbtByte(1),
-            NbtString("doweathercycle"): NbtByte(1),
+            NbtString("domobloot"): NbtByte(game_settings["do_mob_loot"]),
+            NbtString("domobspawning"): NbtByte(game_settings["do_mob_spawning"]),
+            NbtString("dotiledrops"): NbtByte(game_settings["do_tile_drops"]),
+            NbtString("doweathercycle"): NbtByte(game_settings["do_weather_cycle"]),
             NbtString("drowningdamage"): NbtByte(1),
             NbtString("educationFeaturesEnabled"): NbtByte(0),
             NbtString("experimentalgameplay"): NbtByte(0),
@@ -728,14 +502,14 @@ def generate_level_dat(config):
                 NbtString("data_driven_items"): NbtByte(0),
                 NbtString("experimental_molang_features"): NbtByte(0),
                 NbtString("experiments_ever_used"): NbtByte(0),
-                NbtString("gametest"): NbtByte(0),
+                NbtString("gametest"): NbtByte(1),
                 NbtString("saved_with_toggled_experiments"): NbtByte(0),
                 NbtString("upcoming_creator_features"): NbtByte(0)
             }),
             NbtString("falldamage"): NbtByte(1),
             NbtString("firedamage"): NbtByte(1),
             NbtString("freezedamage"): NbtByte(1),
-            NbtString("ForceGameType"): NbtByte(0),
+            NbtString("ForceGameType"): NbtByte(1),
             NbtString("globalmute"): NbtByte(0),
             NbtString("hasBeenLoadedInCreative"): NbtByte(0),
             NbtString("hasLockedBehaviorPack"): NbtByte(0),
@@ -745,31 +519,31 @@ def generate_level_dat(config):
             NbtString("isFromWorldTemplate"): NbtByte(0),
             NbtString("isSingleUseWorld"): NbtByte(0),
             NbtString("isWorldTemplateOptionLocked"): NbtByte(0),
-            NbtString("keepinventory"): NbtByte(config["game_rule"]["keep_inventory"]),
+            NbtString("keepinventory"): NbtByte(game_settings["keep_inventory"]),
             NbtString("LANBroadcast"): NbtByte(1),
             NbtString("LANBroadcastIntent"): NbtByte(1),
-            NbtString("mobgriefing"): NbtByte(1),
+            NbtString("mobgriefing"): NbtByte(game_settings["mob_griefing"]),
             NbtString("MultiplayerGame"): NbtByte(1),
             NbtString("MultiplayerGameIntent"): NbtByte(1),
-            NbtString("naturalregeneration"): NbtByte(1),
-            NbtString("pvp"): NbtByte(1),
+            NbtString("naturalregeneration"): NbtByte(game_settings["natural_regeneration"]),
+            NbtString("pvp"): NbtByte(game_settings["pvp"]),
             NbtString("requiresCopiedPackRemovalCheck"): NbtByte(0),
             NbtString("sendcommandfeedback"): NbtByte(1),
-            NbtString("showcoordinates"): NbtByte(0),
+            NbtString("showcoordinates"): NbtByte(game_settings["show_coordinates"]),
             NbtString("showdeathmessages"): NbtByte(1),
             NbtString("showtags"): NbtByte(1),
             NbtString("spawnMobs"): NbtByte(1),
             NbtString("SpawnV1Villagers"): NbtByte(0),
             NbtString("startWithMapEnabled"): NbtByte(0),
             NbtString("texturePacksRequired"): NbtByte(0),
-            NbtString("tntexplodes"): NbtByte(1),
+            NbtString("tntexplodes"): NbtByte(game_settings["tnt_explodes"]),
             NbtString("useMsaGamertagsOnly"): NbtByte(0),
-            NbtString("Difficulty"): NbtInt(2),
+            NbtString("Difficulty"): NbtInt(game_settings["difficulty"]),
             NbtString("eduOffer"): NbtInt(0),
             NbtString("functioncommandlimit"): NbtInt(10000),
-            #NbtString("Dimension"): NbtInt(0),
-            NbtString("GameType"): NbtInt(0),
-            NbtString("Generator"): NbtInt(1),
+            NbtString("Dimension"): NbtInt(0),
+            NbtString("GameType"): NbtInt(game_settings["default_game_mode"]),
+            NbtString("Generator"): NbtInt(game_settings["world_type"]),
             NbtString("lightningTime"): NbtInt(0),
             NbtString("LimitedWorldOriginX"): NbtInt(0),
             NbtString("LimitedWorldOriginY"): NbtInt(0),
@@ -781,8 +555,8 @@ def generate_level_dat(config):
             NbtString("PlatformBroadcastIntent"): NbtInt(3),
             NbtString("rainTime"): NbtInt(0),
             NbtString("randomtickspeed"): NbtInt(1),
-            NbtString("serverChunkTickRange"): NbtInt(4),
-            NbtString("spawnradius"): NbtInt(10),
+            NbtString("serverChunkTickRange"): NbtInt(game_settings["server_chunk_tick_range"]),
+            NbtString("spawnradius"): NbtInt(game_settings["spawn_radius"]),
             NbtString("SpawnX"): NbtInt(0),
             NbtString("SpawnY"): NbtInt(64),
             NbtString("SpawnZ"): NbtInt(0),
@@ -790,7 +564,7 @@ def generate_level_dat(config):
             NbtString("XBLBroadcastIntent"): NbtInt(3),
             NbtString("currentTick"): NbtLong(0),
             NbtString("LastPlayed"): NbtLong(0),
-            NbtString("RandomSeed"): NbtLong(config["world_info"]["seed"] if config["world_info"]["seed"] else 0),
+            NbtString("RandomSeed"): NbtLong(game_settings["seed"] if game_settings["seed"] else 0),
             NbtString("Time"): NbtLong(0),
             NbtString("worldStartCount"): NbtLong(0),
             NbtString("lightningLevel"): NbtFloat(0.0),
@@ -820,27 +594,20 @@ def generate_level_dat(config):
                 "structure_options": None
             }, indent=0, separators=(",", ":"))),
             NbtString("InventoryVersion"): NbtString(""),
-            NbtString("LevelName"): NbtString(config["world_info"]["level_name"]),
+            NbtString("LevelName"): NbtString(game_settings["level_name"]),
             NbtString("prid"): NbtString(""),
             NbtString("worldTemplateUUID"): NbtString(""),
             NbtString("worldTemplateVersion"): NbtString(""),
             NbtString("world_policies"): NbtCompound({})
         })
-    }).dump[1:-1]
+    }).deserialize()[1:-1]
     return "\x0A\x00\x00\x00" + struct.pack("<i", len(data)) + data
 
 
-def build_world(config, worlds_path):
-    # type: (dict, str) -> str
-    world_info = config["world_info"]
-    level_id = world_info["level_id"]
-    override = world_info["override"]
-    world_dir_path = os.path.join(worlds_path, level_id)
-
-    _make_dir(world_dir_path, override)
+def deploy_level_dat(level_dat, world_dir_path):
+    # type: (str, str) -> None
     with open(os.path.join(world_dir_path, "level.dat"), "wb") as ostream:
-        ostream.write(generate_level_dat(config))
-    return world_dir_path
+        ostream.write(level_dat)
 
 
 MANIFEST_REQUIRED_KEYS = (
@@ -895,11 +662,11 @@ def _recursion_find_pack(addon_dirs):
     return packs
 
 
-def deploy_addons(config, world_dir_path):
-    # type: (dict, str) -> None
+def deploy_addons(addon_dirs, world_dir_path):
+    # type: (list, str) -> None
     behavior_packs = []
     resource_packs = []
-    packs = _recursion_find_pack(config["addon_dirs"])
+    packs = _recursion_find_pack(addon_dirs)
     behavior_packs_path = os.path.join(world_dir_path, "behavior_packs")
     resource_packs_path = os.path.join(world_dir_path, "resource_packs")
 
@@ -929,28 +696,28 @@ def deploy_addons(config, world_dir_path):
         ostream.write(json.dumps(resource_packs, indent=4, separators=(',', ': ')))
 
 
-def build_cppconfig(config):
-    # type: (dict) -> dict
+def build_cppconfig(start_info, player_info):
+    # type: (dict, dict) -> dict
     return {
         "world_info": {
-            "level_id": config["world_info"]["level_id"],
+            "level_id": start_info["level_id"],
         },
         "room_info": {},
         "player_info": {
-            "urs": config["player_info"]["email"],
-            "user_id": config["player_info"]["user_id"],
-            "user_name": config["player_info"]["user_name"]
+            "urs": player_info["email"],
+            "user_id": player_info["user_id"],
+            "user_name": player_info["user_name"]
         },
         "skin_info": {
-            "slim": config["skin_info"]["slim"],
-            "skin": config["skin_info"]["skin"]
+            "slim": player_info["skin"]["slim"],
+            "skin": player_info["skin"]["texture"]
         }
     }
 
 
-def lauch_game(config, cppconfig):
+def lauch_game(start_info, cppconfig):
     # type: (dict, dict) -> None
-    pe_path = config["game_info"]["pe_path"]
+    pe_path = start_info["pe_path"]
     if not os.path.isfile(pe_path):
         raise ValueError("{pe_path} is not a file".format(pe_path=pe_path))
 
@@ -962,52 +729,62 @@ def lauch_game(config, cppconfig):
 
 CONFIG_REQUIRED_KEYS = (
     ("addon_dirs",),
-    ("game_info", "pe_path")
+    ("start_info", "pe_path")
 )
 CONFIG_DEFAULT_ITEMS = {
-    "game_rule": {
-        "default_game_mode": 1,
-        "enable_cheats": True,
-        "keep_inventory": True
+    "start_info": {
+        "override_world": True,
+        "level_id": "__development_world__",
     },
     "player_info": {
         "user_id": -1,
         "user_name": "Steve",
-        "email": "minecraft@netease.com"
+        "email": "minecraft@netease.com",
+        "skin": {
+            "slim": True,
+            "texture": "D:\\MCStudioDownload\\componentcache\\support\\steve\\steve.png"
+        }
     },
-    "skin_info": {
-        "slim": True,
-        "skin": "D:\\MCStudioDownload\\componentcache\\support\\steve\\steve.png",
-    },
-    "world_info": {
-        "seed": None,
-        "replace": True,
+    "world_settings": {
+        "seed": 0,
         "world_type": 1,
-        "level_name": "World",
-        "level_id": "__development_world__"
+        "level_name": "World"
+    },
+    "game_settings": {
+        "default_game_mode": 1,
+        "enable_cheats": True,
+        "keep_inventory": True
     }
 }
-def run_with_config(config_file_path):
-    # type: (str) -> None
+def run_with_config(config):
+    # type: (dict) -> None
     # check python version(require Python2)
     check_python_version()
 
-    # read, check and fill config
-    config = read_config(config_file_path)
+    # check and fill config
     check_required_keys(config, CONFIG_REQUIRED_KEYS)
     fill_default_items(config, CONFIG_DEFAULT_ITEMS)
 
     # build world
-    world_dir_path = build_world(config, get_minecraft_worlds_path())
+    start_info = config["start_info"]
+    world_dir_path = build_world(start_info, get_minecraft_worlds_path())
+
+    # deploy level.dat
+    game_settings = config["game_settings"]
+    level_dat = generate_level_dat(game_settings)
+    deploy_level_dat(level_dat, world_dir_path)
 
     # deploy addons
-    deploy_addons(config, world_dir_path)
+    addon_dirs = config["addon_dirs"]
+    deploy_addons(addon_dirs, world_dir_path)
 
     # build cppconfig
-    cppconfig = build_cppconfig(config)
+    player_info = config["player_info"]
+    cppconfig = build_cppconfig(start_info, player_info)
 
     # launch game
-    lauch_game(config, cppconfig)
+    lauch_game(start_info, cppconfig)
 
 
-run_with_config("config.json")
+config = read_config("config.json")
+run_with_config(config)

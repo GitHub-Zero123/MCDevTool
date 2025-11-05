@@ -2,28 +2,45 @@
     "addon_dirs": [
         "./"
     ],
-    "game_info": {
+    "start_info": {
+        "override_world": true,
+        "level_id": "__development_world__",
         "pe_path": "D:\\MCStudioDownload\\game\\MinecraftPE_Netease\\PCLauncher_x64\\Minecraft.Windows.exe"
-    },
-    "game_rule": {
-        "default_game_mode": 1,
-        "enable_cheats": true,
-        "keep_inventory": true
     },
     "player_info": {
         "user_id": -1,
         "user_name": "Steve",
-        "email": "minecraft@netease.com"
+        "email": "minecraft@netease.com",
+        "skin": {
+            "slim": true,
+            "texture": "D:\\MCStudioDownload\\componentcache\\support\\steve\\steve.png"
+        }
     },
-    "skin_info": {
-        "slim": true,
-        "skin": "D:\\MCStudioDownload\\componentcache\\support\\steve\\steve.png"
-    },
-    "world_info": {
-        "seed": 0,
-        "world_type": 1,
-        "override": true,
+    "game_settings": {
         "level_name": "World",
-        "level_id": "__development_world__"
+        "default_game_mode": 1,
+        "difficulty": 0,
+        "world_type": 1,
+        "seed": 0,
+        "server_chunk_tick_range": 16,
+        "pvp": 1,
+        "show_coordinates": 1,
+        "show_played_game_days": null,
+        "do_fire_tick": 1,
+        "tnt_explodes": 1,
+        "respawn_block_explodes": null,
+        "do_mob_loot": 1,
+        "natural_regeneration": 1,
+        "do_tile_drops": 1,
+        "do_immediate_respawn": 1,
+        "spawn_radius": 0,
+        "enable_cheats": 1,
+        "do_daylight_cycle": 0,
+        "keep_inventory": 1,
+        "do_mob_spawning": 0,
+        "mob_griefing": 0,
+        "do_entity_drops": 0,
+        "do_weather_cycle": 1,
+        "command_blocks_enabled": 1
     }
 }
