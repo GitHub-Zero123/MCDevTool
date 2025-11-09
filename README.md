@@ -109,8 +109,10 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         "reload_key": "82",
         // 绑定重载世界快捷键
         "reload_world_key": "",
-        // 绑定重载Addon快捷键(适用于静态资源文件如动画)
-        "reload_addon_key": ""
+        // 绑定重载Addon快捷键
+        "reload_addon_key": "",
+        // 绑定重载着色器快捷键
+        "reload_shaders_key": ""
     }
 }
 ```

@@ -85,6 +85,9 @@ def RELOAD_WORLD():
     import clientlevel
     clientlevel.restart_local_game()
 
+def RELOAD_SHADERS():
+    clientApi.ReloadAllShaders()
+
 def CLOnKeyPressInGame(args={}):
     if args["isDown"] != "0":
         return
@@ -95,6 +98,8 @@ def CLOnKeyPressInGame(args={}):
         RELOAD_WORLD()
     elif key == str(DEBUG_CONFIG.get("reload_addon_key", "")):
         RELOAD_ADDON()
+    elif key == str(DEBUG_CONFIG.get("reload_shaders_key", "")):
+        RELOAD_SHADERS()
 
 @PRE_CLIENT_LOADER_HOOK
 def CLIENT_INIT():
