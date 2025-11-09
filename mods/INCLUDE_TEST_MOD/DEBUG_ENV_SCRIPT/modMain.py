@@ -86,7 +86,11 @@ def RELOAD_WORLD():
     clientlevel.restart_local_game()
 
 def RELOAD_SHADERS():
-    clientApi.ReloadAllShaders()
+    import gui
+    if clientApi.ReloadAllShaders():
+        gui.set_left_corner_notify_msg("[Dev] Shaders reloaded successfully.")
+        return
+    gui.set_left_corner_notify_msg("[Dev] No shader updates found.")
 
 def CLOnKeyPressInGame(args={}):
     if args["isDown"] != "0":
