@@ -95,6 +95,8 @@ def RELOAD_SHADERS():
 def CLOnKeyPressInGame(args={}):
     if args["isDown"] != "0":
         return
+    if args["screenName"] != "hud_screen":
+        return
     key = args["key"]
     if key == str(DEBUG_CONFIG.get("reload_key", "82")):
         RELOAD_MOD()
