@@ -6,6 +6,8 @@
 // std::move
 #include <utility>
 #include <vector>
+#include <thread>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <cstdint>
@@ -193,53 +195,196 @@ static std::vector<uint8_t> createUserLevel(const nlohmann::json& config) {
 
 #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
 
-// 启动游戏exe并附着终端
-// static void launchGameExe(const std::filesystem::path& exePath, std::string_view config="") {
-//     STARTUPINFOA si;
-//     PROCESS_INFORMATION pi;
-//     ZeroMemory(&si, sizeof(si));
-//     si.cb = sizeof(si);
-//     ZeroMemory(&pi, sizeof(pi));
+static std::mutex g_consoleMutex;
 
-//     char* cmdLine = nullptr;
-//     if(!config.empty()) {
-//         std::string configArg = " config=" + std::string(config);
-//         cmdLine = configArg.data();
-//     }
+enum class ConsoleColor {
+    Default,
+    Green,      // 绿色（Green）
+    Red,        // 红色（Red）
+    Blue,       // 蓝色（Blue）
+    Yellow,    // 黄色（Yellow）
+    Cyan,      // 青色（Cyan）
+    Magenta,   // 品红（Magenta）
+    White,     // 白色（White）
+    Black,     // 黑色（Black）
+    Gray,      // 亮灰（Light Gray）
+    DarkGray   // 深灰（Dark Gray）
+};
 
-//     // 创建进程
-//     if(!CreateProcessA(
-//         exePath.string().c_str(),   // 可执行文件路径
-//         cmdLine,  // 命令行参数
-//         nullptr,                    // 进程属性
-//         nullptr,                    // 线程属性
-//         FALSE,                      // 是否继承句柄
-//         0,                        // 创建标志
-//         nullptr,                    // 使用父进程的环境变量
-//         nullptr,               // 使用父进程的工作目录
-//         &si,                        // 指向 STARTUPINFO 结构体的指针
-//         &pi                  // 指向 PROCESS_INFORMATION 结构体的指针
-//     )) {
-//         throw std::runtime_error("无法启动游戏可执行文件，CreateProcess失败。");
-//     }
+// 线程安全彩色输出
+static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
+    std::lock_guard<std::mutex> lk(g_consoleMutex);
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 
-//     // 等待进程结束
-//     WaitForSingleObject(pi.hProcess, INFINITE);
+    if (hConsole == INVALID_HANDLE_VALUE) {
+        std::cout << msg << std::endl;
+        return;
+    }
 
-//     // 关闭进程和线程句柄
-//     CloseHandle(pi.hProcess);
-//     CloseHandle(pi.hThread);
-// }
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (!GetConsoleScreenBufferInfo(hConsole, &info)) {
+        std::cout << msg << std::endl;
+        return;
+    }
 
-static void launchGameExe(const std::filesystem::path& exePath, std::string_view config="") {
+    WORD attr = 0;
+
+    switch (color) {
+    case ConsoleColor::Green:
+        attr = FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+        break;
+    case ConsoleColor::Red:
+        attr = FOREGROUND_RED | FOREGROUND_INTENSITY;
+        break;
+    case ConsoleColor::Blue:
+        attr = FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+        break;
+    case ConsoleColor::Yellow:
+        attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+        break;
+    case ConsoleColor::Cyan:
+        attr = FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+        break;
+    case ConsoleColor::Magenta:
+        attr = FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+        break;
+    case ConsoleColor::White:
+        attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+        break;
+    case ConsoleColor::Black:
+        attr = 0;
+        break;
+    case ConsoleColor::Gray:
+        // 亮灰 = RGB，但不加高亮
+        attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+        break;
+    case ConsoleColor::DarkGray:
+        // 深灰 = 只加高亮，不加 RGB
+        attr = FOREGROUND_INTENSITY;
+        break;
+    default:
+        break;
+    }
+
+    if (color != ConsoleColor::Default)
+        SetConsoleTextAttribute(hConsole, attr);
+
+    std::cout << msg << std::endl;
+
+    // 恢复原色
+    SetConsoleTextAttribute(hConsole, info.wAttributes);
+}
+
+// 进程buffer行处理
+static void processBufferAppend(std::string& lineBuf, const char* buf, size_t len,
+                                bool filterPython,
+                                const std::function<void(const std::string&)>& processLine)
+{
+    lineBuf.append(buf, len);
+
+    size_t pos = 0;
+    while ((pos = lineBuf.find('\n')) != std::string::npos) {
+        std::string line = lineBuf.substr(0, pos);
+        lineBuf.erase(0, pos + 1);
+
+        // 去除行尾可能存在的 '\r'
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+
+        // 过滤：若启用只保留 [Python] 则丢弃其它
+        if (filterPython && line.find("[Python] ") == std::string::npos)
+            continue;
+
+        processLine(line);
+    }
+}
+
+// 读 pipe 的线程函数
+static void readPipeThread(HANDLE hPipe, bool filterPython,
+                           const std::function<void(const std::string&)>& processLine)
+{
+    constexpr DWORD BUFSZ = 4096;
+    std::string lineBuf;
+    std::vector<char> buffer(BUFSZ);
+
+    while (true) {
+        DWORD bytesRead = 0;
+        BOOL ok = ReadFile(hPipe, buffer.data(), BUFSZ, &bytesRead, NULL);
+        if (!ok) {
+            DWORD err = GetLastError();
+            // ERROR_BROKEN_PIPE (109) 表示写端已关闭并读尽
+            if (err == ERROR_BROKEN_PIPE) {
+                // 处理残留并退出
+                if (!lineBuf.empty()) {
+                    // 没有换行但还有内容，作为最后一行处理
+                    std::string lastLine = lineBuf;
+                    if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
+                    if (!(filterPython && lastLine.find("[Python] ") == std::string::npos))
+                        processLine(lastLine);
+                    lineBuf.clear();
+                }
+                break;
+            } else {
+                // 其它错误可以选择退出或重试，这里退出
+                break;
+            }
+        }
+
+        if (bytesRead == 0) {
+            // 管道关闭或无数据（通常与 ERROR_BROKEN_PIPE 一致）
+            // 处理残留并退出
+            if (!lineBuf.empty()) {
+                std::string lastLine = lineBuf;
+                if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
+                if (!(filterPython && lastLine.find("[Python] ") == std::string::npos))
+                    processLine(lastLine);
+                lineBuf.clear();
+            }
+            break;
+        }
+
+        // 追加并按行处理（会把完整行交给 processLine，残留留在 lineBuf）
+        processBufferAppend(lineBuf, buffer.data(), bytesRead, filterPython, processLine);
+    }
+}
+
+static void launchGameExe(
+    const std::filesystem::path& exePath,
+    std::string_view config = "",
+    bool filterPython = false
+) {
     STARTUPINFOA si = { sizeof(si) };
     PROCESS_INFORMATION pi = {};
 
-    std::string cmd = "\"" + exePath.string() + "\"";
-    if (!config.empty()) {
-        cmd += " config=\"" + std::string(config) + "\"";
-    }
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = nullptr;
 
+    // 创建 stdout/stderr 分开管道
+    HANDLE outRead = NULL, outWrite = NULL;
+    HANDLE errRead = NULL, errWrite = NULL;
+
+    if (!CreatePipe(&outRead, &outWrite, &sa, 0))
+        throw std::runtime_error("CreatePipe(stdout) failed");
+    if (!SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0))
+        throw std::runtime_error("SetHandleInformation(stdout) failed");
+
+    if (!CreatePipe(&errRead, &errWrite, &sa, 0))
+        throw std::runtime_error("CreatePipe(stderr) failed");
+    if (!SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0))
+        throw std::runtime_error("SetHandleInformation(stderr) failed");
+
+    si.dwFlags |= STARTF_USESTDHANDLES;
+    si.hStdOutput = outWrite;
+    si.hStdError  = errWrite;
+    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+
+    // Build command
+    std::string cmd = "\"" + exePath.string() + "\"";
+    if (!config.empty())
+        cmd += " config=\"" + std::string(config) + "\"";
     std::vector<char> cmdBuf(cmd.begin(), cmd.end());
     cmdBuf.push_back('\0');
 
@@ -247,17 +392,74 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
         nullptr,
         cmdBuf.data(),
         nullptr, nullptr,
-        FALSE,
+        TRUE,   // 继承句柄
         0,
         nullptr,
-        nullptr,   // 使用父进程的工作目录
+        nullptr,
         &si,
         &pi
     )) {
-        throw std::runtime_error("无法启动游戏可执行文件，CreateProcess失败。");
+        CloseHandle(outRead); CloseHandle(outWrite);
+        CloseHandle(errRead); CloseHandle(errWrite);
+        throw std::runtime_error("CreateProcessA failed");
     }
 
+    // 父进程不需要写端
+    CloseHandle(outWrite);
+    CloseHandle(errWrite);
+
+    // 输出处理回调
+    auto processStdout = [](const std::string& line) {
+        // 屏蔽的 Engine 噪音行
+        if (line.find(" [INFO][Engine] ") != std::string::npos) {
+            return;
+        }
+        // 特殊标记行处理
+        if(line.find("SUC") != std::string::npos) {
+            printColoredAtomic(line, ConsoleColor::Green);
+            return;
+        } else if(line.find("[INFO][Developer]") != std::string::npos) {
+            printColoredAtomic(line, ConsoleColor::DarkGray);
+            return;
+        } else if(line.find("ERROR") != std::string::npos) {
+            printColoredAtomic(line, ConsoleColor::Red);
+            return;
+        } else if(line.find("WARN") != std::string::npos) {
+            printColoredAtomic(line, ConsoleColor::Cyan);
+            return;
+        }
+        printColoredAtomic(line, ConsoleColor::Default);
+    };
+
+    auto processStderr = [](const std::string& line) {
+        printColoredAtomic(line, ConsoleColor::Red);
+    };
+
+    // 启动两个线程并行读取（避免任何死锁）
+    std::thread tOut(
+        readPipeThread,
+        outRead,
+        filterPython,
+        std::function<void(const std::string&)>(processStdout)
+    );
+
+    std::thread tErr(
+        readPipeThread,
+        errRead,
+        filterPython,
+        std::function<void(const std::string&)>(processStderr)
+    );
+
+    // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回 ERROR_BROKEN_PIPE）
     WaitForSingleObject(pi.hProcess, INFINITE);
+
+    // 等待读线程退出并关闭读端句柄
+    tOut.join();
+    tErr.join();
+
+    CloseHandle(outRead);
+    CloseHandle(errRead);
+
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
 }
@@ -336,15 +538,15 @@ static void startGame(const nlohmann::json& config) {
     if(!std::filesystem::is_regular_file(gameExePath)) {
         // 游戏exe路径无效 重新搜索新版
         if(updateGamePath(gameExePath)) {
-            std::cout << "[Python] 游戏路径无效，重新搜索：" << gameExePath.generic_string() << "\n";
+            std::cout << "游戏路径无效，重新搜索：" << gameExePath.generic_string() << "\n";
             std::string u8input;
-            std::cout << "[Python] 是否更新配置文件中的游戏路径？(Y/N)：";
+            std::cout << "是否更新配置文件中的游戏路径？(Y/N)：";
             std::getline(std::cin, u8input);
             if(u8input == "Y" || u8input == "y") {
                 tryUpdateUserGamePath(gameExePath);
-                std::cout << "[Python] 已更新配置文件中的游戏路径。\n";
+                std::cout << "已更新配置文件中的游戏路径。\n";
             } else {
-                std::cout << "[Python] 未更新配置文件中的游戏路径。\n";
+                std::cout << "未更新配置文件中的游戏路径。\n";
             }
         } else {
             // std::cerr << "未能找到有效的游戏exe文件。\n";
@@ -412,10 +614,12 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream resManifestFile(worldsPath / targetResJson);
     resManifestFile << resPacksManifest.dump(4);
     resManifestFile.close();
+    // 检查是否附加debugmod
+    bool useDebugMode = config.value("include_debug_mod", true);
 
 #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
     if(!autoJoinGame) {
-        launchGameExe(gameExePath);
+        launchGameExe(gameExePath, "", useDebugMode);
         return;
     }
     auto configPath = worldsPath / "dev_config.cppconfig";
@@ -444,7 +648,7 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
     configFile.close();
-    launchGameExe(gameExePath, configPath.generic_string());
+    launchGameExe(gameExePath, configPath.generic_string(), useDebugMode);
 #else
     launchGameExe(gameExePath);
 #endif

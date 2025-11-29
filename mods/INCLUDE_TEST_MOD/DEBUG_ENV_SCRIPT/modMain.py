@@ -17,14 +17,31 @@ REF = 0
 class STD_OUT_WRAPPER(object):
     def __init__(self, baseIO):
         self.baseIO = baseIO
+        self._buffer = []
 
     def __getattr__(self, name):
         return getattr(self.baseIO, name)
 
-    def write(self, text, **args):
-        if text in ("\n", "\r\n"):
-            return self.baseIO.write(str(text), **args)
-        return self.baseIO.write("[Python] " + str(text), **args)
+    def write(self, text):
+        self._buffer.append(text)
+        buf = "".join(self._buffer)
+
+        if "\n" not in buf:
+            return
+
+        lines = buf.split("\n")
+        self._buffer = [lines.pop()]
+
+        for line in lines:
+            if line.strip() == "":
+                self.baseIO.write("\n")
+            else:
+                self.baseIO.write("[Python] " + line + "\n")
+
+    # def write(self, text, **args):
+    #     if text in ("\n", "\r\n", "", " "):
+    #         return self.baseIO.write(str(text), **args)
+    #     return self.baseIO.write("[Python] " + str(text), **args)
 
     def close(self):
         return self.baseIO.close()

@@ -11,7 +11,6 @@
 
 ```jsonc
 // .vscode/tasks.json
-// 可通过 Ctrl+Shift+B 快捷键执行
 {
     "version": "2.0.0",
     "tasks": [
@@ -19,38 +18,10 @@
             "label": "RUN MC DEV",
             "type": "shell",
             "command": "cmd /c mcdk",
-            // 仅过滤Python相关日志(需启用debug调试mod)
-            // "command": "cmd",
-            // "args": [
-            //     "/c",
-            //     "mcdk 2>&1 | findstr /C:\"[Python] \""
-            // ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
-            },
-            "problemMatcher": [
-                {
-                    "owner": "python",
-                    "fileLocation": ["relative", "${workspaceFolder}"],
-                    // 匹配Python异常堆栈信息(该规则可能不准确，仅供参考)
-                    "pattern": [
-                        {
-                            "regexp": "  File \"(.*)\", line (\\d+), in .*",
-                            "file": 1,
-                            "line": 2
-                        },
-                        {
-                            "regexp": "^(.*Error|.*Exception): (.*)$",
-                            "message": 0
-                        }
-                    ]
-                }
-            ]
+            }
         }
     ]
 }
