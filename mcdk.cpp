@@ -219,13 +219,13 @@ static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 
     if (hConsole == INVALID_HANDLE_VALUE) {
-        std::cout << msg << std::endl;
+        std::cout << msg << "\n";
         return;
     }
 
     CONSOLE_SCREEN_BUFFER_INFO info;
     if (!GetConsoleScreenBufferInfo(hConsole, &info)) {
-        std::cout << msg << std::endl;
+        std::cout << msg << "\n";
         return;
     }
 
@@ -268,11 +268,15 @@ static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
         break;
     }
 
-    if (color != ConsoleColor::Default)
+    if (color != ConsoleColor::Default) {
         SetConsoleTextAttribute(hConsole, attr);
+    }
 
-    std::cout << msg << std::endl;
+    std::cout << msg << "\n";
 
+    if(color == ConsoleColor::Default) {
+        return;
+    }
     // 恢复原色
     SetConsoleTextAttribute(hConsole, info.wAttributes);
 }
@@ -368,15 +372,21 @@ static void launchGameExe(
     HANDLE outRead = NULL, outWrite = NULL;
     HANDLE errRead = NULL, errWrite = NULL;
 
-    if (!CreatePipe(&outRead, &outWrite, &sa, 0))
+    if (!CreatePipe(&outRead, &outWrite, &sa, 0)) {
         throw std::runtime_error("CreatePipe(stdout) failed");
-    if (!SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0))
-        throw std::runtime_error("SetHandleInformation(stdout) failed");
+    }
 
-    if (!CreatePipe(&errRead, &errWrite, &sa, 0))
+    if (!SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0)) {
+        throw std::runtime_error("SetHandleInformation(stdout) failed");
+    }
+
+    if (!CreatePipe(&errRead, &errWrite, &sa, 0)) {
         throw std::runtime_error("CreatePipe(stderr) failed");
-    if (!SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0))
+    }
+
+    if (!SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0)) {
         throw std::runtime_error("SetHandleInformation(stderr) failed");
+    }
 
     si.dwFlags |= STARTF_USESTDHANDLES;
     si.hStdOutput = outWrite;
