@@ -21,7 +21,10 @@
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
-            }
+            },
+            "problemMatcher": [
+                "$python"
+            ]
         }
     ]
 }

@@ -3,11 +3,13 @@
 #include <fstream>
 #include <iterator>
 #include <filesystem>
+#include <regex>
 // std::move
 #include <utility>
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <cstdint>
@@ -168,9 +170,9 @@ static void linkUserMods(const std::vector<std::string>& u8Paths, std::vector<MC
         auto packInfos = MCDevTool::linkSourceAddonToRuntimePacks(dir);
         for(const auto& info : packInfos) {
             if(info.type == MCDevTool::Addon::PackType::BEHAVIOR) {
-                std::cout << "LINK行为包: '" << info.name << "', UUID: " << info.uuid << "\n";
+                std::cout << "LINK行为包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
             } else if(info.type == MCDevTool::Addon::PackType::RESOURCE) {
-                std::cout << "LINK资源包: '" << info.name << "', UUID: " << info.uuid << "\n";
+                std::cout << "LINK资源包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
             }
             linkedPacks.push_back(std::move(info));
         }
@@ -431,9 +433,43 @@ static void launchGameExe(
         printColoredAtomic(line, ConsoleColor::Default);
     };
 
+    // stderr 处理回调
     auto processStderr = [](const std::string& line) {
-        printColoredAtomic(line, ConsoleColor::Red);
+        static std::regex fileRe(R"(File \"([A-Za-z0-9_\.]+)\", line (\d+))");
+
+        std::string out;
+        out.reserve(line.size());
+
+        std::sregex_iterator cur(line.begin(), line.end(), fileRe);
+        std::sregex_iterator end;
+
+        size_t lastPos = 0;
+
+        for (; cur != end; ++cur) {
+            const std::smatch& m = *cur;
+
+            // 追加前面的普通内容
+            out.append(line, lastPos, m.position() - lastPos);
+
+            // 动态构造替换内容（你的 lambda 逻辑）
+            std::string dotted = m[1].str();
+            std::string slashed = dotted;
+            std::replace(slashed.begin(), slashed.end(), '.', '/');
+            slashed += ".py";
+
+            out += "File \"" + slashed + "\", line " + m[2].str();
+
+            lastPos = m.position() + m.length();
+        }
+
+        // 拼接剩余部分
+        out.append(line, lastPos);
+
+        printColoredAtomic(out, ConsoleColor::Red);
     };
+    // auto processStderr = [](const std::string& line) {
+    //     printColoredAtomic(line, ConsoleColor::Red);
+    // };
 
     // 启动两个线程并行读取（避免任何死锁）
     std::thread tOut(
