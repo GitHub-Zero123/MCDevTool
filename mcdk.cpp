@@ -297,11 +297,59 @@ static void launchGameExe(const std::filesystem::path& exePath) {
 }
 #endif
 
+// 尝试更新游戏路径
+static bool updateGamePath(std::filesystem::path& path) {
+    auto autoExePath = MCDevTool::autoMatchLatestGameExePath();
+    if(autoExePath.has_value()) {
+        path = std::move(autoExePath.value());
+        return true;
+    }
+    return false;
+}
+
+// 尝试更新用户游戏路径配置
+static void tryUpdateUserGamePath(const std::filesystem::path& newPath) {
+    auto configPath = std::filesystem::current_path() / ".mcdev.json";
+    std::ifstream configFile(configPath, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(configFile)),
+                         std::istreambuf_iterator<char>());
+    nlohmann::json config = nlohmann::json::parse(content, nullptr, false, true);
+    configFile.close();
+    if(config.is_discarded()) {
+        throw std::runtime_error("配置文件解析失败，JSON异常，请检查格式是否正确。");
+    }
+    auto u8Path = newPath.generic_u8string();
+    if constexpr (sizeof(char8_t) == sizeof(char)) {
+        config["game_executable_path"] = reinterpret_cast<const char*>(u8Path.c_str());
+    } else {
+        config["game_executable_path"] = std::string(u8Path.begin(), u8Path.end());
+    }
+    // 重新写入配置文件
+    std::ofstream outConfigFile(configPath, std::ios::binary | std::ios::trunc);
+    outConfigFile << config.dump(4);
+    outConfigFile.close();
+}
+
 // 启动游戏
 static void startGame(const nlohmann::json& config) {
     auto gameExePath = std::filesystem::u8path(config.value("game_executable_path", ""));
     if(!std::filesystem::is_regular_file(gameExePath)) {
-        throw std::runtime_error("游戏可执行文件路径无效，文件不存在。");
+        // 游戏exe路径无效 重新搜索新版
+        if(updateGamePath(gameExePath)) {
+            std::cout << "[Python] 游戏路径无效，重新搜索：" << gameExePath.generic_string() << "\n";
+            std::string u8input;
+            std::cout << "[Python] 是否更新配置文件中的游戏路径？(Y/N)：";
+            std::getline(std::cin, u8input);
+            if(u8input == "Y" || u8input == "y") {
+                tryUpdateUserGamePath(gameExePath);
+                std::cout << "[Python] 已更新配置文件中的游戏路径。\n";
+            } else {
+                std::cout << "[Python] 未更新配置文件中的游戏路径。\n";
+            }
+        } else {
+            // std::cerr << "未能找到有效的游戏exe文件。\n";
+            throw std::runtime_error("未能找到有效的游戏exe文件。");
+        }
     }
     MCDevTool::cleanRuntimePacks();
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
@@ -366,7 +414,6 @@ static void startGame(const nlohmann::json& config) {
     resManifestFile.close();
 
 #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
-    
     if(!autoJoinGame) {
         launchGameExe(gameExePath);
         return;
