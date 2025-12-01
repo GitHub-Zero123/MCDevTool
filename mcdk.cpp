@@ -701,9 +701,11 @@ static void startGame(const nlohmann::json& config) {
 }
 
 #ifdef MCDK_ENABLE_CLI
+#ifdef _WIN32
 int MCDK_CLI_PARSE(int argc, wchar_t* argv[]);
 #else
 int MCDK_CLI_PARSE(int argc, char* argv[]);
+#endif
 #endif
 
 #ifdef _WIN32
