@@ -20,7 +20,7 @@
 #include <mcdevtool/level.h>
 #include <nlohmann/json.hpp>
 
-#define MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
+// #define MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -195,7 +195,7 @@ static std::vector<uint8_t> createUserLevel(const nlohmann::json& config) {
     return levelDat;
 }
 
-#ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
+// #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
 
 static std::mutex g_consoleMutex;
 
@@ -510,40 +510,41 @@ static void launchGameExe(
     CloseHandle(pi.hThread);
 }
 
-#else
+// #else
 
 // 启动游戏exe并附着终端
-static void launchGameExe(const std::filesystem::path& exePath) {
-    STARTUPINFOA si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
+// static void launchGameExe(const std::filesystem::path& exePath) {
+//     STARTUPINFOA si;
+//     PROCESS_INFORMATION pi;
+//     ZeroMemory(&si, sizeof(si));
+//     si.cb = sizeof(si);
+//     ZeroMemory(&pi, sizeof(pi));
 
-    // 创建进程
-    if(!CreateProcessA(
-        exePath.string().c_str(),   // 可执行文件路径
-        nullptr,                    // 命令行参数
-        nullptr,                    // 进程属性
-        nullptr,                    // 线程属性
-        FALSE,                      // 是否继承句柄
-        0,                          // 创建标志
-        nullptr,                    // 使用父进程的环境变量
-        nullptr,                    // 使用父进程的工作目录
-        &si,                        // 指向 STARTUPINFO 结构体的指针
-        &pi                         // 指向 PROCESS_INFORMATION 结构体的指针
-    )) {
-        throw std::runtime_error("无法启动游戏可执行文件，CreateProcess失败。");
-    }
+//     // 创建进程
+//     if(!CreateProcessA(
+//         exePath.string().c_str(),   // 可执行文件路径
+//         nullptr,                    // 命令行参数
+//         nullptr,                    // 进程属性
+//         nullptr,                    // 线程属性
+//         FALSE,                      // 是否继承句柄
+//         0,                          // 创建标志
+//         nullptr,                    // 使用父进程的环境变量
+//         nullptr,                    // 使用父进程的工作目录
+//         &si,                        // 指向 STARTUPINFO 结构体的指针
+//         &pi                         // 指向 PROCESS_INFORMATION 结构体的指针
+//     )) {
+//         throw std::runtime_error("无法启动游戏可执行文件，CreateProcess失败。");
+//     }
 
-    // 等待进程结束
-    WaitForSingleObject(pi.hProcess, INFINITE);
+//     // 等待进程结束
+//     WaitForSingleObject(pi.hProcess, INFINITE);
 
-    // 关闭进程和线程句柄
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-}
-#endif
+//     // 关闭进程和线程句柄
+//     CloseHandle(pi.hProcess);
+//     CloseHandle(pi.hThread);
+// }
+
+// #endif
 
 // 尝试更新游戏路径
 static bool updateGamePath(std::filesystem::path& path) {
@@ -664,7 +665,7 @@ static void startGame(const nlohmann::json& config) {
     // 检查是否附加debugmod
     bool useDebugMode = config.value("include_debug_mod", true);
 
-#ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
+// #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
     if(!autoJoinGame) {
         launchGameExe(gameExePath, "", useDebugMode);
         return;
@@ -696,9 +697,9 @@ static void startGame(const nlohmann::json& config) {
     configFile << devConfig.dump(4);
     configFile.close();
     launchGameExe(gameExePath, configPath.generic_string(), useDebugMode);
-#else
-    launchGameExe(gameExePath);
-#endif
+// #else
+//     launchGameExe(gameExePath);
+// #endif
 }
 
 #ifdef MCDK_ENABLE_CLI
