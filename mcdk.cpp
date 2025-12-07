@@ -592,7 +592,8 @@ static void startGame(const nlohmann::json& config) {
                 tryUpdateUserGamePath(gameExePath);
                 std::cout << "已更新配置文件中的游戏路径。\n";
             } else {
-                std::cout << "未更新配置文件中的游戏路径。\n";
+                // std::cout << "未更新配置文件中的游戏路径。\n";
+                throw std::runtime_error("未更新配置文件中的游戏路径，启动终止。");
             }
         } else {
             // std::cerr << "未能找到有效的游戏exe文件。\n";
