@@ -86,7 +86,9 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         // 绑定重载Addon快捷键
         "reload_addon_key": "",
         // 绑定重载着色器快捷键
-        "reload_shaders_key": ""
+        "reload_shaders_key": "",
+        // 是否在全体UI界面都触发热更新快捷键（默认false）
+        "reload_key_global": false
     }
 }
 ```
