@@ -22,9 +22,20 @@
 
 // #define MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
 
+// 默认使用"\n"而非std::endl输出日志，避免大量log的性能开销
+#define _MCDEV_LOG_OUTPUT_ENDL "\n"
+
+#ifdef MCDEV_LOG_FORCE_FLUSH_ENDL
+    // 强制使用std::endl
+    #undef _MCDEV_LOG_OUTPUT_ENDL
+    #define _MCDEV_LOG_OUTPUT_ENDL std::endl
+#endif
+
+#ifdef _WIN32
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#endif
 
 // 字符串关键字替换
 static void stringReplace(std::string& str, const std::string& from, const std::string& to) {
@@ -219,13 +230,13 @@ static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 
     if (hConsole == INVALID_HANDLE_VALUE) {
-        std::cout << msg << "\n";
+        std::cout << msg << _MCDEV_LOG_OUTPUT_ENDL;
         return;
     }
 
     CONSOLE_SCREEN_BUFFER_INFO info;
     if (!GetConsoleScreenBufferInfo(hConsole, &info)) {
-        std::cout << msg << "\n";
+        std::cout << msg << _MCDEV_LOG_OUTPUT_ENDL;
         return;
     }
 
@@ -272,7 +283,7 @@ static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
         SetConsoleTextAttribute(hConsole, attr);
     }
 
-    std::cout << msg << "\n";
+    std::cout << msg << _MCDEV_LOG_OUTPUT_ENDL;
 
     if(color == ConsoleColor::Default) {
         return;
@@ -306,7 +317,9 @@ static void processBufferAppend(std::string& lineBuf, const char* buf, size_t le
     }
 }
 
-// 读 pipe 的线程函数
+#ifdef _WIN32
+
+// pipe线程处理函数
 static void readPipeThread(HANDLE hPipe, bool filterPython,
                            const std::function<void(const std::string&)>& processLine)
 {
@@ -332,7 +345,7 @@ static void readPipeThread(HANDLE hPipe, bool filterPython,
                 }
                 break;
             } else {
-                // 其它错误可以选择退出或重试，这里退出
+                // 其它错误直接退出
                 break;
             }
         }
@@ -509,6 +522,8 @@ static void launchGameExe(
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
 }
+
+#endif
 
 // #else
 
