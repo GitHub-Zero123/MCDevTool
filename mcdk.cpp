@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <fstream>
 #include <iterator>
 #include <filesystem>
@@ -39,11 +40,26 @@
 
 // 字符串关键字替换
 static void stringReplace(std::string& str, const std::string& from, const std::string& to) {
-    size_t start_pos = 0;
-    while((start_pos = str.find(from, start_pos)) != std::string::npos) {
-        str.replace(start_pos, from.length(), to);
-        start_pos += to.length();
+    size_t startPos = 0;
+    while((startPos = str.find(from, startPos)) != std::string::npos) {
+        str.replace(startPos, from.length(), to);
+        startPos += to.length();
     }
+}
+
+// 获取环境变量强制覆写的自动进入游戏存档状态 -1.未设置 0.关闭 1.开启
+static int _GET_ENV_AUTO_JOIN_GAME_STATE() {
+    auto* autoJoin = std::getenv("MCDEV_AUTO_JOIN_GAME");
+    if(autoJoin == nullptr) {
+        return -1;
+    }
+    std::string_view valStr(autoJoin);
+    if(valStr == "0" || valStr == "false" || valStr == "False") {
+        return 0;
+    } else if(valStr == "1" || valStr == "true" || valStr == "True") {
+        return 1;
+    }
+    return -1;
 }
 
 static nlohmann::json createDefaultConfig() {
@@ -474,7 +490,7 @@ static void launchGameExe(
             // 追加前面的普通内容
             out.append(line, lastPos, m.position() - lastPos);
 
-            // 动态构造替换内容（你的 lambda 逻辑）
+            // 动态构造替换内容
             std::string dotted = m[1].str();
             std::string slashed = dotted;
             std::replace(slashed.begin(), slashed.end(), '.', '/');
@@ -663,6 +679,11 @@ static void startGame(const nlohmann::json& config) {
         }
     }
     auto autoJoinGame = config.value("auto_join_game", true);
+    auto envAutoJoin = _GET_ENV_AUTO_JOIN_GAME_STATE();
+    if (envAutoJoin != -1) {
+        // 环境变量覆写配置文件
+        autoJoinGame = (envAutoJoin == 1);
+    }
     std::string targetBehJson = "netease_world_behavior_packs.json";
     std::string targetResJson = "netease_world_resource_packs.json";
     if(autoJoinGame) {
