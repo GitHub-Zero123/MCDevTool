@@ -47,21 +47,6 @@ static void stringReplace(std::string& str, const std::string& from, const std::
     }
 }
 
-// 获取环境变量强制覆写的自动进入游戏存档状态 -1.未设置 0.关闭 1.开启
-static int _GET_ENV_AUTO_JOIN_GAME_STATE() {
-    auto* autoJoin = std::getenv("MCDEV_AUTO_JOIN_GAME");
-    if(autoJoin == nullptr) {
-        return -1;
-    }
-    std::string_view valStr(autoJoin);
-    if(valStr == "0" || valStr == "false" || valStr == "False") {
-        return 0;
-    } else if(valStr == "1" || valStr == "true" || valStr == "True") {
-        return 1;
-    }
-    return -1;
-}
-
 static nlohmann::json createDefaultConfig() {
     std::filesystem::path exePath;
     auto autoExePath = MCDevTool::autoMatchLatestGameExePath();
@@ -608,6 +593,21 @@ static void tryUpdateUserGamePath(const std::filesystem::path& newPath) {
     std::ofstream outConfigFile(configPath, std::ios::binary | std::ios::trunc);
     outConfigFile << config.dump(4);
     outConfigFile.close();
+}
+
+// 获取环境变量强制覆写的自动进入游戏存档状态 -1.未设置 0.关闭 1.开启
+static int _GET_ENV_AUTO_JOIN_GAME_STATE() {
+    auto* autoJoin = std::getenv("MCDEV_AUTO_JOIN_GAME");
+    if(autoJoin == nullptr) {
+        return -1;
+    }
+    std::string_view valStr(autoJoin);
+    if(valStr == "0" || valStr == "false" || valStr == "False") {
+        return 0;
+    } else if(valStr == "1" || valStr == "true" || valStr == "True") {
+        return 1;
+    }
+    return -1;
 }
 
 // 启动游戏

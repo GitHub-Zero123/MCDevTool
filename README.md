@@ -15,9 +15,29 @@
     "version": "2.0.0",
     "tasks": [
         {
+            // 普通启动模式（根据配置文件，默认自动进入存档）
             "label": "RUN MC DEV",
             "type": "shell",
             "command": "cmd /c mcdk",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": [
+                "$python"
+            ]
+        },
+        {
+            // 子进程启动模式（必定不会自动进入存档），用于自测联机调试
+            "label": "RUN MC SUB DEV",
+            "type": "shell",
+            "command": "cmd /c mcdk",
+            "options": {
+                "env": {
+                    // 传递环境变量以覆写自动进入游戏存档状态
+                    "MCDEV_AUTO_JOIN_GAME": "0"
+                }
+            },
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
