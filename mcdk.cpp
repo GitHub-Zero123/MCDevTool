@@ -369,10 +369,40 @@ static void readPipeThread(HANDLE hPipe, bool filterPython,
     }
 }
 
+// 尝试附加调试器到指定进程
+static void debuggerAttachToProcess(DWORD pid, int port) {
+    // 执行cmd调用mcdbg.exe附加（如果失败则输出错误信息）
+    std::string cmd;
+    cmd.reserve(48);
+
+    cmd.append("mcdbg.exe --pid ");
+    cmd.append(std::to_string(pid));
+    cmd.append(" --port ");
+    cmd.append(std::to_string(port));
+    STARTUPINFOA si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcessA(
+        nullptr,
+        cmd.data(),
+        nullptr, nullptr,
+        FALSE,
+        CREATE_NO_WINDOW,
+        nullptr,
+        nullptr,
+        &si,
+        &pi
+    )) {
+        std::cerr << "警告：无法启动mcdbg.exe附加调试器，请确保其在环境变量路径中。" << _MCDEV_LOG_OUTPUT_ENDL;
+        return;
+    }
+    std::cout << "调试器已启动，正在附加到进程PID：" << pid << " 端口：" << port << " ..." << _MCDEV_LOG_OUTPUT_ENDL;
+}
+
 static void launchGameExe(
     const std::filesystem::path& exePath,
     std::string_view config = "",
-    bool filterPython = false
+    bool filterPython = false,
+    int debuggerPort = 0
 ) {
     STARTUPINFOA si = { sizeof(si) };
     PROCESS_INFORMATION pi = {};
@@ -509,6 +539,12 @@ static void launchGameExe(
         filterPython,
         std::function<void(const std::string&)>(processStderr)
     );
+
+    DWORD pid = pi.dwProcessId;
+    if(debuggerPort > 0) {
+        // 尝试启动调试器附加
+        debuggerAttachToProcess(pid, debuggerPort);
+    }
 
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回 ERROR_BROKEN_PIPE）
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -701,9 +737,19 @@ static void startGame(const nlohmann::json& config) {
     // 检查是否附加debugmod
     bool useDebugMode = config.value("include_debug_mod", true);
 
+    // 调试器端口（0为不启用）
+    int debuggerPort = 0;
+    auto debuggerConfig = config.value("modpc_debugger", nlohmann::json::object());
+    if(debuggerConfig.is_object()) {
+        bool debuggerEnabled = debuggerConfig.value("enabled", false);
+        if(debuggerEnabled) {
+            debuggerPort = debuggerConfig.value("port", 5632);
+        }
+    }
+
 // #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
     if(!autoJoinGame) {
-        launchGameExe(gameExePath, "", useDebugMode);
+        launchGameExe(gameExePath, "", useDebugMode, debuggerPort);
         return;
     }
     auto configPath = worldsPath / "dev_config.cppconfig";
@@ -732,7 +778,7 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
     configFile.close();
-    launchGameExe(gameExePath, configPath.generic_string(), useDebugMode);
+    launchGameExe(gameExePath, configPath.generic_string(), useDebugMode, debuggerPort);
 // #else
 //     launchGameExe(gameExePath);
 // #endif

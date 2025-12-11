@@ -50,7 +50,39 @@
 }
 ```
 
+## vscode 断点调试
+您可以通过配置**launch.json**以便在**vscode**中调试Mod代码，例如：
+
+```jsonc
+// .vscode/launch.json
+// 注：断点支持依赖mcdbg后端，需要在mcdev.json文件中配置启用，另见debugger/README.md
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // 可通过F5快捷键启动调试器附加
+            "name": "Minecraft Modpc Debugger",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5632
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "${workspaceFolder}"
+                }
+            ],
+            "justMyCode": false
+        }
+    ]
+}
+```
+
 ## 在pycharm中使用
+> 注：mcdbg后端基于微软的`DAP`协议，并不适用于**pycharm**的调试器，故断点调试功能不可用。
+
 由于作者并不使用**pycharm**，以下数据来源于网络，仅供参考：
 1. 点击菜单栏中的 `Run → Edit Configurations`
 2. 打开`创建 Run Configuration`
@@ -95,6 +127,11 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "skin_info": {
         "slim": false,
         "skin": "完整贴图路径.png"
+    },
+    // MODPC调试器配置（依赖mcdbg后端，请确保配置在环境变量/当前工作区）
+    "modpc_debugger": {
+        "enabled": false,   // 默认不启用
+        "port": 5632        // 端口号（需要在vscode配置中同步）
     },
     // 自定义debug参数(选填可缺失)
     "debug_options": {
