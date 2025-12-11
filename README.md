@@ -1,7 +1,7 @@
 # MCDevTool
 适用于**网易我的世界**的开发者工具包，提供创建测试世界、加载用户Mod等功能，方便开发者在脱离**mcs编辑器**的环境下离线测试Mod。
 
-![image](./mods/demo.webp)
+![image](./mods/demo2.webp)
 
 ## 配置mcdk
 您可以将**mcdk**添加到环境变量Path中，也可以直接放置在本地项目工作区以便命令搜索。
@@ -50,7 +50,7 @@
 }
 ```
 
-## vscode 断点调试
+## vscode断点调试
 您可以通过配置**launch.json**以便在**vscode**中调试Mod代码，例如：
 
 ```jsonc
