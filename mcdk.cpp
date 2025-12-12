@@ -90,6 +90,11 @@ static nlohmann::json createDefaultConfig() {
         { "enable_cheats", true },
         // 保留物品栏
         { "keep_inventory", true },
+        { "modpc_debugger", {
+            // 默认不启用调试器附加
+            { "enabled", false },
+            { "port", 5632 }
+        } },
         // user_name可选参数
         // { "user_name", "developer" },
         // skin info(可选参数)
