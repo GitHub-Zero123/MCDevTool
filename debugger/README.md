@@ -6,3 +6,8 @@
 - **项目作者**：Dofes  
 - **项目地址**：<https://github.com/Dofes/mcpdb>
 - **Release包**：<https://github.com/Dofes/mcpdb/releases>
+
+如果您在使用过程中遇到任何问题，欢迎通过 GitHub 提交 issue 或联系作者寻求帮助。
+
+## 以及
+**Dofes**希望你们能交出**Star**，否则他会很难过。

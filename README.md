@@ -81,13 +81,20 @@
 ```
 
 ## 在pycharm中使用
-> 注：mcdbg后端基于微软的`DAP`协议，并不适用于**pycharm**的调试器，故断点调试功能不可用。
 
-由于作者并不使用**pycharm**，以下数据来源于网络，仅供参考：
 1. 点击菜单栏中的 `Run → Edit Configurations`
 2. 打开`创建 Run Configuration`
 3. 创建新的配置项
 4. 配置`Shell Script`执行`mcdk`
+
+## 在pycharm中调试
+
+> 注：mcdbg后端基于微软的`DAP`**pycharm**仅**专业版**支持`DAP`调试协议，社区版用户请使用**vscode**进行断点调试。
+
+相关参考文档：
+
+- [远程调试配置指南](https://www.jetbrains.com.cn/help/pycharm/remote-debugging-with-product.html)
+- [附加到DAP](https://www.jetbrains.com/zh-cn/help/pycharm/run-debug-configuration-attach-to-dap.html)
 
 
 ## mcdev.json 配置参数
