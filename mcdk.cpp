@@ -804,6 +804,21 @@ static int _GET_ENV_AUTO_JOIN_GAME_STATE() {
     return -1;
 }
 
+// 获取环境变量 强制修改调试器端口号
+static int _GET_ENV_DEBUGGER_PORT() {
+    auto* portStr = std::getenv("MCDEV_MODPC_DEBUGGER_PORT");
+    if(portStr == nullptr) {
+        return 0;
+    }
+    try {
+        int port = std::stoi(portStr);
+        if(port > 0 && port <= 65535) {
+            return port;
+        }
+    } catch(...) {}
+    return 0;
+}
+
 // 启动游戏
 static void startGame(const nlohmann::json& config) {
     auto gameExePath = std::filesystem::u8path(config.value("game_executable_path", ""));
@@ -915,12 +930,15 @@ static void startGame(const nlohmann::json& config) {
     bool useDebugMode = config.value("include_debug_mod", true);
 
     // 调试器端口（0为不启用）
-    int debuggerPort = 0;
-    auto debuggerConfig = config.value("modpc_debugger", nlohmann::json::object());
-    if(debuggerConfig.is_object()) {
-        bool debuggerEnabled = debuggerConfig.value("enabled", false);
-        if(debuggerEnabled) {
-            debuggerPort = debuggerConfig.value("port", 5632);
+    int debuggerPort = _GET_ENV_DEBUGGER_PORT();
+    if(debuggerPort != 0) {
+        // 解析用户配置覆盖
+        auto debuggerConfig = config.value("modpc_debugger", nlohmann::json::object());
+        if(debuggerConfig.is_object()) {
+            bool debuggerEnabled = debuggerConfig.value("enabled", false);
+            if(debuggerEnabled) {
+                debuggerPort = debuggerConfig.value("port", 5632);
+            }
         }
     }
 
