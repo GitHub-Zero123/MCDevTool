@@ -49,6 +49,10 @@ namespace MCDevTool::Addon {
                              std::istreambuf_iterator<char>());
         manifestFile.close();
         parseJsonPackInfo(content, out);
+        if(out) {
+            // 设置路径
+            out.path = packPath;
+        }
     }
 
     // 根据路径解析pack

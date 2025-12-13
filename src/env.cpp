@@ -253,23 +253,19 @@ namespace MCDevTool {
             auto uuid = info.uuid;
             normalizeUUIDString(uuid);
             auto destPath = getBehaviorPacksPath() / uuid;
-            // std::filesystem::create_directories(destPath.parent_path());
-            // if(!std::filesystem::is_symlink(destPath)) {
-            //     std::filesystem::create_directory_symlink(sourceDir, destPath);
-            // }
             if(!CREATE_JUNCTION(sourceDir, destPath)) {
                 std::cerr << "行为包软链接创建失败: " << sourceDir.filename().string() << "\n";
+            } else {
+                info.path = destPath;
             }
         } else if(info.type == Addon::PackType::RESOURCE) {
             auto uuid = info.uuid;
             normalizeUUIDString(uuid);
             auto destPath = getResourcePacksPath() / uuid;
-            // std::filesystem::create_directories(destPath.parent_path());
-            // if(!std::filesystem::is_symlink(destPath)) {
-            //     std::filesystem::create_directory_symlink(sourceDir, destPath);
-            // }
             if(!CREATE_JUNCTION(sourceDir, destPath)) {
                 std::cerr << "资源包软链接创建失败: " << sourceDir.filename().string() << "\n";
+            } else {
+                info.path = destPath;
             }
         }
         return info;

@@ -215,12 +215,14 @@ static nlohmann::json userParseConfig() {
 }
 
 // 注册调试MOD
-MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config, const std::vector<UserModDirConfig>& modDirConfigs) {
+MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config,
+                    const std::vector<UserModDirConfig>& modDirConfigs, std::filesystem::path* outMainFile = nullptr) {
     auto manifest = INCLUDE_MOD_RES::resourceMap.at("manifest.json");
     std::string manifestContent(reinterpret_cast<const char*>(manifest.first), manifest.second);
     MCDevTool::Addon::PackInfo info;
     parseJsonPackInfo(manifestContent, info);
     std::filesystem::path outDir;
+
     if(info.type == MCDevTool::Addon::PackType::BEHAVIOR) {
         outDir = MCDevTool::getBehaviorPacksPath();
     } else if(info.type == MCDevTool::Addon::PackType::RESOURCE) {
@@ -228,19 +230,24 @@ MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config, const 
     } else {
         throw std::runtime_error("调试MOD的PackType类型未知，无法注册。");
     }
+
     std::string uuidNoDash = info.uuid;
     uuidNoDash.erase(std::remove(uuidNoDash.begin(), uuidNoDash.end(), '-'), uuidNoDash.end());
     auto target = outDir / uuidNoDash;
+
     // 写入ADDON数据到目标目录
     if(std::filesystem::exists(target)) {
         std::filesystem::remove_all(target);
     }
+
     // 生成格式化的字面量json
     auto DEBUG_OPTIONS = config.value("debug_options", nlohmann::json::object()).dump();
+
     // 替换为python boolean格式
     stringReplace(DEBUG_OPTIONS, "true", "True");
     stringReplace(DEBUG_OPTIONS, "false", "False");
     stringReplace(DEBUG_OPTIONS, "null", "None");
+
     for(const auto& [resName, resData] : INCLUDE_MOD_RES::resourceMap) {
         auto resPath = target / std::filesystem::u8path(resName);
         std::filesystem::create_directories(resPath.parent_path());
@@ -251,6 +258,9 @@ MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config, const 
             stringReplace(modMainContent, "\"{#debug_options}\"", DEBUG_OPTIONS);
             stringReplace(modMainContent, "\"{#target_mod_dirs}\"", UserModDirConfig::toHotReloadListString(modDirConfigs));
             resFile.write(modMainContent.data(), modMainContent.size());
+            if(outMainFile != nullptr) {
+                outMainFile->assign(resPath);
+            }
         } else {
             resFile.write(reinterpret_cast<const char*>(resData.first), resData.second);
         }
@@ -276,12 +286,26 @@ static void linkUserMods(const std::vector<std::string>& u8Paths, std::vector<MC
 }
 
 // link用户mod目录 基于配置结构体
-static void linkUserMods(const std::vector<UserModDirConfig>& configs, std::vector<MCDevTool::Addon::PackInfo>& linkedPacks) {
-    std::vector<std::string> u8Paths;
-    for(const auto& config : configs) {
-        u8Paths.push_back(config.getAbsoluteU8String());
+static void linkUserConfigModDirs(std::vector<UserModDirConfig>& configs,
+        std::vector<MCDevTool::Addon::PackInfo>& linkedPacks, bool updateConfigPaths = false) {
+    for(auto& modConfig : configs) {
+        auto dir = modConfig.getAbsolutePath();
+        auto packInfos = MCDevTool::linkSourceAddonToRuntimePacks(dir);
+        for(const auto& info : packInfos) {
+            if(info.type == MCDevTool::Addon::PackType::BEHAVIOR) {
+                std::cout << "LINK行为包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
+                if(modConfig.hotReload) {
+                    std::cout << "  -> 热更新标记追踪\n";
+                    if(updateConfigPaths) {
+                        modConfig.path = info.path;   // 重新更新为link后的路径
+                    }
+                }
+            } else if(info.type == MCDevTool::Addon::PackType::RESOURCE) {
+                std::cout << "LINK资源包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
+            }
+            linkedPacks.push_back(std::move(info));
+        }
     }
-    return linkUserMods(u8Paths, linkedPacks);
 }
 
 // 根据用户config创建level.dat
@@ -491,6 +515,43 @@ static void debuggerAttachToProcess(DWORD pid, int port) {
     std::cout << "调试器已启动，正在附加到进程PID：" << pid << " 端口：" << port << " ..." << _MCDEV_LOG_OUTPUT_ENDL;
 }
 
+// 不区分大小写的字符串包含检查
+static bool containsIgnoreCase(std::string_view text,
+                               std::string_view pattern) {
+    if (pattern.empty()) {
+        return true;
+    }
+
+    if (pattern.size() > text.size()) {
+        return false;
+    }
+
+    for (size_t i = 0; i <= text.size() - pattern.size(); ++i) {
+        bool match = true;
+        for (size_t j = 0; j < pattern.size(); ++j) {
+            char a = text[i + j];
+            char b = pattern[j];
+
+            // ASCII tolower（无 locale）
+            if (a >= 'A' && a <= 'Z') {
+                a += 'a' - 'A';
+            }
+            if (b >= 'A' && b <= 'Z') {
+                b += 'a' - 'A';
+            }
+
+            if (a != b) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void launchGameExe(
     const std::filesystem::path& exePath,
     std::string_view config = "",
@@ -564,17 +625,21 @@ static void launchGameExe(
             return;
         }
         // 特殊标记行处理
-        if(line.find("SUC") != std::string::npos) {
-            printColoredAtomic(line, ConsoleColor::Green);
-            return;
-        } else if(line.find("[INFO][Developer]") != std::string::npos) {
+        if(line.find("[INFO][Developer]") != std::string::npos) {
             printColoredAtomic(line, ConsoleColor::DarkGray);
             return;
-        } else if(line.find("ERROR") != std::string::npos) {
+        }
+        else if(containsIgnoreCase(line, "SUC")) {
+            printColoredAtomic(line, ConsoleColor::Green);
+            return;
+        } else if(containsIgnoreCase(line, "ERROR")) {
             printColoredAtomic(line, ConsoleColor::Red);
             return;
-        } else if(line.find("WARN") != std::string::npos) {
+        } else if(containsIgnoreCase(line, "WARN")) {
             printColoredAtomic(line, ConsoleColor::Cyan);
+            return;
+        }  else if(containsIgnoreCase(line, "DEBUG")) {
+            printColoredAtomic(line, ConsoleColor::Yellow);
             return;
         }
         printColoredAtomic(line, ConsoleColor::Default);
@@ -769,14 +834,28 @@ static void startGame(const nlohmann::json& config) {
     auto modDirConfigs = UserModDirConfig::parseListFromJson(
         config.value("included_mod_dirs", nlohmann::json::array({"./"})));
 
-    // link debug MOD
+    // link Debug MOD
     if(config.value("include_debug_mod", true)) {
-        auto debugMod = registerDebugMod(config, modDirConfigs);
+        // std::filesystem::path debugModMainFile;
+        auto debugMod = registerDebugMod(config, modDirConfigs, nullptr);
         std::cout << "已注册调试MOD：" << debugMod.uuid << "\n";
-        linkUserMods(modDirConfigs, linkedPacks);
+        linkUserConfigModDirs(modDirConfigs, linkedPacks);
         linkedPacks.push_back(std::move(debugMod));
+        
+        // 生成热更新行为包追踪列表
+        // if(!debugModMainFile.empty()) {
+        //     // 读取入口文件替换
+        //     std::ifstream mainFileIn(debugModMainFile, std::ios::binary);
+        //     std::string mainFileContent((std::istreambuf_iterator<char>(mainFileIn)),
+        //                                 std::istreambuf_iterator<char>());
+        //     mainFileIn.close();
+        //     stringReplace(mainFileContent, "\"{#target_mod_dirs}\"", UserModDirConfig::toHotReloadListString(modDirConfigs));
+        //     // 重新写入文件 传递热更新目录列表
+        //     std::ofstream mainFileOut(debugModMainFile, std::ios::binary | std::ios::trunc);
+        //     mainFileOut.write(mainFileContent.data(), mainFileContent.size());
+        // }
     } else {
-        linkUserMods(modDirConfigs, linkedPacks);
+        linkUserConfigModDirs(modDirConfigs, linkedPacks);
     }
 
     // 创建世界
