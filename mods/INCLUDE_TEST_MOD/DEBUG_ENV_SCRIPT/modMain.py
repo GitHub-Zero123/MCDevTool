@@ -7,10 +7,16 @@ import sys
 lambda: "By Zero123"
 
 _DEBUG_INFO = "{#debug_options}"
+_TARGET_MOD_DIRS = "{#target_mod_dirs}"
 try:
     DEBUG_CONFIG = loads(_DEBUG_INFO) if not isinstance(_DEBUG_INFO, dict) else _DEBUG_INFO
 except:
     DEBUG_CONFIG = {}
+
+try:
+    TARGET_MOD_DIRS = loads(_TARGET_MOD_DIRS) if not isinstance(_TARGET_MOD_DIRS, list) else _TARGET_MOD_DIRS
+except:
+    TARGET_MOD_DIRS = []
 
 REF = 0
 
@@ -37,11 +43,6 @@ class STD_OUT_WRAPPER(object):
                 self.baseIO.write("\n")
             else:
                 self.baseIO.write("[Python] " + line + "\n")
-
-    # def write(self, text, **args):
-    #     if text in ("\n", "\r\n", "", " "):
-    #         return self.baseIO.write(str(text), **args)
-    #     return self.baseIO.write("[Python] " + str(text), **args)
 
     def close(self):
         return self.baseIO.close()
@@ -79,11 +80,15 @@ def SERVER_INIT():
     LoaderSystem.REG_DESTROY_CALL_FUNC(_DESTROY)
 
 def _RELOAD_MOD():
-    import os
-    appdata = os.path.join(os.getenv("APPDATA"), "MinecraftPE_Netease")
-    neteasePath = os.path.join(appdata, "games", "com.netease")
-    behaviorPath = os.path.join(neteasePath, "behavior_packs")
-    return xupdate.updata_all(behaviorPath)
+    state = False
+    for rootModDir in TARGET_MOD_DIRS:
+        try:
+            if xupdate.updata_all(rootModDir):
+                state = True
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+    return state
 
 def RELOAD_MOD():
     import gui

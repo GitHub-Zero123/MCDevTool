@@ -104,7 +104,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     // 首次运行将会自动生成 .mcdev.json 文件
     // 用于包含需要加载的MOD目录(默认值) 允许相对路径和绝对路径(相对路径以工作区为基准)
     "included_mod_dirs": [
-        "./"
+        "./"   // 可以使用 {"path": "./", "hot_reload": true} 控制包含的目录是否参与热更新检测
     ],
     // 指定游戏exe路径(string)
     "game_executable_path": "",

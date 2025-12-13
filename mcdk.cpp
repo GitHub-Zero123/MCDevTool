@@ -47,6 +47,84 @@ static void stringReplace(std::string& str, const std::string& from, const std::
     }
 }
 
+// 用户mod目录配置结构体
+class UserModDirConfig {
+public:
+    std::filesystem::path path;
+    bool hotReload = false;
+
+    UserModDirConfig() = default;
+    explicit UserModDirConfig(const std::filesystem::path& p, bool hr)
+        : path(p), hotReload(hr) {}
+
+    // 获取基于工作区的绝对路径
+    std::filesystem::path getAbsolutePath() const {
+        static const auto workingDir = std::filesystem::current_path();
+        if(path.is_absolute()) {
+            return path.lexically_normal();
+        } else {
+            return (workingDir / path).lexically_normal();
+        }
+    }
+
+    // 获取绝对路径的utf8 linux风格字符串
+    std::string getAbsoluteU8String() const {
+        auto absPath = getAbsolutePath().generic_u8string();
+        if constexpr (sizeof(char8_t) == sizeof(char)) {
+            return reinterpret_cast<const char*>(absPath.c_str());
+        } else {
+            return std::string(absPath.begin(), absPath.end());
+        }
+    }
+
+    // 从json对象解析UserModDirConfig
+    static UserModDirConfig parseFromJson(const nlohmann::json& j) {
+        UserModDirConfig config;
+        if(j.is_string()) {
+            config.path = std::filesystem::u8path(j.get<std::string>());
+            config.hotReload = true;
+        } else if(j.is_object()) {
+            config.path = std::filesystem::u8path(j.value("path", "./"));
+            config.hotReload = j.value("hot_reload", true);
+        } else {
+            throw std::runtime_error("Invalid mod directory configuration format.");
+        }
+        return config;
+    }
+
+    // 从json数组解析UserModDirConfig列表
+    static std::vector<UserModDirConfig> parseListFromJson(const nlohmann::json& jArray) {
+        std::vector<UserModDirConfig> configs;
+        if(!jArray.is_array()) {
+            throw std::runtime_error("Mod directories configuration should be an array.");
+        }
+        for(const auto& item : jArray) {
+            configs.push_back(parseFromJson(item));
+        }
+        return configs;
+    }
+
+    // 基于std::vector<std::string>构造UserModDirConfig列表
+    static std::vector<UserModDirConfig> fromStringList(const std::vector<std::string>& u8Paths) {
+        std::vector<UserModDirConfig> configs;
+        for(const auto& u8Path : u8Paths) {
+            configs.emplace_back(std::filesystem::u8path(u8Path), true);
+        }
+        return configs;
+    }
+
+    // 将一组vector<UserModDirConfig>生成字符串形式的hot_reload追踪列表（json数组格式）
+    static std::string toHotReloadListString(const std::vector<UserModDirConfig>& configs) {
+        nlohmann::json jArray = nlohmann::json::array();
+        for(const auto& config : configs) {
+            if(config.hotReload) {
+                jArray.push_back(config.getAbsoluteU8String());
+            }
+        }
+        return jArray.dump();
+    }
+};
+
 static nlohmann::json createDefaultConfig() {
     std::filesystem::path exePath;
     auto autoExePath = MCDevTool::autoMatchLatestGameExePath();
@@ -137,7 +215,7 @@ static nlohmann::json userParseConfig() {
 }
 
 // 注册调试MOD
-MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config) {
+MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config, const std::vector<UserModDirConfig>& modDirConfigs) {
     auto manifest = INCLUDE_MOD_RES::resourceMap.at("manifest.json");
     std::string manifestContent(reinterpret_cast<const char*>(manifest.first), manifest.second);
     MCDevTool::Addon::PackInfo info;
@@ -171,6 +249,7 @@ MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config) {
             // 替换关键字实现传参
             std::string modMainContent(reinterpret_cast<const char*>(resData.first), resData.second);
             stringReplace(modMainContent, "\"{#debug_options}\"", DEBUG_OPTIONS);
+            stringReplace(modMainContent, "\"{#target_mod_dirs}\"", UserModDirConfig::toHotReloadListString(modDirConfigs));
             resFile.write(modMainContent.data(), modMainContent.size());
         } else {
             resFile.write(reinterpret_cast<const char*>(resData.first), resData.second);
@@ -194,6 +273,15 @@ static void linkUserMods(const std::vector<std::string>& u8Paths, std::vector<MC
             linkedPacks.push_back(std::move(info));
         }
     }
+}
+
+// link用户mod目录 基于配置结构体
+static void linkUserMods(const std::vector<UserModDirConfig>& configs, std::vector<MCDevTool::Addon::PackInfo>& linkedPacks) {
+    std::vector<std::string> u8Paths;
+    for(const auto& config : configs) {
+        u8Paths.push_back(config.getAbsoluteU8String());
+    }
+    return linkUserMods(u8Paths, linkedPacks);
 }
 
 // 根据用户config创建level.dat
@@ -675,16 +763,21 @@ static void startGame(const nlohmann::json& config) {
     }
     MCDevTool::cleanRuntimePacks();
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
+
+    // link target mod dirs
+    // auto modDirs = config.value("included_mod_dirs", std::vector<std::string>{});
+    auto modDirConfigs = UserModDirConfig::parseListFromJson(
+        config.value("included_mod_dirs", nlohmann::json::array({"./"})));
+
     // link debug MOD
     if(config.value("include_debug_mod", true)) {
-        auto debugMod = registerDebugMod(config);
+        auto debugMod = registerDebugMod(config, modDirConfigs);
         std::cout << "已注册调试MOD：" << debugMod.uuid << "\n";
+        linkUserMods(modDirConfigs, linkedPacks);
         linkedPacks.push_back(std::move(debugMod));
+    } else {
+        linkUserMods(modDirConfigs, linkedPacks);
     }
-
-    // link 用户MOD目录
-    auto modDirs = config.value("included_mod_dirs", std::vector<std::string>{});
-    linkUserMods(modDirs, linkedPacks);
 
     // 创建世界
     auto worldFolderName = config.value("world_folder_name", "MC_DEV_WORLD");
