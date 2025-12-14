@@ -152,8 +152,10 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         "reload_addon_key": "",
         // 绑定重载着色器快捷键
         "reload_shaders_key": "",
-        // 是否在全体UI界面都触发热更新快捷键（默认false）
-        "reload_key_global": false
+        // 是否在全体UI界面都触发热更新快捷键（默认false仅HUD界面）
+        "reload_key_global": false,
+        // 是否在检测到Mod Python文件变更时自动热更新Mod
+        "auto_reload_mods": false
     }
 }
 ```

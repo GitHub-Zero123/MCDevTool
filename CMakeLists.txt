@@ -24,11 +24,12 @@ add_library(mcdevtool OBJECT
     src/level.cpp
     src/addon.cpp
     src/utils.cpp
+    src/reload.cpp
 )
 target_compile_features(mcdevtool PRIVATE cxx_std_23)
 target_compile_definitions(mcdevtool PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(mcdevtool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
+target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
 target_link_libraries(mcdevtool PUBLIC NBT)
 
 # MCDK Executable
@@ -38,7 +39,7 @@ if(MC_DEV_TOOL_BUILD_MCDK)
     )
     target_compile_features(mcdk PRIVATE cxx_std_23)
     target_link_libraries(mcdk PRIVATE mcdevtool)
-    target_include_directories(mcdk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann
+    target_include_directories(mcdk PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/mods/Resource
     )
 

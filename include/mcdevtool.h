@@ -3,3 +3,4 @@
 #include "./mcdevtool/level.h"
 #include "./mcdevtool/addon.h"
 #include "./mcdevtool/utils.h"
+#include "./mcdevtool/reload.h"

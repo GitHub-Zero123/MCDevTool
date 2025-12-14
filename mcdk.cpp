@@ -259,8 +259,19 @@ MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config,
         std::filesystem::remove_all(target);
     }
 
+    // 处理debug_options参数
+    auto configDebugOptions = config.value("debug_options", nlohmann::json::object());
+
+    // 是否启用自动热更新py文件
+    bool AUTO_RELOAD_PY_FILES = configDebugOptions.value("auto_reload_py_files", false);
+    if(AUTO_RELOAD_PY_FILES) {
+        std::cout << "[auto_reload_py_files] 已启用自动热更检测，正在创建跟踪线程...\n";
+        int AUTO_RELOAD_PORT = 0;
+        configDebugOptions["auto_reload_port"] = AUTO_RELOAD_PORT;
+    }
+
     // 生成格式化的字面量json
-    auto DEBUG_OPTIONS = config.value("debug_options", nlohmann::json::object()).dump();
+    auto DEBUG_OPTIONS = configDebugOptions.dump();
 
     // 替换为python boolean格式
     stringReplace(DEBUG_OPTIONS, "true", "True");
@@ -285,6 +296,7 @@ MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config,
         }
         resFile.close();
     }
+
     return info;
 }
 
