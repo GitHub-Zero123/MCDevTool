@@ -38,6 +38,25 @@
 #include <windows.h>
 #endif
 
+// 获取环境变量MCDEV_OUTPUT_MODE的输出策略：0.默认，视为终端处理  1.视为vscode/pycharm的调试伪终端处理
+static int _GET_ENV_MCDEV_OUTPUT_MODE() {
+    static int outputMode = -1;
+    if(outputMode != -1) {
+        return outputMode;
+    }
+    auto* modeStr = std::getenv("MCDEV_OUTPUT_MODE");
+    if(modeStr == nullptr) {
+        outputMode = 0;
+    } else {
+        try {
+            outputMode = std::stoi(modeStr);
+        } catch(...) {
+            outputMode = 0;
+        }
+    }
+    return outputMode;
+}
+
 // 字符串关键字替换
 static void stringReplace(std::string& str, const std::string& from, const std::string& to) {
     size_t startPos = 0;
@@ -994,6 +1013,11 @@ int wmain(int argc, wchar_t* argv[]) {
 #else
 int main(int argc, char* argv[]) {
 #endif
+
+    if (_GET_ENV_MCDEV_OUTPUT_MODE() == 1) {
+        setvbuf(stdout, nullptr, _IONBF, 0);
+    }
+
     #ifdef NDEBUG
     try {
     #endif
