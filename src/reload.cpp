@@ -28,6 +28,32 @@ namespace MCDevTool::HotReload {
         OVERLAPPED                  ov{};
         std::vector<BYTE>           buffer;
         HANDLE                      eventHandle = nullptr;
+        
+        // 禁止拷贝，但允许移动
+        WatchItem() = default;
+        WatchItem(const WatchItem&) = delete;
+        WatchItem& operator=(const WatchItem&) = delete;
+        WatchItem(WatchItem&& other) noexcept
+            : dir(std::move(other.dir))
+            , hDir(std::exchange(other.hDir, INVALID_HANDLE_VALUE))
+            , ov(other.ov)
+            , buffer(std::move(other.buffer))
+            , eventHandle(std::exchange(other.eventHandle, nullptr))
+        {
+            // 重置 ov 的 hEvent 指向自己
+            ov.hEvent = eventHandle;
+        }
+        WatchItem& operator=(WatchItem&& other) noexcept {
+            if (this != &other) {
+                dir = std::move(other.dir);
+                hDir = std::exchange(other.hDir, INVALID_HANDLE_VALUE);
+                ov = other.ov;
+                buffer = std::move(other.buffer);
+                eventHandle = std::exchange(other.eventHandle, nullptr);
+                ov.hEvent = eventHandle;
+            }
+            return *this;
+        }
     };
 
     // 仅监听文件内容修改，不监听新增/删除/重命名
@@ -98,11 +124,8 @@ namespace MCDevTool::HotReload {
             ZeroMemory(&item.ov, sizeof(item.ov));
             item.ov.hEvent = item.eventHandle;
 
-            if (!startWatch(item)) {
-                CloseHandle(item.hDir);
-                CloseHandle(item.eventHandle);
-                continue;
-            }
+            // 注意：不在这里调用 startWatch，移动到线程内部首次调用
+            // 因为异步操作会使用 OVERLAPPED 结构的地址，移动后地址会变
 
             items.emplace_back(std::move(item));
         }
@@ -121,6 +144,13 @@ namespace MCDevTool::HotReload {
                 waitHandles.push_back(i.eventHandle);
             }
 
+            // 在线程内首次启动监听（此时 items 已经不会再移动）
+            for (auto& i : items) {
+                if (!startWatch(i)) {
+                    std::cerr << "[ERROR] Failed to start watch for: " << i.dir << std::endl;
+                }
+            }
+
             // 防抖：记录每个文件的最后触发时间
             std::unordered_map<std::wstring, std::chrono::steady_clock::time_point> lastTriggerTime;
             std::mutex debounceMapMutex;
@@ -133,7 +163,10 @@ namespace MCDevTool::HotReload {
                     INFINITE
                 );
 
+                // std::cerr << "[DEBUG] WaitForMultipleObjects returned: " << index << std::endl;
+
                 if (index == WAIT_FAILED) {
+                    std::cerr << "[DEBUG] WAIT_FAILED, GetLastError=" << GetLastError() << std::endl;
                     break;
                 }
 
@@ -155,40 +188,41 @@ namespace MCDevTool::HotReload {
                 while (true) {
                     auto* fni = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(ptr);
 
-                    // 仅处理文件修改事件
-                    if (fni->Action == FILE_ACTION_MODIFIED) {
-                        std::wstring name(
-                            fni->FileName,
-                            fni->FileNameLength / sizeof(wchar_t)
-                        );
+                    std::wstring name(
+                        fni->FileName,
+                        fni->FileNameLength / sizeof(wchar_t)
+                    );
 
-                        fs::path fullPath = item.dir / name;
+                    fs::path fullPath = item.dir / name;
 
-                        if (fullPath.extension() == L".py") {
-                            std::wstring pathKey = fullPath.wstring();
-                            bool shouldTrigger = false;
+                    // std::wcerr << L"[DEBUG] Action=" << fni->Action << L" File=" << fullPath.wstring() << std::endl;
 
-                            {
-                                std::lock_guard<std::mutex> lock(debounceMapMutex);
-                                auto it = lastTriggerTime.find(pathKey);
-                                if (it == lastTriggerTime.end()) {
+                    // 仅处理文件修改事件 (FILE_ACTION_MODIFIED)
+                    // 当监听 FILE_NOTIFY_CHANGE_LAST_WRITE 时，Action 仍然是 FILE_ACTION_MODIFIED
+                    if (fni->Action == FILE_ACTION_MODIFIED && fullPath.extension() == L".py") {
+                        std::wstring pathKey = fullPath.wstring();
+                        bool shouldTrigger = false;
+
+                        {
+                            std::lock_guard<std::mutex> lock(debounceMapMutex);
+                            auto it = lastTriggerTime.find(pathKey);
+                            if (it == lastTriggerTime.end()) {
+                                shouldTrigger = true;
+                                lastTriggerTime[pathKey] = now;
+                            } else {
+                                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
+                                if (elapsed >= DEBOUNCE_MS) {
                                     shouldTrigger = true;
-                                    lastTriggerTime[pathKey] = now;
-                                } else {
-                                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
-                                    if (elapsed >= DEBOUNCE_MS) {
-                                        shouldTrigger = true;
-                                        it->second = now;
-                                    }
+                                    it->second = now;
                                 }
                             }
+                        }
 
-                            if (shouldTrigger) {
-                                try {
-                                    onFileChanged(fullPath);
-                                } catch (const std::exception& e) {
-                                    std::cerr << "Error in onFileChanged callback: " << e.what() << std::endl;
-                                }
+                        if (shouldTrigger) {
+                            try {
+                                onFileChanged(fullPath);
+                            } catch (const std::exception& e) {
+                                std::cerr << "Error in onFileChanged callback: " << e.what() << std::endl;
                             }
                         }
                     }
