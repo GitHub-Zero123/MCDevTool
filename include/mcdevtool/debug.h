@@ -7,6 +7,7 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <atomic>
 #include <filesystem>
 #include <functional>
 
@@ -24,6 +25,7 @@ namespace MCDevTool::Debug {
 
         void start();
         void stop();
+        void safeExit();
         void join();
         void detach();
 
@@ -33,6 +35,8 @@ namespace MCDevTool::Debug {
         bool sendMessage(uint16_t messageType, const uint8_t* data, size_t length);
         bool sendMessage(uint16_t messageType);
 
+        std::atomic<bool>* getStopFlag();
+
         unsigned short getPort() const;
     private:
         unsigned short mPort = 0;
@@ -40,6 +44,7 @@ namespace MCDevTool::Debug {
         std::vector<void*> mClients;
         std::optional<std::thread> mThread;
         std::mutex mClientsMutex;
+        std::atomic<bool> mStopFlag = false;
     };
 
     // 创建并返回一个DebugIPCServer的智能指针
@@ -54,6 +59,8 @@ namespace MCDevTool::Debug {
 
         void start();
         void stop();
+        void safeExit();
+        void join();
         void setProcessId(int processId);
         void setModDirs(const std::vector<std::filesystem::path>& modDirs);
         void setModDirs(std::vector<std::filesystem::path>&& modDirs);
@@ -70,5 +77,6 @@ namespace MCDevTool::Debug {
         std::optional<std::thread> processWatcherThread;
         std::optional<std::thread> fileWatcherThread;
         std::vector<std::filesystem::path> mModDirs;
+        std::atomic<bool> mStopFlag = false;
     };
 } // namespace MCDevTool::Debug

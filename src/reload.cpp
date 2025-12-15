@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <mutex>
+#include <atomic>
 
 namespace MCDevTool::HotReload {
 
@@ -84,7 +85,8 @@ namespace MCDevTool::HotReload {
 
     std::optional<std::thread> watchAndReloadPyFiles(
         const std::vector<fs::path>& modDirs,
-        const std::function<void(const fs::path&)>& onFileChanged
+        const std::function<void(const fs::path&)>& onFileChanged,
+        std::atomic<bool>* stopFlag
     ) {
         if (modDirs.empty()) {
             return std::nullopt;
@@ -135,10 +137,19 @@ namespace MCDevTool::HotReload {
         }
 
         // 后台监听线程
-        return std::thread([items = std::move(items), onFileChanged]() mutable {
+        return std::thread([items = std::move(items), onFileChanged, stopFlag]() mutable {
 
             std::vector<HANDLE> waitHandles;
-            waitHandles.reserve(items.size());
+            waitHandles.reserve(items.size() + 1);
+
+            // 创建用于停止的事件
+            HANDLE stopEvent = nullptr;
+            if (stopFlag) {
+                stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+                if (stopEvent) {
+                    waitHandles.push_back(stopEvent);
+                }
+            }
 
             for (auto& i : items) {
                 waitHandles.push_back(i.eventHandle);
@@ -155,27 +166,46 @@ namespace MCDevTool::HotReload {
             std::unordered_map<std::wstring, std::chrono::steady_clock::time_point> lastTriggerTime;
             std::mutex debounceMapMutex;
 
+            // 如果有 stopFlag，启动一个辅助线程来检测并触发 stopEvent
+            std::thread stopChecker;
+            if (stopFlag && stopEvent) {
+                stopChecker = std::thread([stopFlag, stopEvent]() {
+                    while (!stopFlag->load()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    }
+                    SetEvent(stopEvent);
+                });
+            }
+
+            const DWORD itemStartIndex = stopEvent ? 1 : 0;
+
             while (true) {
-                DWORD index = WaitForMultipleObjects(
+                DWORD result = WaitForMultipleObjects(
                     static_cast<DWORD>(waitHandles.size()),
                     waitHandles.data(),
                     FALSE,
                     INFINITE
                 );
 
-                // std::cerr << "[DEBUG] WaitForMultipleObjects returned: " << index << std::endl;
-
-                if (index == WAIT_FAILED) {
-                    std::cerr << "[DEBUG] WAIT_FAILED, GetLastError=" << GetLastError() << std::endl;
+                if (result == WAIT_FAILED) {
+                    std::cerr << "[ERROR] WAIT_FAILED, GetLastError=" << GetLastError() << std::endl;
                     break;
                 }
 
-                index -= WAIT_OBJECT_0;
-                if (index >= items.size()) {
+                DWORD index = result - WAIT_OBJECT_0;
+                
+                // 检查是否是停止事件
+                if (stopEvent && index == 0) {
+                    break;
+                }
+
+                // 调整索引以匹配 items
+                DWORD itemIndex = index - itemStartIndex;
+                if (itemIndex >= items.size()) {
                     continue;
                 }
 
-                auto& item = items[index];
+                auto& item = items[itemIndex];
 
                 DWORD bytes = 0;
                 if (!GetOverlappedResult(item.hDir, &item.ov, &bytes, FALSE)) {
@@ -240,7 +270,16 @@ namespace MCDevTool::HotReload {
                 startWatch(item);
             }
 
+            // 等待 stopChecker 线程结束
+            if (stopChecker.joinable()) {
+                stopChecker.join();
+            }
+
             // cleanup
+            if (stopEvent) {
+                CloseHandle(stopEvent);
+            }
+
             for (auto& i : items) {
                 if (i.hDir != INVALID_HANDLE_VALUE) {
                     CloseHandle(i.hDir);
@@ -258,7 +297,8 @@ namespace MCDevTool::HotReload {
 
     std::optional<std::thread> watchAndReloadPyFiles(
         const std::vector<std::string_view>& modDirs,
-        const std::function<void(const fs::path&)>& onFileChanged
+        const std::function<void(const fs::path&)>& onFileChanged,
+        std::atomic<bool>* stopFlag
     ) {
         std::vector<fs::path> paths;
         paths.reserve(modDirs.size());
@@ -267,19 +307,23 @@ namespace MCDevTool::HotReload {
             paths.emplace_back(fs::path(std::string(sv)));
         }
 
-        return watchAndReloadPyFiles(paths, onFileChanged);
+        return watchAndReloadPyFiles(paths, onFileChanged, stopFlag);
     }
 
     // 监听目标pid进程是否回到前台焦点
     std::optional<std::thread> watchProcessForegroundWindow(
         uint32_t pid,
-        const std::function<void(bool isForeground)>& onFocusChanged
+        const std::function<void(bool isForeground)>& onFocusChanged,
+        std::atomic<bool>* stopFlag
     ) {
-        return std::thread([pid, onFocusChanged]() {
+        return std::thread([pid, onFocusChanged, stopFlag]() {
             HWND lastForegroundWnd = nullptr;
             bool lastIsForeground = false;
 
             while (true) {
+                if (stopFlag && stopFlag->load()) {
+                    break;
+                }
                 HWND fgWnd = GetForegroundWindow();
                 DWORD fgPid = 0;
                 GetWindowThreadProcessId(fgWnd, &fgPid);
@@ -294,7 +338,7 @@ namespace MCDevTool::HotReload {
                     }
                 }
 
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::this_thread::sleep_for(std::chrono::milliseconds(80));
             }
         });
     }
@@ -303,17 +347,20 @@ namespace MCDevTool::HotReload {
 
     std::optional<std::thread> watchAndReloadPyFiles(
         const std::vector<std::filesystem::path>&,
-        const std::function<void(const std::filesystem::path&)>&
+        const std::function<void(const std::filesystem::path&)>&,
+        std::atomic<bool>* stopFlag = nullptr
     ) = delete;
 
     std::optional<std::thread> watchAndReloadPyFiles(
         const std::vector<std::string_view>&,
-        const std::function<void(const std::filesystem::path&)>&
+        const std::function<void(const std::filesystem::path&)>&,
+        std::atomic<bool>* stopFlag = nullptr
     )  = delete;
 
     std::optional<std::thread> watchProcessForegroundWindow(
         uint32_t,
-        const std::function<void(bool isForeground)>&
+        const std::function<void(bool isForeground)>&,
+        std::atomic<bool>* stopFlag = nullptr
     ) = delete;
 
 #endif

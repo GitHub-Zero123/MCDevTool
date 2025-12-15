@@ -18,7 +18,7 @@ namespace MCDevTool::Debug {
         if (mSocketPtr) {
             return; // 已启动
         }
-
+        mStopFlag = false;
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
             throw std::runtime_error("WSAStartup failed");
@@ -58,14 +58,24 @@ namespace MCDevTool::Debug {
         mThread = std::move(std::thread([this]() {
             SOCKET listenSock = reinterpret_cast<SOCKET>(mSocketPtr);
 
-            while (listenSock != INVALID_SOCKET) {
+            // 设置监听socket为非阻塞模式，便于检查mStopFlag
+            u_long nonBlocking = 1;
+            ioctlsocket(listenSock, FIONBIO, &nonBlocking);
+
+            while (!mStopFlag.load() && listenSock != INVALID_SOCKET) {
                 SOCKET clientSock = accept(listenSock, nullptr, nullptr);
                 if (clientSock == INVALID_SOCKET) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                    continue;
+                    int err = WSAGetLastError();
+                    if (err == WSAEWOULDBLOCK) {
+                        // 没有新连接，短暂等待后重试
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        continue;
+                    }
+                    // 其他错误（如socket已关闭），退出循环
+                    break;
                 }
 
-                // 设置非阻塞
+                // 设置客户端socket为非阻塞
                 u_long mode = 1;
                 ioctlsocket(clientSock, FIONBIO, &mode);
 
@@ -77,6 +87,7 @@ namespace MCDevTool::Debug {
 
     void DebugIPCServer::stop() {
         mPort = 0;
+        mStopFlag = true;
         if (!mSocketPtr) {
             return;
         }
@@ -139,10 +150,19 @@ namespace MCDevTool::Debug {
         return mPort;
     }
 
+    std::atomic<bool>* DebugIPCServer::getStopFlag() {
+        return &mStopFlag;
+    }
+
     void DebugIPCServer::join() {
         if(mThread.has_value() && mThread->joinable()) {
             mThread->join();
         }
+    }
+
+    void DebugIPCServer::safeExit() {
+        stop();
+        join();
     }
 
     void DebugIPCServer::detach() {
@@ -164,11 +184,19 @@ namespace MCDevTool::Debug {
         : mProcessId(processId), mModDirs(modDirs) {
     }
 
+    void HotReloadWatcherTask::safeExit() {
+        mStopFlag = true;
+        join();
+        fileWatcherThread.reset();
+        processWatcherThread.reset();
+    }
+    
     void HotReloadWatcherTask::start() {
         // 实现启动逻辑
         if(fileWatcherThread.has_value() || processWatcherThread.has_value()) {
             throw std::runtime_error("Watcher threads already running");
         }
+        mStopFlag = false;
         bool mNeedUpdate = false;
         bool mIsForeground = false;
         fileWatcherThread = MCDevTool::HotReload::watchAndReloadPyFiles(mModDirs, [this](const std::filesystem::path& path) {
@@ -179,7 +207,7 @@ namespace MCDevTool::Debug {
                 this->mNeedUpdate = false;
                 this->onHotReloadTriggered();
             }
-        });
+        }, &mStopFlag);
         if(!fileWatcherThread.has_value()) {
             fileWatcherThread.reset();
             throw std::runtime_error("Failed to start file watcher thread");
@@ -190,7 +218,7 @@ namespace MCDevTool::Debug {
                 this->mNeedUpdate = false;
                 this->onHotReloadTriggered();
             }
-        });
+        }, &mStopFlag);
         if(!processWatcherThread.has_value()) {
             processWatcherThread.reset();
             fileWatcherThread.reset();
@@ -205,6 +233,15 @@ namespace MCDevTool::Debug {
         }
         if(processWatcherThread.has_value()) {
             processWatcherThread.reset();
+        }
+    }
+
+    void HotReloadWatcherTask::join() {
+        if(fileWatcherThread.has_value() && fileWatcherThread->joinable()) {
+            fileWatcherThread->join();
+        }
+        if(processWatcherThread.has_value() && processWatcherThread->joinable()) {
+            processWatcherThread->join();
         }
     }
 

@@ -687,8 +687,8 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
     bool autoHotReload = userConfig.value("auto_hot_reload_mods", false);
     bool enableIPC = autoHotReload;
     void* lpEnvironment = nullptr;
-    auto ipcServer = MCDevTool::Debug::createDebugServer();
 
+    auto ipcServer = MCDevTool::Debug::createDebugServer();
     ReloadWatcherTask reloadTask;
     reloadTask.bindServer(ipcServer);
 
@@ -876,19 +876,15 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
 
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回 ERROR_BROKEN_PIPE）
     WaitForSingleObject(pi.hProcess, INFINITE);
-    // 停止热更新追踪任务
-    reloadTask.stop();
+
+    // 停止热更新任务
+    reloadTask.safeExit();
     // 停止IPC服务器 如果已启用
-    if(enableIPC) {
-        ipcServer->stop();
-    }
+    ipcServer->safeExit();
 
     // 等待读线程退出并关闭读端句柄
     tOut.join();
     tErr.join();
-
-    // 停止IPC服务器 如果已启用
-    // ipcServer->stop();
 
     CloseHandle(outRead);
     CloseHandle(errRead);
