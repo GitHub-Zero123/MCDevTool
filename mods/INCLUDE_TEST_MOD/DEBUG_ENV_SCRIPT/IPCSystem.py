@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import socket
 import threading
+import mod.client.extraClientApi as clientApi
 from .Config import GET_DEBUG_IPC_PORT
 
 def U16_BE(b):
@@ -82,9 +83,13 @@ class IPCSystem:
         with self.mLock:
             self.sock = None
 
+GAME_COMP = None
+
 def AUTO_RELOAD(_=None):
     from .Game import RELOAD_MOD
-    RELOAD_MOD()
+    if GAME_COMP:
+        GAME_COMP.AddTimer(0, lambda: RELOAD_MOD())
+        return
 
 _IPCSYSTEM = IPCSystem(GET_DEBUG_IPC_PORT())
 _IPCSYSTEM.updateHandlers(
@@ -94,6 +99,8 @@ _IPCSYSTEM.updateHandlers(
 )
 
 def ON_CLIENT_INIT():
+    global GAME_COMP
+    GAME_COMP = clientApi.GetEngineCompFactory().CreateGame(clientApi.GetLevelId())
     _IPCSYSTEM.start()
 
 def ON_CLIENT_EXIT():
