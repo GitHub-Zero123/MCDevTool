@@ -20,4 +20,4 @@ namespace MCDevTool::HotReload {
         uint32_t pid,
         const std::function<void(bool isForeground)>& onFocusChanged
     );
-}
+} // namespace MCDevTool::HotReload

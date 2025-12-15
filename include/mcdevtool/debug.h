@@ -1,6 +1,9 @@
 #pragma once
 #include <string>
 #include <string_view>
+#include <mutex>
+#include <thread>
+#include <optional>
 #include <vector>
 #include <cstdint>
 
@@ -18,6 +21,10 @@ namespace MCDevTool::Debug {
 
         void start();
         void stop();
+        void join();
+        void detach();
+
+        std::thread* getThread();
 
         bool sendMessage(uint16_t messageType, const std::vector<uint8_t>& data);
         bool sendMessage(uint16_t messageType, const uint8_t* data, size_t length);
@@ -26,5 +33,8 @@ namespace MCDevTool::Debug {
     private:
         unsigned short mPort = 0;
         void* mSocketPtr = nullptr;
+        std::vector<void*> mClients;
+        std::optional<std::thread> mThread;
+        std::mutex mClientsMutex;
     };
 } // namespace MCDevTool::Debug

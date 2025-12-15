@@ -1,15 +1,93 @@
 #include "mcdevtool/debug.h"
 #include <iostream>
-// #include <uvw.hpp>
+#include <chrono>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#endif
 
 namespace MCDevTool::Debug {
+#ifdef _WIN32
     DebugIPCServer::~DebugIPCServer() { stop(); }
 
     void DebugIPCServer::start() {
+        if (mSocketPtr) {
+            return; // 已启动
+        }
+
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
+            throw std::runtime_error("WSAStartup failed");
+        }
+
+        SOCKET listenSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listenSock == INVALID_SOCKET) {
+            WSACleanup();
+            throw std::runtime_error("socket creation failed");
+        }
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = 0; // 系统自动分配端口
+        addr.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(listenSock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+            closesocket(listenSock);
+            WSACleanup();
+            throw std::runtime_error("bind failed");
+        }
+
+        // 获取端口号
+        int addrLen = sizeof(addr);
+        getsockname(listenSock, (sockaddr*)&addr, &addrLen);
+        mPort = ntohs(addr.sin_port);
+
+        if (listen(listenSock, SOMAXCONN) == SOCKET_ERROR) {
+            closesocket(listenSock);
+            WSACleanup();
+            throw std::runtime_error("listen failed");
+        }
+
+        mSocketPtr = reinterpret_cast<void*>(listenSock);
+
+        // 启动客户端接入线程
+        mThread = std::move(std::thread([this]() {
+            SOCKET listenSock = reinterpret_cast<SOCKET>(mSocketPtr);
+
+            while (listenSock != INVALID_SOCKET) {
+                SOCKET clientSock = accept(listenSock, nullptr, nullptr);
+                if (clientSock == INVALID_SOCKET) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    continue;
+                }
+
+                // 设置非阻塞
+                u_long mode = 1;
+                ioctlsocket(clientSock, FIONBIO, &mode);
+
+                std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+                mClients.push_back(reinterpret_cast<void*>(clientSock));
+            }
+        }));
     }
 
     void DebugIPCServer::stop() {
         mPort = 0;
+        if (!mSocketPtr) {
+            return;
+        }
+        SOCKET listenSock = reinterpret_cast<SOCKET>(mSocketPtr);
+        closesocket(listenSock);
+        mSocketPtr = nullptr;
+
+        std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+        for (void* c : mClients) {
+            closesocket(reinterpret_cast<SOCKET>(c));
+        }
+        mClients.clear();
+        WSACleanup();
     }
 
     bool DebugIPCServer::sendMessage(uint16_t messageType, const std::vector<uint8_t>& data) {
@@ -17,6 +95,54 @@ namespace MCDevTool::Debug {
     }
 
     bool DebugIPCServer::sendMessage(uint16_t messageType, const uint8_t* data, size_t length) {
-        return false;
+        if (!mSocketPtr) {
+            return false;
+        }
+
+        // 构造消息：[type(2 bytes)大端 | length(4 bytes)大端 | bytes...]
+        std::vector<uint8_t> buffer(6 + length);
+        buffer[0] = static_cast<uint8_t>(messageType >> 8);
+        buffer[1] = static_cast<uint8_t>(messageType & 0xFF);
+        uint32_t len = static_cast<uint32_t>(length);
+        buffer[2] = (len >> 24) & 0xFF;
+        buffer[3] = (len >> 16) & 0xFF;
+        buffer[4] = (len >> 8) & 0xFF;
+        buffer[5] = len & 0xFF;
+        if (length > 0) {
+            memcpy(buffer.data() + 6, data, length);
+        }
+
+        std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+
+        for (auto it = mClients.begin(); it != mClients.end(); ) {
+            SOCKET clientSock = reinterpret_cast<SOCKET>(*it);
+            int sent = send(clientSock, reinterpret_cast<const char*>(buffer.data()), static_cast<int>(buffer.size()), 0);
+            if (sent == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK) {
+                // 客户端断开或其他错误，移除客户端
+                closesocket(clientSock);
+                it = mClients.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        return true;
     }
+
+    void DebugIPCServer::join() {
+        if(mThread.has_value() && mThread->joinable()) {
+            mThread->join();
+        }
+    }
+
+    void DebugIPCServer::detach() {
+        if(mThread.has_value() && mThread->joinable()) {
+            mThread->detach();
+        }
+    }
+
+    std::thread* DebugIPCServer::getThread() {
+        return mThread.has_value() ? &mThread.value() : nullptr;
+    }
+#endif
 } // namespace MCDevTool::Debug
