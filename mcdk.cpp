@@ -785,10 +785,10 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
             printColoredAtomic(line, ConsoleColor::Red);
             return;
         } else if(containsIgnoreCase(line, "WARN")) {
-            printColoredAtomic(line, ConsoleColor::Cyan);
-            return;
-        }  else if(containsIgnoreCase(line, "DEBUG")) {
             printColoredAtomic(line, ConsoleColor::Yellow);
+            return;
+        } else if(containsIgnoreCase(line, "DEBUG")) {
+            printColoredAtomic(line, ConsoleColor::Cyan);
             return;
         }
         printColoredAtomic(line, ConsoleColor::Default);
