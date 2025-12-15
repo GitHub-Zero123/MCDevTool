@@ -18,6 +18,9 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
 endif()
 
 add_subdirectory(libs/NBT)
+# set(LIBUV_BUILD_SHARED OFF)
+# add_subdirectory(libs/libuv)
+# add_subdirectory(libs/uvw)
 
 add_library(mcdevtool OBJECT
     src/env.cpp
@@ -25,6 +28,7 @@ add_library(mcdevtool OBJECT
     src/addon.cpp
     src/utils.cpp
     src/reload.cpp
+    src/debug.cpp
 )
 target_compile_features(mcdevtool PRIVATE cxx_std_23)
 target_compile_definitions(mcdevtool PRIVATE _CRT_SECURE_NO_WARNINGS)

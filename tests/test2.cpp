@@ -23,11 +23,23 @@ int main() {
             std::cout << "Detected change in: " << changedFile.generic_string() << std::endl;
         }
     );
+
+    auto thread2 = MCDevTool::HotReload::watchProcessForegroundWindow(25940, [](bool isForeground) {
+        std::cout << "Process is " << (isForeground ? "foreground" : "background") << std::endl;
+    });
+
     if(thread.has_value()) {
         std::cout << "Started watching for file changes..." << std::endl;
         thread->join();
     } else {
         std::cerr << "Failed to start file watcher." << std::endl;
+        return 1;
+    }
+
+    if(thread2.has_value()) {
+        thread2->join();
+    } else {
+        std::cerr << "Failed to start process foreground window watcher." << std::endl;
         return 1;
     }
     return 0;

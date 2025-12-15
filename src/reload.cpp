@@ -270,6 +270,52 @@ namespace MCDevTool::HotReload {
         return watchAndReloadPyFiles(paths, onFileChanged);
     }
 
-#endif // _WIN32
+    // 监听目标pid进程是否回到前台焦点
+    std::optional<std::thread> watchProcessForegroundWindow(
+        uint32_t pid,
+        const std::function<void(bool isForeground)>& onFocusChanged
+    ) {
+        return std::thread([pid, onFocusChanged]() {
+            HWND lastForegroundWnd = nullptr;
+            bool lastIsForeground = false;
+
+            while (true) {
+                HWND fgWnd = GetForegroundWindow();
+                DWORD fgPid = 0;
+                GetWindowThreadProcessId(fgWnd, &fgPid);
+
+                bool isForeground = (fgPid == pid);
+                if (isForeground != lastIsForeground) {
+                    lastIsForeground = isForeground;
+                    try {
+                        onFocusChanged(isForeground);
+                    } catch (const std::exception& e) {
+                        std::cerr << "Error in onFocusChanged callback: " << e.what() << std::endl;
+                    }
+                }
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        });
+    }
+
+#else // _WIN32
+
+    std::optional<std::thread> watchAndReloadPyFiles(
+        const std::vector<std::filesystem::path>&,
+        const std::function<void(const std::filesystem::path&)>&
+    ) = delete;
+
+    std::optional<std::thread> watchAndReloadPyFiles(
+        const std::vector<std::string_view>&,
+        const std::function<void(const std::filesystem::path&)>&
+    )  = delete;
+
+    std::optional<std::thread> watchProcessForegroundWindow(
+        uint32_t,
+        const std::function<void(bool isForeground)>&
+    ) = delete;
+
+#endif
 
 } // namespace MCDevTool::HotReload

@@ -117,18 +117,6 @@ class EasyMod:
         REG_CLIENT_INIT_CALL(callFunc)
         return self
 
-    def regNativePyClient(self, namespace="", systemName="", relPath=""):
-        # type: (str, str, str) -> EasyMod
-        """ 注册原生Python客户端(相对目录) """
-        CLIENT_REG_NATIVE_PY_SYSTEM(namespace, systemName, "{}.{}".format(self._modDirName, relPath))
-        return self
-
-    def regNativePyServer(self, namespace="", systemName="", relPath=""):
-        # type: (str, str, str) -> EasyMod
-        """ 注册原生Python服务端(相对目录) """
-        SERVER_REG_NATIVE_PY_SYSTEM(namespace, systemName, "{}.{}".format(self._modDirName, relPath))
-        return self
-
 def START_THREAD_ANALYSIS():
     """ 启用线程分析 """
     _TempData._threadAnalysis = True
@@ -174,21 +162,3 @@ def PRE_CLIENT_LOADER_HOOK(func=lambda: None):
     """ 注册客户端加载器处理前的前置逻辑 (此时依然可以注册文件 该功能用于前置关联的校验处理) """
     IN.RuntimeService._clientLoadBefore.append(func)
     return func
-
-def SET_MOD_NAME(_name):
-    # type: (str) -> None
-    """ 设置modName """
-    setattr(QMain, "MOD_NAME", _name)
-
-def SET_MOD_VERSION(_version):
-    # type: (str) -> None
-    """ 设置modVersion """
-    setattr(QMain, "VERSION", _version)
-
-def SERVER_REG_NATIVE_PY_SYSTEM(namespace="", systemName="", absPath=""):
-    """ 注册服务端原生Python System """
-    _TempData._nativePyServer.append((namespace, systemName, absPath))
-
-def CLIENT_REG_NATIVE_PY_SYSTEM(namespace="", systemName="", absPath=""):
-    """ 注册客户端原生Python System """
-    _TempData._nativePyClient.append((namespace, systemName, absPath))

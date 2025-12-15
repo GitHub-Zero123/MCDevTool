@@ -368,3 +368,5 @@ FodyWeavers.xsd
 /.selfTest/
 
 /build/
+
+reloadFiles/

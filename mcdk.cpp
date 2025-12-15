@@ -235,7 +235,7 @@ static nlohmann::json userParseConfig() {
 
 // 注册调试MOD
 MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config,
-                    const std::vector<UserModDirConfig>& modDirConfigs, std::filesystem::path* outMainFile = nullptr) {
+                    const std::vector<UserModDirConfig>& modDirConfigs, std::filesystem::path* outConfigFile = nullptr) {
     auto manifest = INCLUDE_MOD_RES::resourceMap.at("manifest.json");
     std::string manifestContent(reinterpret_cast<const char*>(manifest.first), manifest.second);
     MCDevTool::Addon::PackInfo info;
@@ -262,13 +262,15 @@ MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config,
     // 处理debug_options参数
     auto configDebugOptions = config.value("debug_options", nlohmann::json::object());
 
-    // 是否启用自动热更新py文件
-    bool AUTO_RELOAD_PY_FILES = configDebugOptions.value("auto_reload_py_files", false);
-    if(AUTO_RELOAD_PY_FILES) {
-        std::cout << "[auto_reload_py_files] 已启用自动热更检测，正在创建跟踪线程...\n";
-        int AUTO_RELOAD_PORT = 0;
-        configDebugOptions["auto_reload_port"] = AUTO_RELOAD_PORT;
-    }
+    // // 是否启用自动热更新py文件
+    // bool AUTO_RELOAD_PY_FILES = config.value("auto_hot_reload_mods", false);
+
+    // // 是否创建IPC链接端口
+    // if(AUTO_RELOAD_PY_FILES) {
+    //     std::cout << "[auto_reload_py_files] 已启用自动热更检测，正在创建跟踪线程...\n";
+    //     int IPC_PORT = 0;
+    //     configDebugOptions["ipc_port"] = IPC_PORT;
+    // }
 
     // 生成格式化的字面量json
     auto DEBUG_OPTIONS = configDebugOptions.dump();
@@ -282,14 +284,14 @@ MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config,
         auto resPath = target / std::filesystem::u8path(resName);
         std::filesystem::create_directories(resPath.parent_path());
         std::ofstream resFile(resPath, std::ios::binary);
-        if(resName.ends_with("modMain.py")) {
+        if(resName.ends_with("Config.py")) {
             // 替换关键字实现传参
-            std::string modMainContent(reinterpret_cast<const char*>(resData.first), resData.second);
-            stringReplace(modMainContent, "\"{#debug_options}\"", DEBUG_OPTIONS);
-            stringReplace(modMainContent, "\"{#target_mod_dirs}\"", UserModDirConfig::toHotReloadListString(modDirConfigs));
-            resFile.write(modMainContent.data(), modMainContent.size());
-            if(outMainFile != nullptr) {
-                outMainFile->assign(resPath);
+            std::string content(reinterpret_cast<const char*>(resData.first), resData.second);
+            stringReplace(content, "\"{#debug_options}\"", DEBUG_OPTIONS);
+            stringReplace(content, "\"{#target_mod_dirs}\"", UserModDirConfig::toHotReloadListString(modDirConfigs));
+            resFile.write(content.data(), content.size());
+            if(outConfigFile != nullptr) {
+                outConfigFile->assign(resPath);
             }
         } else {
             resFile.write(reinterpret_cast<const char*>(resData.first), resData.second);
@@ -583,12 +585,9 @@ static bool containsIgnoreCase(std::string_view text,
     return false;
 }
 
-static void launchGameExe(
-    const std::filesystem::path& exePath,
-    std::string_view config = "",
-    bool filterPython = false,
-    int debuggerPort = 0
-) {
+static void launchGameExe(const std::filesystem::path& exePath, std::string_view config = "",
+    const nlohmann::json& userConfig = nlohmann::json::object(), const std::filesystem::path& debugModConfigFile = "")
+{
     STARTUPINFOA si = { sizeof(si) };
     PROCESS_INFORMATION pi = {};
 
@@ -710,9 +709,22 @@ static void launchGameExe(
 
         printColoredAtomic(out, ConsoleColor::Red);
     };
-    // auto processStderr = [](const std::string& line) {
-    //     printColoredAtomic(line, ConsoleColor::Red);
-    // };
+
+    // ===================== 用户配置后置处理 =====================
+    // 是否过滤非Python输出
+    bool filterPython = userConfig.value("include_debug_mod", true);
+    // 调试器端口（0为不启用）
+    int debuggerPort = _GET_ENV_DEBUGGER_PORT();
+    if(debuggerPort != 0) {
+        // 解析用户配置覆盖
+        auto debuggerConfig = userConfig.value("modpc_debugger", nlohmann::json::object());
+        if(debuggerConfig.is_object()) {
+            bool debuggerEnabled = debuggerConfig.value("enabled", false);
+            if(debuggerEnabled) {
+                debuggerPort = debuggerConfig.value("port", 5632);
+            }
+        }
+    }
 
     // 启动两个线程并行读取（避免任何死锁）
     std::thread tOut(
@@ -880,10 +892,11 @@ static void startGame(const nlohmann::json& config) {
     auto modDirConfigs = UserModDirConfig::parseListFromJson(
         config.value("included_mod_dirs", nlohmann::json::array({"./"})));
 
+    std::filesystem::path debugModConfigFile;
     // link Debug MOD
     if(config.value("include_debug_mod", true)) {
         // std::filesystem::path debugModMainFile;
-        auto debugMod = registerDebugMod(config, modDirConfigs, nullptr);
+        auto debugMod = registerDebugMod(config, modDirConfigs, &debugModConfigFile);
         std::cout << "已注册调试MOD：" << debugMod.uuid << "\n";
         linkUserConfigModDirs(modDirConfigs, linkedPacks);
         linkedPacks.push_back(std::move(debugMod));
@@ -960,22 +973,9 @@ static void startGame(const nlohmann::json& config) {
     // 检查是否附加debugmod
     bool useDebugMode = config.value("include_debug_mod", true);
 
-    // 调试器端口（0为不启用）
-    int debuggerPort = _GET_ENV_DEBUGGER_PORT();
-    if(debuggerPort != 0) {
-        // 解析用户配置覆盖
-        auto debuggerConfig = config.value("modpc_debugger", nlohmann::json::object());
-        if(debuggerConfig.is_object()) {
-            bool debuggerEnabled = debuggerConfig.value("enabled", false);
-            if(debuggerEnabled) {
-                debuggerPort = debuggerConfig.value("port", 5632);
-            }
-        }
-    }
-
 // #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
     if(!autoJoinGame) {
-        launchGameExe(gameExePath, "", useDebugMode, debuggerPort);
+        launchGameExe(gameExePath, "", config, debugModConfigFile);
         return;
     }
     auto configPath = worldsPath / "dev_config.cppconfig";
@@ -1004,7 +1004,7 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
     configFile.close();
-    launchGameExe(gameExePath, configPath.generic_string(), useDebugMode, debuggerPort);
+    launchGameExe(gameExePath, configPath.generic_string(), config, debugModConfigFile);
 // #else
 //     launchGameExe(gameExePath);
 // #endif

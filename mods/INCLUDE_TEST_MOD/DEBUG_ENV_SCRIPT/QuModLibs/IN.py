@@ -42,7 +42,6 @@ def GET_THREAD_ID():
     from threading import current_thread
     return current_thread().ident
 
-# 线程环境检查需在modMain中调用START_THREAD_ANALYSIS启用分析
 def IS_SERVER_THREAD():
     """ 检查是不是服务端线程 """
     return RuntimeService._serverThreadID != None and GET_THREAD_ID() == RuntimeService._serverThreadID

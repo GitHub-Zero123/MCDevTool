@@ -1,22 +1,10 @@
 # -*- coding: utf-8 -*-
 from .QuModLibs.QuMod import *
-from .QuModLibs.Util import QConstInit
-from common.utils import xupdate
-from json import loads
+from .Game import RELOAD_MOD, _RELOAD_MOD, RELOAD_ADDON, \
+    RELOAD_WORLD, RELOAD_SHADERS
+from .Config import DEBUG_CONFIG
 import sys
 lambda: "By Zero123"
-
-_DEBUG_INFO = "{#debug_options}"
-_TARGET_MOD_DIRS = "{#target_mod_dirs}"
-try:
-    DEBUG_CONFIG = loads(_DEBUG_INFO) if not isinstance(_DEBUG_INFO, dict) else _DEBUG_INFO
-except:
-    DEBUG_CONFIG = {}
-
-try:
-    TARGET_MOD_DIRS = loads(_TARGET_MOD_DIRS) if not isinstance(_TARGET_MOD_DIRS, list) else _TARGET_MOD_DIRS
-except:
-    TARGET_MOD_DIRS = []
 
 REF = 0
 
@@ -61,10 +49,8 @@ def REST_STDOUT():
     sys.stdout = stdout
     sys.stderr = stderr
 
-@QConstInit
-def INIT():
-    sys.stdout = STD_OUT_WRAPPER(sys.stdout)
-    sys.stderr = STD_OUT_WRAPPER(sys.stderr)
+sys.stdout = STD_OUT_WRAPPER(sys.stdout)
+sys.stderr = STD_OUT_WRAPPER(sys.stderr)
 
 @PRE_SERVER_LOADER_HOOK
 def SERVER_INIT():
@@ -78,41 +64,6 @@ def SERVER_INIT():
         REST_STDOUT()
     from .QuModLibs.Systems.Loader.Server import LoaderSystem
     LoaderSystem.REG_DESTROY_CALL_FUNC(_DESTROY)
-
-def _RELOAD_MOD():
-    state = False
-    for rootModDir in TARGET_MOD_DIRS:
-        try:
-            if xupdate.updata_all(rootModDir):
-                state = True
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-    return state
-
-def RELOAD_MOD():
-    import gui
-    if _RELOAD_MOD():
-        gui.set_left_corner_notify_msg("[Dev] Scripts reloaded successfully.")
-    else:
-        gui.set_left_corner_notify_msg("[Dev] No script updates found.")
-
-def RELOAD_ADDON():
-    import gui
-    import clientlevel
-    clientlevel.refresh_addons()
-    gui.set_left_corner_notify_msg("[Dev] Add-ons reloaded successfully.")
-
-def RELOAD_WORLD():
-    import clientlevel
-    clientlevel.restart_local_game()
-
-def RELOAD_SHADERS():
-    import gui
-    if clientApi.ReloadAllShaders():
-        gui.set_left_corner_notify_msg("[Dev] Shaders reloaded successfully.")
-        return
-    gui.set_left_corner_notify_msg("[Dev] No shader updates found.")
 
 def CLOnKeyPressInGame(args={}):
     if args["isDown"] != "0":
@@ -133,9 +84,11 @@ def CLOnKeyPressInGame(args={}):
 def CLIENT_INIT():
     global REF
     REF += 1
+    from . import IPCSystem
     def _DESTROY():
         global REF
         REF -= 1
+        IPCSystem.ON_CLIENT_EXIT()
         if REF != 0:
             return
         REST_STDOUT()
@@ -146,6 +99,7 @@ def CLIENT_INIT():
         "OnKeyPressInGame",
         CLOnKeyPressInGame
     )
+    IPCSystem.ON_CLIENT_INIT()
 
 try:
     _RELOAD_MOD()

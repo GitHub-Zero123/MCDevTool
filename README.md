@@ -120,6 +120,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "auto_join_game": true,
     // 是否附加调试MOD(boolean)，若启用将在生成的世界中包含热更新脚本(R键触发检测)并重定向输出流使其附加[Python]前缀可供筛选搜索。
     "include_debug_mod": true,
+    // 是否自动热更新MOD
+    "auto_hot_reload_mods": true,
     // 生成的世界类型(0.旧版有限世界 1.无限世界 2.超平坦) (int)
     "world_type": 1,
     // 游戏模式(0.生存 1.创造 2.冒险) (int)
@@ -153,9 +155,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         // 绑定重载着色器快捷键
         "reload_shaders_key": "",
         // 是否在全体UI界面都触发热更新快捷键（默认false仅HUD界面）
-        "reload_key_global": false,
-        // 是否在检测到Mod Python文件变更时自动热更新Mod
-        "auto_reload_mods": false
+        "reload_key_global": false
     }
 }
 ```
