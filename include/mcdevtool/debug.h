@@ -68,6 +68,9 @@ namespace MCDevTool::Debug {
         // 热更新触发（在文件修改后重新进入前台时调用）
         virtual void onHotReloadTriggered();
 
+        // 文件更新触发（此时不一定在前台）
+        virtual void onFileChanged(const std::filesystem::path& filePath);
+
     protected:
         bool mNeedUpdate = false;
         bool mIsForeground = false;

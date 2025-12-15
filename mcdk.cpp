@@ -670,8 +670,14 @@ public:
     using MCDevTool::Debug::HotReloadWatcherTask::HotReloadWatcherTask;
 
     void onHotReloadTriggered() override {
-        std::cout << "[自动热更新] 检测到修改，已触发热更新。" << _MCDEV_LOG_OUTPUT_ENDL;
+        printColoredAtomic("[HotReload] 检测到修改，已触发热更新。", ConsoleColor::Yellow);
         mIpcServer->sendMessage(1); // 发送热更新命令
+    }
+
+    void onFileChanged(const std::filesystem::path& filePath) override {
+        // 输出变更文件路径
+        auto u8Path = filePath.generic_u8string();
+        printColoredAtomic("[HotReload] Detected change in: " + std::string(u8Path.begin(), u8Path.end()), ConsoleColor::Yellow);
     }
 
     void bindServer(const std::shared_ptr<MCDevTool::Debug::DebugIPCServer>& server) {
@@ -864,7 +870,7 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
         // 启动热更新追踪任务
         reloadTask.setProcessId(pid);
         // 输出追踪目录列表
-        std::cout << "[自动热更新] 追踪目录列表：\n";
+        std::cout << "[HotReload] 追踪目录列表：\n";
         for(const auto& modDirConfig : *modDirList) {
             if(modDirConfig.hotReload) {
                 std::cout << "  -> " << modDirConfig.getAbsoluteU8String() << "\n";

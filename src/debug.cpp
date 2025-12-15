@@ -201,8 +201,7 @@ namespace MCDevTool::Debug {
         bool mIsForeground = false;
         fileWatcherThread = MCDevTool::HotReload::watchAndReloadPyFiles(mModDirs, [this](const std::filesystem::path& path) {
             this->mNeedUpdate = true;
-            auto u8Path = path.u8string();
-            std::cout << "[HotReload] Detected change in: " << std::string(u8Path.begin(), u8Path.end()) << std::endl;
+            this->onFileChanged(path);
             if(this->mIsForeground) {
                 this->mNeedUpdate = false;
                 this->onHotReloadTriggered();
@@ -258,4 +257,6 @@ namespace MCDevTool::Debug {
     }
 
     void HotReloadWatcherTask::onHotReloadTriggered() {}
+
+    void HotReloadWatcherTask::onFileChanged(const std::filesystem::path& filePath) {}
 } // namespace MCDevTool::Debug
