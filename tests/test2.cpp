@@ -24,23 +24,29 @@ int main() {
         }
     );
 
-    auto thread2 = MCDevTool::HotReload::watchProcessForegroundWindow(25940, [](bool isForeground) {
-        std::cout << "Process is " << (isForeground ? "foreground" : "background") << std::endl;
-    });
-
     if(thread.has_value()) {
         std::cout << "Started watching for file changes..." << std::endl;
-        thread->join();
     } else {
         std::cerr << "Failed to start file watcher." << std::endl;
-        return 1;
     }
 
-    if(thread2.has_value()) {
-        thread2->join();
-    } else {
-        std::cerr << "Failed to start process foreground window watcher." << std::endl;
-        return 1;
+    MCDevTool::Debug::DebugIPCServer server;
+    server.start();
+    std::cout << "Debug IPC Server started on port: " << server.getPort() << std::endl;
+
+    while(true) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        server.sendMessage(1, std::vector<uint8_t>{'H', 'e', 'l', 'l', 'o'});
     }
+
+    // auto thread2 = MCDevTool::HotReload::watchProcessForegroundWindow(25940, [](bool isForeground) {
+    //     std::cout << "Process is " << (isForeground ? "foreground" : "background") << std::endl;
+    // });
+
+    if(thread.has_value()) {
+        thread->join();
+    }
+    server.join();
+
     return 0;
 }

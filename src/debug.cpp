@@ -129,6 +129,10 @@ namespace MCDevTool::Debug {
         return true;
     }
 
+    unsigned short DebugIPCServer::getPort() const {
+        return mPort;
+    }
+
     void DebugIPCServer::join() {
         if(mThread.has_value() && mThread->joinable()) {
             mThread->join();
