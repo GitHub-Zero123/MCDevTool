@@ -2,7 +2,6 @@
 from json import loads
 _DEBUG_INFO = "{#debug_options}"
 _TARGET_MOD_DIRS = "{#target_mod_dirs}"
-_IPC_PORT = 0
 
 try:
     DEBUG_CONFIG = loads(_DEBUG_INFO) if not isinstance(_DEBUG_INFO, dict) else _DEBUG_INFO
@@ -15,4 +14,8 @@ except:
     TARGET_MOD_DIRS = []
 
 def GET_DEBUG_IPC_PORT():
-    return _IPC_PORT
+    import os
+    port = os.getenv("MCDEV_DEBUG_IPC_PORT")
+    if port is None:
+        return None
+    return int(port)

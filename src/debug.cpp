@@ -1,6 +1,8 @@
 #include "mcdevtool/debug.h"
+#include <mcdevtool/reload.h>
 #include <iostream>
 #include <chrono>
+#include <functional>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -94,6 +96,10 @@ namespace MCDevTool::Debug {
         return sendMessage(messageType, data.data(), data.size());
     }
 
+    bool DebugIPCServer::sendMessage(uint16_t messageType) {
+        return sendMessage(messageType, nullptr, 0);
+    }
+
     bool DebugIPCServer::sendMessage(uint16_t messageType, const uint8_t* data, size_t length) {
         if (!mSocketPtr) {
             return false;
@@ -149,4 +155,70 @@ namespace MCDevTool::Debug {
         return mThread.has_value() ? &mThread.value() : nullptr;
     }
 #endif
+
+    std::shared_ptr<DebugIPCServer> createDebugServer() {
+        return std::make_shared<DebugIPCServer>();
+    }
+
+    HotReloadWatcherTask::HotReloadWatcherTask(int processId, const std::vector<std::filesystem::path>& modDirs)
+        : mProcessId(processId), mModDirs(modDirs) {
+    }
+
+    void HotReloadWatcherTask::start() {
+        // 实现启动逻辑
+        if(fileWatcherThread.has_value() || processWatcherThread.has_value()) {
+            throw std::runtime_error("Watcher threads already running");
+        }
+        bool mNeedUpdate = false;
+        bool mIsForeground = false;
+        fileWatcherThread = MCDevTool::HotReload::watchAndReloadPyFiles(mModDirs, [this](const std::filesystem::path& path) {
+            this->mNeedUpdate = true;
+            auto u8Path = path.u8string();
+            std::cout << "[HotReload] Detected change in: " << std::string(u8Path.begin(), u8Path.end()) << std::endl;
+            if(this->mIsForeground) {
+                this->mNeedUpdate = false;
+                this->onHotReloadTriggered();
+            }
+        });
+        if(!fileWatcherThread.has_value()) {
+            fileWatcherThread.reset();
+            throw std::runtime_error("Failed to start file watcher thread");
+        }
+        processWatcherThread = MCDevTool::HotReload::watchProcessForegroundWindow(mProcessId, [this](bool isForeground) {
+            this->mIsForeground = isForeground;
+            if(isForeground && this->mNeedUpdate) {
+                this->mNeedUpdate = false;
+                this->onHotReloadTriggered();
+            }
+        });
+        if(!processWatcherThread.has_value()) {
+            processWatcherThread.reset();
+            fileWatcherThread.reset();
+            throw std::runtime_error("Failed to start process watcher thread");
+        }
+    }
+
+    void HotReloadWatcherTask::stop() {
+        // 实现停止逻辑
+        if(fileWatcherThread.has_value()) {
+            fileWatcherThread.reset();
+        }
+        if(processWatcherThread.has_value()) {
+            processWatcherThread.reset();
+        }
+    }
+
+    void HotReloadWatcherTask::setProcessId(int processId) {
+        mProcessId = processId;
+    }
+
+    void HotReloadWatcherTask::setModDirs(const std::vector<std::filesystem::path>& modDirs) {
+        mModDirs = modDirs;
+    }
+
+    void HotReloadWatcherTask::setModDirs(std::vector<std::filesystem::path>&& modDirs) {
+        mModDirs = std::move(modDirs);
+    }
+
+    void HotReloadWatcherTask::onHotReloadTriggered() {}
 } // namespace MCDevTool::Debug

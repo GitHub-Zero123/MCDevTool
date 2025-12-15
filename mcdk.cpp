@@ -19,6 +19,7 @@
 #include <mcdevtool/env.h>
 #include <mcdevtool/addon.h>
 #include <mcdevtool/level.h>
+#include <mcdevtool/debug.h>
 #include <nlohmann/json.hpp>
 
 // #define MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
@@ -55,6 +56,21 @@ static int _GET_ENV_MCDEV_OUTPUT_MODE() {
         }
     }
     return outputMode;
+}
+
+// 获取环境变量 强制修改调试器端口号
+static int _GET_ENV_DEBUGGER_PORT() {
+    auto* portStr = std::getenv("MCDEV_MODPC_DEBUGGER_PORT");
+    if(portStr == nullptr) {
+        return 0;
+    }
+    try {
+        int port = std::stoi(portStr);
+        if(port > 0 && port <= 65535) {
+            return port;
+        }
+    } catch(...) {}
+    return 0;
 }
 
 // 字符串关键字替换
@@ -142,6 +158,17 @@ public:
         }
         return jArray.dump();
     }
+
+    // 将std::vector<UserModDirConfig>转换为std::vector<std::filesystem::path>的目标追踪列表
+    static std::vector<std::filesystem::path> toPathList(const std::vector<UserModDirConfig>& configs) {
+        std::vector<std::filesystem::path> paths;
+        for(const auto& config : configs) {
+            if(config.hotReload) {
+                paths.push_back(config.getAbsolutePath());
+            }
+        }
+        return paths;
+    }
 };
 
 static nlohmann::json createDefaultConfig() {
@@ -179,6 +206,8 @@ static nlohmann::json createDefaultConfig() {
         { "auto_join_game", true },
         // 包含调试模组(提供R键热更新以及py输出流标记)
         { "include_debug_mod", true },
+        // 是否启用自动热更新mod功能
+        { "auto_hot_reload_mods", false },
         // 世界类型 0-旧版 1-无限 2-平坦
         { "world_type", 1 },
         // 游戏模式 0-生存 1-创造 2-冒险
@@ -585,10 +614,94 @@ static bool containsIgnoreCase(std::string_view text,
     return false;
 }
 
+// 检查用户配置是否需要启用IPC调试功能
+static bool checkUserConfigEnableIPC(const nlohmann::json& userConfig) {
+    // 若启用了auto_hot_reload_mods则启用IPC
+    bool autoHotReload = userConfig.value("auto_hot_reload_mods", false);
+    if(autoHotReload) {
+        return true;
+    }
+    return false;
+}
+
+// 将utf8的string转换为utf16的wstring
+static std::wstring utf8ToUtf16(const std::string& utf8Str) {
+    if (utf8Str.empty()) {
+        return std::wstring();
+    }
+    int wideCharLen = MultiByteToWideChar(CP_UTF8, 0, utf8Str.data(), static_cast<int>(utf8Str.size()), nullptr, 0);
+    if (wideCharLen == 0) {
+        throw std::runtime_error("Failed to convert UTF-8 to UTF-16.");
+    }
+    std::wstring utf16Str(wideCharLen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8Str.data(), static_cast<int>(utf8Str.size()), &utf16Str[0], wideCharLen);
+    return utf16Str;
+}
+
+// 生成新的环境变量w字符串（继承当前环境变量并添加新变量）
+static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const std::wstring& newValue) {
+    // 获取当前环境变量块
+    LPWCH envBlock = GetEnvironmentStringsW();
+    if (envBlock == nullptr) {
+        throw std::runtime_error("Failed to get current environment strings.");
+    }
+
+    std::wstring newEnvBlock;
+    // 复制现有环境变量
+    LPWCH current = envBlock;
+    while (*current) {
+        std::wstring varLine(current);
+        newEnvBlock += varLine + L'\0';
+        current += varLine.size() + 1;
+    }
+
+    // 添加新的环境变量
+    newEnvBlock += newVar + L'=' + newValue + L'\0';
+
+    // 结束环境变量块
+    newEnvBlock += L'\0';
+
+    FreeEnvironmentStringsW(envBlock);
+    return newEnvBlock;
+}
+
+class ReloadWatcherTask : public MCDevTool::Debug::HotReloadWatcherTask {
+public:
+    using MCDevTool::Debug::HotReloadWatcherTask::HotReloadWatcherTask;
+
+    void onHotReloadTriggered() override {
+        std::cout << "[自动热更新] 检测到修改，已触发热更新。" << _MCDEV_LOG_OUTPUT_ENDL;
+        mIpcServer->sendMessage(1); // 发送热更新命令
+    }
+
+    void bindServer(const std::shared_ptr<MCDevTool::Debug::DebugIPCServer>& server) {
+        mIpcServer = server;
+    }
+private:
+    std::shared_ptr<MCDevTool::Debug::DebugIPCServer> mIpcServer;
+};
+
 static void launchGameExe(const std::filesystem::path& exePath, std::string_view config = "",
-    const nlohmann::json& userConfig = nlohmann::json::object(), const std::filesystem::path& debugModConfigFile = "")
+    const nlohmann::json& userConfig = nlohmann::json::object(), const std::vector<UserModDirConfig>* modDirList=nullptr)
 {
-    STARTUPINFOA si = { sizeof(si) };
+    bool autoHotReload = userConfig.value("auto_hot_reload_mods", false);
+    bool enableIPC = autoHotReload;
+    void* lpEnvironment = nullptr;
+    auto ipcServer = MCDevTool::Debug::createDebugServer();
+
+    ReloadWatcherTask reloadTask;
+    reloadTask.bindServer(ipcServer);
+
+    std::wstring newEnv;
+    if(enableIPC) {
+        ipcServer->start();
+        int port = ipcServer->getPort();
+        std::cout << "IPC调试服务器已启动，端口：" << port << _MCDEV_LOG_OUTPUT_ENDL;
+        newEnv = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
+        lpEnvironment = (void*)newEnv.data();
+    }
+
+    STARTUPINFOW si = { sizeof(si) };
     PROCESS_INFORMATION pi = {};
 
     SECURITY_ATTRIBUTES sa{};
@@ -625,16 +738,16 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
     std::string cmd = "\"" + exePath.string() + "\"";
     if (!config.empty())
         cmd += " config=\"" + std::string(config) + "\"";
-    std::vector<char> cmdBuf(cmd.begin(), cmd.end());
-    cmdBuf.push_back('\0');
+    // std::vector<char> cmdBuf(cmd.begin(), cmd.end());
+    // cmdBuf.push_back('\0');
 
-    if (!CreateProcessA(
+    if (!CreateProcessW(
         nullptr,
-        cmdBuf.data(),
+        utf8ToUtf16(cmd).data(),
         nullptr, nullptr,
         TRUE,   // 继承句柄
-        0,
-        nullptr,
+        (lpEnvironment != nullptr ? CREATE_UNICODE_ENVIRONMENT : 0),
+        lpEnvironment,
         nullptr,
         &si,
         &pi
@@ -743,16 +856,39 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
 
     DWORD pid = pi.dwProcessId;
     if(debuggerPort > 0) {
-        // 尝试启动调试器附加
+        // 尝试启动mcdbg调试器附加
         debuggerAttachToProcess(pid, debuggerPort);
+    }
+
+    if(autoHotReload && modDirList != nullptr) {
+        // 启动热更新追踪任务
+        reloadTask.setProcessId(pid);
+        // 输出追踪目录列表
+        std::cout << "[自动热更新] 追踪目录列表：\n";
+        for(const auto& modDirConfig : *modDirList) {
+            if(modDirConfig.hotReload) {
+                std::cout << "  -> " << modDirConfig.getAbsoluteU8String() << "\n";
+            }
+        }
+        reloadTask.setModDirs(UserModDirConfig::toPathList(*modDirList));
+        reloadTask.start();
     }
 
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回 ERROR_BROKEN_PIPE）
     WaitForSingleObject(pi.hProcess, INFINITE);
+    // 停止热更新追踪任务
+    reloadTask.stop();
+    // 停止IPC服务器 如果已启用
+    if(enableIPC) {
+        ipcServer->stop();
+    }
 
     // 等待读线程退出并关闭读端句柄
     tOut.join();
     tErr.join();
+
+    // 停止IPC服务器 如果已启用
+    // ipcServer->stop();
 
     CloseHandle(outRead);
     CloseHandle(errRead);
@@ -762,42 +898,6 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
 }
 
 #endif
-
-// #else
-
-// 启动游戏exe并附着终端
-// static void launchGameExe(const std::filesystem::path& exePath) {
-//     STARTUPINFOA si;
-//     PROCESS_INFORMATION pi;
-//     ZeroMemory(&si, sizeof(si));
-//     si.cb = sizeof(si);
-//     ZeroMemory(&pi, sizeof(pi));
-
-//     // 创建进程
-//     if(!CreateProcessA(
-//         exePath.string().c_str(),   // 可执行文件路径
-//         nullptr,                    // 命令行参数
-//         nullptr,                    // 进程属性
-//         nullptr,                    // 线程属性
-//         FALSE,                      // 是否继承句柄
-//         0,                          // 创建标志
-//         nullptr,                    // 使用父进程的环境变量
-//         nullptr,                    // 使用父进程的工作目录
-//         &si,                        // 指向 STARTUPINFO 结构体的指针
-//         &pi                         // 指向 PROCESS_INFORMATION 结构体的指针
-//     )) {
-//         throw std::runtime_error("无法启动游戏可执行文件，CreateProcess失败。");
-//     }
-
-//     // 等待进程结束
-//     WaitForSingleObject(pi.hProcess, INFINITE);
-
-//     // 关闭进程和线程句柄
-//     CloseHandle(pi.hProcess);
-//     CloseHandle(pi.hThread);
-// }
-
-// #endif
 
 // 尝试更新游戏路径
 static bool updateGamePath(std::filesystem::path& path) {
@@ -814,7 +914,7 @@ static void tryUpdateUserGamePath(const std::filesystem::path& newPath) {
     auto configPath = std::filesystem::current_path() / ".mcdev.json";
     std::ifstream configFile(configPath, std::ios::binary);
     std::string content((std::istreambuf_iterator<char>(configFile)),
-                         std::istreambuf_iterator<char>());
+                        std::istreambuf_iterator<char>());
     nlohmann::json config = nlohmann::json::parse(content, nullptr, false, true);
     configFile.close();
     if(config.is_discarded()) {
@@ -847,21 +947,6 @@ static int _GET_ENV_AUTO_JOIN_GAME_STATE() {
     return -1;
 }
 
-// 获取环境变量 强制修改调试器端口号
-static int _GET_ENV_DEBUGGER_PORT() {
-    auto* portStr = std::getenv("MCDEV_MODPC_DEBUGGER_PORT");
-    if(portStr == nullptr) {
-        return 0;
-    }
-    try {
-        int port = std::stoi(portStr);
-        if(port > 0 && port <= 65535) {
-            return port;
-        }
-    } catch(...) {}
-    return 0;
-}
-
 // 启动游戏
 static void startGame(const nlohmann::json& config) {
     auto gameExePath = std::filesystem::u8path(config.value("game_executable_path", ""));
@@ -892,27 +977,14 @@ static void startGame(const nlohmann::json& config) {
     auto modDirConfigs = UserModDirConfig::parseListFromJson(
         config.value("included_mod_dirs", nlohmann::json::array({"./"})));
 
-    std::filesystem::path debugModConfigFile;
+    // std::filesystem::path debugModConfigFile;
     // link Debug MOD
     if(config.value("include_debug_mod", true)) {
         // std::filesystem::path debugModMainFile;
-        auto debugMod = registerDebugMod(config, modDirConfigs, &debugModConfigFile);
+        auto debugMod = registerDebugMod(config, modDirConfigs);
         std::cout << "已注册调试MOD：" << debugMod.uuid << "\n";
         linkUserConfigModDirs(modDirConfigs, linkedPacks);
         linkedPacks.push_back(std::move(debugMod));
-        
-        // 生成热更新行为包追踪列表
-        // if(!debugModMainFile.empty()) {
-        //     // 读取入口文件替换
-        //     std::ifstream mainFileIn(debugModMainFile, std::ios::binary);
-        //     std::string mainFileContent((std::istreambuf_iterator<char>(mainFileIn)),
-        //                                 std::istreambuf_iterator<char>());
-        //     mainFileIn.close();
-        //     stringReplace(mainFileContent, "\"{#target_mod_dirs}\"", UserModDirConfig::toHotReloadListString(modDirConfigs));
-        //     // 重新写入文件 传递热更新目录列表
-        //     std::ofstream mainFileOut(debugModMainFile, std::ios::binary | std::ios::trunc);
-        //     mainFileOut.write(mainFileContent.data(), mainFileContent.size());
-        // }
     } else {
         linkUserConfigModDirs(modDirConfigs, linkedPacks);
     }
@@ -975,7 +1047,7 @@ static void startGame(const nlohmann::json& config) {
 
 // #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
     if(!autoJoinGame) {
-        launchGameExe(gameExePath, "", config, debugModConfigFile);
+        launchGameExe(gameExePath, "", config, &modDirConfigs);
         return;
     }
     auto configPath = worldsPath / "dev_config.cppconfig";
@@ -1004,7 +1076,7 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
     configFile.close();
-    launchGameExe(gameExePath, configPath.generic_string(), config, debugModConfigFile);
+    launchGameExe(gameExePath, configPath.generic_string(), config, &modDirConfigs);
 // #else
 //     launchGameExe(gameExePath);
 // #endif
