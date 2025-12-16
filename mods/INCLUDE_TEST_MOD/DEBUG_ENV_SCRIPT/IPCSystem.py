@@ -106,7 +106,7 @@ def FAST_RELOAD(data):
     def _FAST_RELOAD():
         for path in pathList:
             if RELOAD_ONCE_MODULE(path):
-                print("[FAST_RELOAD] Reloaded module successfully: " + path)
+                print("[FAST_RELOAD] Reloaded module successfully: \"" + path + "\"")
     if GAME_COMP:
         GAME_COMP.AddTimer(0, _FAST_RELOAD)
         return

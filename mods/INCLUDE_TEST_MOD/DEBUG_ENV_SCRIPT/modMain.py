@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from .QuModLibs.QuMod import *
-from .Game import RELOAD_MOD, _RELOAD_MOD, RELOAD_ADDON, \
+from .Game import RELOAD_MOD, INIT_RELOAD_TIME, RELOAD_ADDON, \
     RELOAD_WORLD, RELOAD_SHADERS
 from .Config import DEBUG_CONFIG
 import sys
@@ -102,6 +102,6 @@ def CLIENT_INIT():
     IPCSystem.ON_CLIENT_INIT()
 
 try:
-    _RELOAD_MOD()
+    INIT_RELOAD_TIME()
 except:
     pass

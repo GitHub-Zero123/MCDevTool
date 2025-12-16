@@ -666,30 +666,13 @@ static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const 
     return newEnvBlock;
 }
 
+// 热更新监视任务类
 class ReloadWatcherTask : public MCDevTool::Debug::HotReloadWatcherTask {
 public:
     using MCDevTool::Debug::HotReloadWatcherTask::HotReloadWatcherTask;
 
-    void onHotReloadTriggered() override {
-        // printColoredAtomic("[HotReload] 检测到修改，已触发热更新。", ConsoleColor::Yellow);
-        // mIpcServer->sendMessage(1); // 发送热更新命令
-        nlohmann::json targetPaths = nlohmann::json::array();
-        {
-            std::lock_guard<std::mutex> lock(gMutex);
-            for(auto&& moduleName : mCachedPyModuleNames) {
-                targetPaths.push_back(std::move(moduleName));
-            }
-            mCachedPyModuleNames.clear();
-        }
-        if(targetPaths.empty()) {
-            return;
-        }
-        printColoredAtomic("[HotReload] 检测到修改，已触发热更新。", ConsoleColor::Yellow);
-        mIpcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
-    }
-
-    // 注册缓存的模块名
-    void registerCachedModuleName(const std::filesystem::path& filePath) {
+    // 从文件路径计算Python模块名
+    static void pyPathToModuleName(const std::filesystem::path& filePath, std::string& outModuleName) {
         std::filesystem::path cur = filePath;
         std::filesystem::path manifestDir;
 
@@ -718,11 +701,8 @@ public:
             parts.push_back(p.string());
         }
 
-        if (parts.empty()) {
-            return;
-        }
+        if (parts.empty()) { return; }
 
-        // 去掉 .py 后缀
         std::string& last = parts.back();
         if (last.size() > 3 && last.ends_with(".py")) {
             last.resize(last.size() - 3);
@@ -736,16 +716,38 @@ public:
                 moduleName.push_back('.');
             }
         }
+        outModuleName = std::move(moduleName);
+    }
 
-        std::lock_guard<std::mutex> lock(gMutex);
-        mCachedPyModuleNames.insert(moduleName);
+    void onHotReloadTriggered() override {
+        // printColoredAtomic("[HotReload] 检测到修改，已触发热更新。", ConsoleColor::Yellow);
+        // mIpcServer->sendMessage(1); // 发送热更新命令
+        nlohmann::json targetPaths = nlohmann::json::array();
+        {
+            std::lock_guard<std::mutex> lock(gMutex);
+            for(const auto& modulePath : mCachedPyModulePaths) {
+                std::string moduleName;
+                pyPathToModuleName(modulePath, moduleName);
+                if(moduleName.empty()) {
+                    continue;
+                }
+                targetPaths.push_back(std::move(moduleName));
+            }
+            mCachedPyModulePaths.clear();
+        }
+        if(targetPaths.empty()) {
+            return;
+        }
+        printColoredAtomic("[HotReload] 检测到修改，已触发热更新。", ConsoleColor::Yellow);
+        mIpcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
     }
 
     void onFileChanged(const std::filesystem::path& filePath) override {
         // 输出变更文件路径
         auto u8Path = filePath.generic_u8string();
         printColoredAtomic("[HotReload] Detected change in: " + std::string(u8Path.begin(), u8Path.end()), ConsoleColor::Yellow);
-        registerCachedModuleName(filePath);
+        std::lock_guard<std::mutex> lock(gMutex);
+        mCachedPyModulePaths.insert(filePath);
     }
 
     void bindServer(const std::shared_ptr<MCDevTool::Debug::DebugIPCServer>& server) {
@@ -753,10 +755,11 @@ public:
     }
 private:
     std::shared_ptr<MCDevTool::Debug::DebugIPCServer> mIpcServer;
-    std::unordered_set<std::string> mCachedPyModuleNames;
+    std::unordered_set<std::filesystem::path> mCachedPyModulePaths;
     std::mutex gMutex;
 };
 
+// 启动游戏可执行文件
 static void launchGameExe(const std::filesystem::path& exePath, std::string_view config = "",
     const nlohmann::json& userConfig = nlohmann::json::object(), const std::vector<UserModDirConfig>* modDirList=nullptr)
 {

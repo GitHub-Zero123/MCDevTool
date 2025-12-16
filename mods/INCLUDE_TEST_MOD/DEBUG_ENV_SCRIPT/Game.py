@@ -13,6 +13,9 @@ def _RELOAD_MOD():
             traceback.print_exc()
     return state
 
+def INIT_RELOAD_TIME():
+    return xupdate.set_load_time()
+
 def SEND_CLIENT_MSG(msg):
     import gui
     print(msg)
