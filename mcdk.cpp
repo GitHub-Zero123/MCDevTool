@@ -1058,8 +1058,8 @@ static void startGame(const nlohmann::json& config) {
         // std::filesystem::path debugModMainFile;
         auto debugMod = registerDebugMod(config, modDirConfigs);
         std::cout << "已注册调试MOD：" << debugMod.uuid << "\n";
-        linkUserConfigModDirs(modDirConfigs, linkedPacks);
         linkedPacks.push_back(std::move(debugMod));
+        linkUserConfigModDirs(modDirConfigs, linkedPacks);
     } else {
         linkUserConfigModDirs(modDirConfigs, linkedPacks);
     }
