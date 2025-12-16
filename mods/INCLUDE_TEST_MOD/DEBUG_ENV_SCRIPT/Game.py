@@ -13,19 +13,26 @@ def _RELOAD_MOD():
             traceback.print_exc()
     return state
 
+def SEND_CLIENT_MSG(msg):
+    import gui
+    print(msg)
+    gui.set_left_corner_notify_msg(msg)
+
 def RELOAD_MOD():
     import gui
     msg = "[Dev] Scripts reloaded successfully."
     if not _RELOAD_MOD():
         msg = "[Dev] No script updates found."
-    gui.set_left_corner_notify_msg(msg)
-    print(msg)
+    SEND_CLIENT_MSG(msg)
+
+def RELOAD_ONCE_MODULE(moduleName):
+    return xupdate.update(moduleName)
 
 def RELOAD_ADDON():
     import gui
     import clientlevel
     clientlevel.refresh_addons()
-    gui.set_left_corner_notify_msg("[Dev] Add-ons reloaded successfully.")
+    SEND_CLIENT_MSG("[Dev] Add-ons reloaded successfully.")
 
 def RELOAD_WORLD():
     import clientlevel
@@ -34,6 +41,6 @@ def RELOAD_WORLD():
 def RELOAD_SHADERS():
     import gui
     if clientApi.ReloadAllShaders():
-        gui.set_left_corner_notify_msg("[Dev] Shaders reloaded successfully.")
+        SEND_CLIENT_MSG("[Dev] Shaders reloaded successfully.")
         return
-    gui.set_left_corner_notify_msg("[Dev] No shader updates found.")
+    SEND_CLIENT_MSG("[Dev] No shader updates found.")

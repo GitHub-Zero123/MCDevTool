@@ -111,6 +111,10 @@ namespace MCDevTool::Debug {
         return sendMessage(messageType, nullptr, 0);
     }
 
+    bool DebugIPCServer::sendMessage(uint16_t messageType, std::string_view data) {
+        return sendMessage(messageType, reinterpret_cast<const uint8_t*>(data.data()), data.size());
+    }
+
     bool DebugIPCServer::sendMessage(uint16_t messageType, const uint8_t* data, size_t length) {
         if (!mSocketPtr) {
             return false;

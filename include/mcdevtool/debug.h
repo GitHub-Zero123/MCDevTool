@@ -1,5 +1,4 @@
 #pragma once
-#include <string>
 #include <string_view>
 #include <mutex>
 #include <thread>
@@ -31,6 +30,7 @@ namespace MCDevTool::Debug {
 
         std::thread* getThread();
 
+        bool sendMessage(uint16_t messageType, std::string_view data);
         bool sendMessage(uint16_t messageType, const std::vector<uint8_t>& data);
         bool sendMessage(uint16_t messageType, const uint8_t* data, size_t length);
         bool sendMessage(uint16_t messageType);

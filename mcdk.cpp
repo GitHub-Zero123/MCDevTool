@@ -11,6 +11,7 @@
 #include <thread>
 #include <mutex>
 #include <functional>
+#include <unordered_set>
 #include <optional>
 #include <stdexcept>
 #include <cstdint>
@@ -670,14 +671,81 @@ public:
     using MCDevTool::Debug::HotReloadWatcherTask::HotReloadWatcherTask;
 
     void onHotReloadTriggered() override {
+        // printColoredAtomic("[HotReload] 检测到修改，已触发热更新。", ConsoleColor::Yellow);
+        // mIpcServer->sendMessage(1); // 发送热更新命令
+        nlohmann::json targetPaths = nlohmann::json::array();
+        {
+            std::lock_guard<std::mutex> lock(gMutex);
+            for(auto&& moduleName : mCachedPyModuleNames) {
+                targetPaths.push_back(std::move(moduleName));
+            }
+            mCachedPyModuleNames.clear();
+        }
+        if(targetPaths.empty()) {
+            return;
+        }
         printColoredAtomic("[HotReload] 检测到修改，已触发热更新。", ConsoleColor::Yellow);
-        mIpcServer->sendMessage(1); // 发送热更新命令
+        mIpcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
+    }
+
+    // 注册缓存的模块名
+    void registerCachedModuleName(const std::filesystem::path& filePath) {
+        std::filesystem::path cur = filePath;
+        std::filesystem::path manifestDir;
+
+        // 向上查找 manifest.json
+        while (true) {
+            if (std::filesystem::exists(cur / "manifest.json")) {
+                manifestDir = cur;
+                break;
+            }
+
+            auto parent = cur.parent_path();
+            if (parent == cur) {
+                return; // 没找到 manifest
+            }
+            cur = parent;
+        }
+
+        // 计算 filePath 相对于 manifestDir 的路径
+        std::filesystem::path rel = std::filesystem::relative(filePath, manifestDir);
+        if (rel.empty()) {
+            return;
+        }
+
+        std::vector<std::string> parts;
+        for (const auto& p : rel) {
+            parts.push_back(p.string());
+        }
+
+        if (parts.empty()) {
+            return;
+        }
+
+        // 去掉 .py 后缀
+        std::string& last = parts.back();
+        if (last.size() > 3 && last.ends_with(".py")) {
+            last.resize(last.size() - 3);
+        }
+
+        // 拼接模块名
+        std::string moduleName;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            moduleName += parts[i];
+            if (i + 1 < parts.size()) {
+                moduleName.push_back('.');
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(gMutex);
+        mCachedPyModuleNames.insert(moduleName);
     }
 
     void onFileChanged(const std::filesystem::path& filePath) override {
         // 输出变更文件路径
         auto u8Path = filePath.generic_u8string();
         printColoredAtomic("[HotReload] Detected change in: " + std::string(u8Path.begin(), u8Path.end()), ConsoleColor::Yellow);
+        registerCachedModuleName(filePath);
     }
 
     void bindServer(const std::shared_ptr<MCDevTool::Debug::DebugIPCServer>& server) {
@@ -685,6 +753,8 @@ public:
     }
 private:
     std::shared_ptr<MCDevTool::Debug::DebugIPCServer> mIpcServer;
+    std::unordered_set<std::string> mCachedPyModuleNames;
+    std::mutex gMutex;
 };
 
 static void launchGameExe(const std::filesystem::path& exePath, std::string_view config = "",

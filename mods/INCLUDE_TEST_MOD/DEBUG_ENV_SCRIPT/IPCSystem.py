@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-import socket
-import threading
 import mod.client.extraClientApi as clientApi
 from .Config import GET_DEBUG_IPC_PORT
+import socket
+import threading
+import json
 
 def U16_BE(b):
     # type: (bytearray | str) -> int
@@ -43,6 +44,7 @@ class IPCSystem:
             sock = self.sock
             self.sock = None
         if sock:
+            sock.shutdown(socket.SHUT_RDWR)
             sock.close()
 
     def _threadListenLoop(self):
@@ -50,6 +52,8 @@ class IPCSystem:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock = self.sock
         sock.connect(("localhost", self.port))
+        sock.settimeout(0.05)
+        print("[IPCSystem] 已连接到调试服务器，端口：" + str(self.port))
         # [2B TypeID][4B DataLength][Data]
         def _recvAll(sock, length):
             # type: (socket.socket, int) -> bytearray
@@ -63,15 +67,19 @@ class IPCSystem:
         while 1:
             try:
                 header = _recvAll(sock, 6)
+                typeID = U16_BE(header[0:2])
+                dataLength = U32_BE(header[2:6])
+                data = _recvAll(sock, dataLength)
+            except socket.timeout:
+                continue
             except EOFError:
+                break
+            except socket.error:
                 break
             except Exception:
                 import traceback
                 traceback.print_exc()
                 break
-            typeID = U16_BE(header[0:2])
-            dataLength = U32_BE(header[2:6])
-            data = _recvAll(sock, dataLength)
             if typeID in self.handers:
                 try:
                     self.handers[typeID](data)
@@ -82,6 +90,7 @@ class IPCSystem:
                 print("[IPCSystem] 未知的TypeID数据包：" + str(typeID))
         with self.mLock:
             self.sock = None
+        print("[IPCSystem] 连接已关闭")
 
 GAME_COMP = None
 
@@ -91,10 +100,22 @@ def AUTO_RELOAD(_=None):
         GAME_COMP.AddTimer(0, lambda: RELOAD_MOD())
         return
 
+def FAST_RELOAD(data):
+    from .Game import RELOAD_ONCE_MODULE
+    pathList = json.loads(str(data))
+    def _FAST_RELOAD():
+        for path in pathList:
+            if RELOAD_ONCE_MODULE(path):
+                print("[FAST_RELOAD] Reloaded module successfully: " + path)
+    if GAME_COMP:
+        GAME_COMP.AddTimer(0, _FAST_RELOAD)
+        return
+
 _IPCSYSTEM = IPCSystem(GET_DEBUG_IPC_PORT())
 _IPCSYSTEM.updateHandlers(
     {
-        1: AUTO_RELOAD
+        1: AUTO_RELOAD,
+        2: FAST_RELOAD,
     }
 )
 
