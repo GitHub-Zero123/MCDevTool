@@ -121,7 +121,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     // 是否附加调试MOD(boolean)，若启用将在生成的世界中包含热更新脚本(R键触发检测)并重定向输出流使其附加[Python]前缀可供筛选搜索。
     "include_debug_mod": true,
     // 是否自动热更新MOD
-    "auto_hot_reload_mods": false,
+    "auto_hot_reload_mods": true,
     // 生成的世界类型(0.旧版有限世界 1.无限世界 2.超平坦) (int)
     "world_type": 1,
     // 游戏模式(0.生存 1.创造 2.冒险) (int)
