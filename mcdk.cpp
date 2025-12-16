@@ -834,7 +834,7 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
     bool filterPython = userConfig.value("include_debug_mod", true);
     // 调试器端口（0为不启用）
     int debuggerPort = _GET_ENV_DEBUGGER_PORT();
-    if(debuggerPort != 0) {
+    if(debuggerPort == 0) {
         // 解析用户配置覆盖
         auto debuggerConfig = userConfig.value("modpc_debugger", nlohmann::json::object());
         if(debuggerConfig.is_object()) {

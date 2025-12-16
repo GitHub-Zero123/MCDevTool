@@ -79,7 +79,7 @@ class IPCSystem:
                     import traceback
                     traceback.print_exc()
             else:
-                print("[IPCSystem] 未知的TypeID数据包：", typeID)
+                print("[IPCSystem] 未知的TypeID数据包：" + str(typeID))
         with self.mLock:
             self.sock = None
 
