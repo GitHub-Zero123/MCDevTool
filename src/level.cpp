@@ -19,9 +19,9 @@ static int64_t generateRandomSeed() {
 }
 
 namespace MCDevTool::Level {
-    // 创建一个默认存档level.dat数据
-    std::vector<uint8_t> createDefaultLevelDat(std::string_view worldName, const LevelOptions& options) {
-        auto& bytes = getLevelDatTemplate();
+    // 更新level.dat数据中的世界选项
+    void updateLevelDatWorldData(std::vector<uint8_t>& levelDatData, std::optional<std::string_view> worldName, const LevelOptions& options) {
+        auto& bytes = levelDatData;
         // 去除header版本信息
         auto content = std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
         auto compoundTagOpt = nbt::io::parseFromContent(content);
@@ -32,7 +32,9 @@ namespace MCDevTool::Level {
         // 长整型LastPlayed：玩家在最后一次退出游戏时的Unix时间戳（秒）。
         compoundTag["LastPlayed"] = nbt::LongTag(static_cast<int64_t>(std::time(nullptr)));
         // 修改部分字段数据作为新世界模板
-        compoundTag["LevelName"] = nbt::StringTag(worldName);
+        if(worldName.has_value()) {
+            compoundTag["LevelName"] = nbt::StringTag(worldName.value());
+        }
         // compoundTag["RandomSeed"] = nbt::LongTag(options.seed);
         if(options.worldType != 2) {
             // 仅在非超平坦世界设置随机种子
@@ -49,11 +51,32 @@ namespace MCDevTool::Level {
         compoundTag["keepInventory"] = nbt::ByteTag(options.keepInventory ? 1 : 0);
         // cheatsEnabled Byte
         compoundTag["cheatsEnabled"] = nbt::ByteTag(options.enableCheats ? 1 : 0);
+        // doWeatherCycle Byte
+        compoundTag["doweathercycle"] = nbt::ByteTag(options.doWeatherCycle ? 1 : 0);
 
+        // 处理实验性功能 experiments 键
+        if(options.experimentsOptions.enable) {
+            // 如果已经存在 experiments 键，则直接更新局部内容，反之则创建新键
+            nbt::CompoundTag experimentsTag;
+            if(compoundTag.items().contains("experiments")) {
+                experimentsTag = compoundTag["experiments"].as<nbt::CompoundTag>();
+            }
+            experimentsTag["data_driven_biomes"] = nbt::ByteTag(options.experimentsOptions.dataDrivenBiomes ? 1 : 0);
+            experimentsTag["data_driven_items"] = nbt::ByteTag(options.experimentsOptions.dataDrivenItems ? 1 : 0);
+            experimentsTag["experimental_molang_features"] = nbt::ByteTag(options.experimentsOptions.experimentalMolangFeatures ? 1 : 0);
+            compoundTag["experiments"] = std::move(experimentsTag);
+        }
         auto release = compoundTag.toBinaryNbtWithHeader();
-        // 转换为 std::vector<uint8_t>
-        return std::vector<uint8_t>(std::make_move_iterator(release.begin()),
-                                    std::make_move_iterator(release.end()));
+        // 更新输入数据
+        bytes.assign(std::make_move_iterator(release.begin()),
+                     std::make_move_iterator(release.end()));
+    }
+
+    // 创建一个默认存档level.dat数据
+    std::vector<uint8_t> createDefaultLevelDat(std::string_view worldName, const LevelOptions& options) {
+        std::vector<uint8_t> bytes = getLevelDatTemplate();
+        updateLevelDatWorldData(bytes, worldName, options);
+        return bytes;
     }
 
     // 更新level.dat时间轴为当前时间
@@ -86,6 +109,33 @@ namespace MCDevTool::Level {
 
         // 更新 LastPlayed 字段
         updateLevelDatLastPlayed(fileData);
+
+        // 写回文件
+        std::ofstream outputFile(filePath, std::ios::binary |  std::ios::trunc);
+        if(!outputFile) {
+            throw std::runtime_error("无法打开level.dat文件进行写入: " + filePath.string());
+        }
+        outputFile.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
+        outputFile.close();
+    }
+
+    // 更新文件level.dat的世界数据选项并立即保存
+    void updateLevelDatWorldDataInFile(
+        const std::filesystem::path& filePath,
+        std::optional<std::string_view> worldName,
+        const LevelOptions& options
+    ) {
+        // 读取文件内容
+        std::ifstream inputFile(filePath, std::ios::binary);
+        if(!inputFile) {
+            throw std::runtime_error("无法打开level.dat文件进行读取: " + filePath.string());
+        }
+        std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(inputFile)),
+                                       std::istreambuf_iterator<char>());
+        inputFile.close();
+
+        // 更新世界数据选项
+        updateLevelDatWorldData(fileData, worldName, options);
 
         // 写回文件
         std::ofstream outputFile(filePath, std::ios::binary |  std::ios::trunc);

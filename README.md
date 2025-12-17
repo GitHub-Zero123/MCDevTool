@@ -130,6 +130,17 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "enable_cheats": true,
     // 是否死亡不掉落(boolean)
     "keep_inventory": true,
+    // 天气是否自然更替
+    "do_weather_cycle": true,
+    // 实验性玩法配置
+    "experiment_options": {
+        // 数据驱动生物群系
+        "data_driven_biomes": false,
+        // 其他数据型驱动功能
+        "data_driven_items": false,
+        // 实验性Molang特性
+        "experimental_molang_features": false
+    },
     // 用户自定义名称(默认"developer")
     "user_name": "developer",
     // 用户自定义皮肤信息（默认缺失字段自动生成）
