@@ -167,6 +167,21 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         "reload_shaders_key": "",
         // 是否在全体UI界面都触发热更新快捷键（默认false仅HUD界面）
         "reload_key_global": false
+    },
+    // 窗口样式（美化类？）
+    "window_style": {
+        // 悬浮置顶
+        "always_on_top": false,
+        // 隐藏标题栏
+        "hide_title_bar": false,
+        // 自定义标题栏颜色 null | [R,G,B]
+        "title_bar_color": null,
+        // 锁定大小 null | [w, h]
+        "fixed_size": null,
+        // 锁定屏幕位置 null | [x, y]
+        "fixed_position": null,
+        // 锁定在屏幕四个脚落（覆盖fixed_position）1. 左上 2. 右上 3. 左下 4. 右下 null | int
+        "lock_corner": null
     }
 }
 ```

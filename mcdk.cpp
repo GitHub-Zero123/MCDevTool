@@ -21,6 +21,7 @@
 #include <mcdevtool/addon.h>
 #include <mcdevtool/level.h>
 #include <mcdevtool/debug.h>
+#include <mcdevtool/style.h>
 #include <nlohmann/json.hpp>
 
 // #define MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
@@ -791,6 +792,77 @@ private:
     std::mutex gMutex;
 };
 
+// 用户样式处理类
+class UserStyleProcessor : public MCDevTool::Style::MinecraftWindowStyler {
+public:
+    UserStyleProcessor(int pid, const nlohmann::json& userConfig)
+        : MCDevTool::Style::MinecraftWindowStyler(pid)
+    {
+        // 解析用户配置
+        // 检查是否存在 window_style 字段
+        if(!userConfig.contains("window_style")) {
+            return;
+        }
+        auto& styleConfig = userConfig["window_style"];
+        MCDevTool::Style::StyleConfig config;
+        config.alwaysOnTop = styleConfig.value("always_on_top", false);
+        config.hideTitleBar = styleConfig.value("hide_title_bar", false);
+        if(config.hideTitleBar || config.alwaysOnTop) {
+            mNeedUpdateStyle = true;
+        }
+        // 处理 title_bar_color
+        if(styleConfig.contains("title_bar_color") && styleConfig["title_bar_color"].is_array()
+            && styleConfig["title_bar_color"].size() >= 3) {
+            auto colorArray = styleConfig["title_bar_color"];
+            config.titleBarColor = std::vector<uint8_t>{
+                colorArray[0].get<uint8_t>(),
+                colorArray[1].get<uint8_t>(),
+                colorArray[2].get<uint8_t>()
+            };
+            mNeedUpdateStyle = true;
+        }
+        // 处理 fixed_size
+        if(styleConfig.contains("fixed_size") && styleConfig["fixed_size"].is_array()
+            && styleConfig["fixed_size"].size() >= 2) {
+            auto sizeArray = styleConfig["fixed_size"];
+            config.fixedSize = std::vector<uint8_t>{
+                sizeArray[0].get<uint8_t>(),
+                sizeArray[1].get<uint8_t>()
+            };
+            mNeedUpdateStyle = true;
+        }
+        // 处理 fixed_position
+        if(styleConfig.contains("fixed_position") && styleConfig["fixed_position"].is_array()
+            && styleConfig["fixed_position"].size() >= 2) {
+            auto posArray = styleConfig["fixed_position"];
+            config.fixedPosition = std::vector<uint8_t>{
+                posArray[0].get<uint8_t>(),
+                posArray[1].get<uint8_t>()
+            };
+            mNeedUpdateStyle = true;
+        }
+        // 处理 lock_corner
+        if(styleConfig.contains("lock_corner") && styleConfig["lock_corner"].is_number_integer()) {
+            config.lockCorner = styleConfig["lock_corner"].get<int>();
+            mNeedUpdateStyle = true;
+        }
+        mConfig = std::move(config);
+    }
+
+    void start() {
+        if(mNeedUpdateStyle) {
+            MinecraftWindowStyler::start();
+            printColoredAtomic("[Style] 已启用自定义样式，等待更新窗口中。", ConsoleColor::Cyan);
+        }
+    }
+
+    void onStyleApplied() override {
+        printColoredAtomic("[Style] 窗口样式更新已应用。", ConsoleColor::Cyan);
+    }
+private:
+    bool mNeedUpdateStyle = false;
+};
+
 // 启动游戏可执行文件
 static void launchGameExe(const std::filesystem::path& exePath, std::string_view config = "",
     const nlohmann::json& userConfig = nlohmann::json::object(), const std::vector<UserModDirConfig>* modDirList=nullptr)
@@ -801,6 +873,7 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
 
     auto ipcServer = MCDevTool::Debug::createDebugServer();
     ReloadWatcherTask reloadTask;
+    UserStyleProcessor styleProcessor(0, userConfig);
     reloadTask.bindServer(ipcServer);
 
     std::wstring newEnv;
@@ -867,6 +940,10 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
         CloseHandle(errRead); CloseHandle(errWrite);
         throw std::runtime_error("CreateProcessA failed");
     }
+
+    DWORD pid = pi.dwProcessId;
+    // 设置样式处理器PID
+    styleProcessor.setPid(pid);
 
     // 父进程不需要写端
     CloseHandle(outWrite);
@@ -965,7 +1042,6 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
         std::function<void(const std::string&)>(processStderr)
     );
 
-    DWORD pid = pi.dwProcessId;
     if(debuggerPort > 0) {
         // 尝试启动mcdbg调试器附加
         debuggerAttachToProcess(pid, debuggerPort);
@@ -984,6 +1060,7 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
         reloadTask.setModDirs(UserModDirConfig::toPathList(*modDirList));
         reloadTask.start();
     }
+    styleProcessor.start();
 
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回 ERROR_BROKEN_PIPE）
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -992,6 +1069,8 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
     reloadTask.safeExit();
     // 停止IPC服务器 如果已启用
     ipcServer->safeExit();
+    // 停止样式处理器
+    styleProcessor.safeExit();
 
     // 等待读线程退出并关闭读端句柄
     tOut.join();

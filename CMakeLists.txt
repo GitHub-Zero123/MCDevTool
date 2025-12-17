@@ -29,6 +29,7 @@ add_library(mcdevtool OBJECT
     src/utils.cpp
     src/reload.cpp
     src/debug.cpp
+    src/style.cpp
 )
 target_compile_features(mcdevtool PRIVATE cxx_std_23)
 target_compile_definitions(mcdevtool PRIVATE _CRT_SECURE_NO_WARNINGS)
