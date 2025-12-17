@@ -74,6 +74,17 @@ static int _GET_ENV_DEBUGGER_PORT() {
     return 0;
 }
 
+// 获取环境变量 是否是子进程模式
+static bool _GET_ENV_IS_SUBPROCESS_MODE() {
+    auto* valStr = std::getenv("MCDEV_IS_SUBPROCESS_MODE");
+    if(valStr == nullptr) {
+        return false;
+    }
+    std::string val(valStr);
+    std::transform(val.begin(), val.end(), val.begin(), ::tolower);
+    return (val == "1" || val == "true" || val == "yes");
+}
+
 // 字符串关键字替换
 static void stringReplace(std::string& str, const std::string& from, const std::string& to) {
     size_t startPos = 0;
@@ -1065,18 +1076,19 @@ static void startGame(const nlohmann::json& config) {
             throw std::runtime_error("未能找到有效的游戏exe文件。");
         }
     }
+
+    if(_GET_ENV_IS_SUBPROCESS_MODE()) {
+        launchGameExe(gameExePath, "", config, nullptr);
+        return;
+    }
+
     MCDevTool::cleanRuntimePacks();
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
 
-    // link target mod dirs
-    // auto modDirs = config.value("included_mod_dirs", std::vector<std::string>{});
     auto modDirConfigs = UserModDirConfig::parseListFromJson(
         config.value("included_mod_dirs", nlohmann::json::array({"./"})));
 
-    // std::filesystem::path debugModConfigFile;
-    // link Debug MOD
     if(config.value("include_debug_mod", true)) {
-        // std::filesystem::path debugModMainFile;
         auto debugMod = registerDebugMod(config, modDirConfigs);
         std::cout << "已注册调试MOD：" << debugMod.uuid << "\n";
         linkedPacks.push_back(std::move(debugMod));
@@ -1122,6 +1134,7 @@ static void startGame(const nlohmann::json& config) {
             resPacksManifest.push_back(std::move(packEntry));
         }
     }
+    
     auto autoJoinGame = config.value("auto_join_game", true);
     auto envAutoJoin = _GET_ENV_AUTO_JOIN_GAME_STATE();
     if (envAutoJoin != -1) {
@@ -1142,14 +1155,14 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream resManifestFile(worldsPath / targetResJson);
     resManifestFile << resPacksManifest.dump(4);
     resManifestFile.close();
-    // 检查是否附加debugmod
-    bool useDebugMode = config.value("include_debug_mod", true);
 
 // #ifdef MCDEV_EXPERIMENTAL_LAUNCH_WITH_CONFIG_PATH
     if(!autoJoinGame) {
+        // 不自动进入游戏 直接启动游戏exe
         launchGameExe(gameExePath, "", config, &modDirConfigs);
         return;
     }
+    
     auto configPath = worldsPath / "dev_config.cppconfig";
     // 创建dev_config
     nlohmann::json devConfig {
