@@ -5,7 +5,6 @@
 #include <thread>
 #include <atomic>
 
-
 #ifdef _WIN32
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -184,7 +183,6 @@ namespace MCDevTool::Style {
     }
 
 #else
-
     bool applyStyleToMinecraftWindow(
         int pid,
         const StyleConfig& config
