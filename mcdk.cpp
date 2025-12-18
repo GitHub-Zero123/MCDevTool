@@ -821,23 +821,23 @@ public:
             };
             mNeedUpdateStyle = true;
         }
-        // 处理 fixed_size
+        // 处理 fixed_size（用 int 保存，支持大分辨率）
         if(styleConfig.contains("fixed_size") && styleConfig["fixed_size"].is_array()
             && styleConfig["fixed_size"].size() >= 2) {
             auto sizeArray = styleConfig["fixed_size"];
-            config.fixedSize = std::vector<uint8_t>{
-                sizeArray[0].get<uint8_t>(),
-                sizeArray[1].get<uint8_t>()
+            config.fixedSize = std::vector<int>{
+                sizeArray[0].get<int>(),
+                sizeArray[1].get<int>()
             };
             mNeedUpdateStyle = true;
         }
-        // 处理 fixed_position
+        // 处理 fixed_position（同样用 int 保存像素坐标）
         if(styleConfig.contains("fixed_position") && styleConfig["fixed_position"].is_array()
             && styleConfig["fixed_position"].size() >= 2) {
             auto posArray = styleConfig["fixed_position"];
-            config.fixedPosition = std::vector<uint8_t>{
-                posArray[0].get<uint8_t>(),
-                posArray[1].get<uint8_t>()
+            config.fixedPosition = std::vector<int>{
+                posArray[0].get<int>(),
+                posArray[1].get<int>()
             };
             mNeedUpdateStyle = true;
         }

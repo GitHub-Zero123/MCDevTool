@@ -12,12 +12,12 @@ namespace MCDevTool::Style {
         bool alwaysOnTop = false;
         // 隐藏标题栏
         bool hideTitleBar = false;
-        // 自定义标题栏颜色 null | int[R,G,B]
+        // 自定义标题栏颜色 null | int[R,G,B] (0-255)
         std::optional<std::vector<uint8_t>> titleBarColor = std::nullopt; // RGB
-        // 锁定大小 null | int[w, h]
-        std::optional<std::vector<uint8_t>> fixedSize = std::nullopt;     // [w, h]
+        // 锁定大小 null | int[w, h]，这里使用 int 防止 1280 之类被截断成 uint8_t
+        std::optional<std::vector<int>> fixedSize = std::nullopt;         // [w, h]
         // 锁定屏幕位置 null | int[x, y]
-        std::optional<std::vector<uint8_t>> fixedPosition = std::nullopt; // [x, y]
+        std::optional<std::vector<int>> fixedPosition = std::nullopt;     // [x, y]
         // 锁定在屏幕四个脚落（覆盖fixed_position）1. 左上 2. 右上 3. 左下 4. 右下 null | int
         std::optional<int> lockCorner = std::nullopt;
     };

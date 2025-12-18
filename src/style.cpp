@@ -12,6 +12,7 @@
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
 #endif
+#include <iostream>
 
 namespace MCDevTool::Style {
 #ifdef _WIN32
@@ -53,7 +54,7 @@ namespace MCDevTool::Style {
             return FALSE; // 找到了就停止枚举
         }, (LPARAM)&ctx);
 
-        return ctx.found; // 找不到就是 nullptr
+        return ctx.found; // nullptr
     }
 
     // 应用样式到指定窗口句柄
@@ -95,7 +96,7 @@ namespace MCDevTool::Style {
         // 标题栏颜色
         if (config.titleBarColor.has_value()) {
             const auto& colorVec = config.titleBarColor.value();
-            if (colorVec.size() == 3) {
+            if (colorVec.size() >= 3) {
                 COLORREF captionColor = RGB(
                     static_cast<BYTE>(colorVec[0]),
                     static_cast<BYTE>(colorVec[1]),
@@ -108,7 +109,7 @@ namespace MCDevTool::Style {
         // 固定大小
         if (config.fixedSize.has_value()) {
             const auto& sizeVec = config.fixedSize.value();
-            if (sizeVec.size() == 2) {
+            if (sizeVec.size() >= 2) {
                 w = sizeVec[0];
                 h = sizeVec[1];
                 needUpdatePos = true;
@@ -118,7 +119,7 @@ namespace MCDevTool::Style {
         // 固定位置
         if (config.fixedPosition.has_value()) {
             const auto& posVec = config.fixedPosition.value();
-            if (posVec.size() == 2) {
+            if (posVec.size() >= 2) {
                 x = posVec[0];
                 y = posVec[1];
                 needUpdatePos = true;
