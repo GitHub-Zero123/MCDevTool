@@ -6,6 +6,8 @@
 ## 配置mcdk
 您可以将**mcdk**添加到环境变量Path中，也可以直接放置在本地项目工作区以便命令搜索。
 
+> vscode[插件](https://marketplace.visualstudio.com/items?itemName=dofes.mcdev-tools)现已经上线，可直接使用插件一站式开发，无需额外配置。
+
 ## 在vscode中使用
 您可以在**vscode**中配置任务以便直接运行**mcdk**，例如：
 
