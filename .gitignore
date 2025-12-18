@@ -370,3 +370,4 @@ FodyWeavers.xsd
 /build/
 
 reloadFiles/
+.mcdev.json

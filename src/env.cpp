@@ -274,6 +274,12 @@ namespace MCDevTool {
     // 分析并link源代码addon目录到运行时行为包目录 该版本支持资源+行为包组合
     std::vector<Addon::PackInfo> linkSourceAddonToRuntimePacks(const std::filesystem::path& sourceDir) {
         std::vector<Addon::PackInfo> packs;
+        // 先尝试处理当前目录为单一pack
+        auto oncePackInfo = linkSourcePackToRuntimePack(sourceDir);
+        if(oncePackInfo) {
+            packs.push_back(std::move(oncePackInfo));
+            return packs;
+        }
         // 遍历当前文件夹下的所有文件夹
         for(const auto& entry : std::filesystem::directory_iterator(sourceDir)) {
             if(entry.is_directory()) {
