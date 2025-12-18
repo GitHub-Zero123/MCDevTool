@@ -59,15 +59,13 @@ namespace MCDevTool::Style {
 
     // 应用样式到指定窗口句柄
     static void _applyStyleToMinecraftWindow(HWND hwnd, const StyleConfig& config) {
-        // 收集 SetWindowPos 参数
-        bool needUpdatePos = false;
-        bool needUpdateStyle = false;
+        // 基础状态
         HWND insertAfter = nullptr;
-        UINT swpFlags = SWP_NOACTIVATE;
-        int x = 0, y = 0, w = 0, h = 0;
+        UINT baseFlags = SWP_NOACTIVATE;
 
-        // 获取当前窗口位置和大小
+        // 当前窗口矩形（物理像素）
         RECT rect{};
+        int x = 0, y = 0, w = 0, h = 0;
         if (GetWindowRect(hwnd, &rect)) {
             x = rect.left;
             y = rect.top;
@@ -75,22 +73,48 @@ namespace MCDevTool::Style {
             h = rect.bottom - rect.top;
         }
 
-        // 置顶
+        // 获取 DPI，用于把“物理像素”配置转换成 Win32 所需单位
+        UINT dpi = 96;
+        if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+            using GetDpiForWindow_t = UINT (WINAPI*)(HWND);
+            auto pGetDpiForWindow = reinterpret_cast<GetDpiForWindow_t>(
+                GetProcAddress(user32, "GetDpiForWindow")
+            );
+            if (pGetDpiForWindow && IsWindow(hwnd)) {
+                dpi = pGetDpiForWindow(hwnd);
+            } else {
+                using GetDpiForSystem_t = UINT (WINAPI*)();
+                auto pGetDpiForSystem = reinterpret_cast<GetDpiForSystem_t>(
+                    GetProcAddress(user32, "GetDpiForSystem")
+                );
+                if (pGetDpiForSystem) {
+                    dpi = pGetDpiForSystem();
+                }
+            }
+        }
+        const double dpiScale = dpi > 0 ? static_cast<double>(dpi) / 96.0 : 1.0;
+
+        // 置顶控制
         if (config.alwaysOnTop) {
             insertAfter = HWND_TOPMOST;
-            swpFlags |= SWP_SHOWWINDOW;
-            needUpdatePos = true;
+            baseFlags |= SWP_SHOWWINDOW;
         } else {
-            swpFlags |= SWP_NOZORDER;
+            insertAfter = nullptr;
+            baseFlags |= SWP_NOZORDER;
         }
+
+        // 样式 + 尺寸（不移动位置）
+        bool needStyle = false;
+        bool needSize = false;
+        int targetW = w;
+        int targetH = h;
 
         // 隐藏标题栏
         if (config.hideTitleBar) {
             LONG style = GetWindowLongW(hwnd, GWL_STYLE);
             style &= ~WS_CAPTION;
             SetWindowLongW(hwnd, GWL_STYLE, style);
-            swpFlags |= SWP_FRAMECHANGED;
-            needUpdateStyle = true;
+            needStyle = true;
         }
 
         // 标题栏颜色
@@ -106,29 +130,67 @@ namespace MCDevTool::Style {
             }
         }
 
-        // 固定大小
+        // 固定大小：配置视为“客户区物理像素”，按 DPI 反推需要设置的窗口外框尺寸
         if (config.fixedSize.has_value()) {
             const auto& sizeVec = config.fixedSize.value();
             if (sizeVec.size() >= 2) {
-                w = sizeVec[0];
-                h = sizeVec[1];
-                needUpdatePos = true;
+                int clientPhysicalW = sizeVec[0];
+                int clientPhysicalH = sizeVec[1];
+
+                // 物理客户区 -> 逻辑客户区
+                int clientLogicalW = static_cast<int>(clientPhysicalW / dpiScale + 0.5);
+                int clientLogicalH = static_cast<int>(clientPhysicalH / dpiScale + 0.5);
+
+                LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+                LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                RECT rc = { 0, 0, clientLogicalW, clientLogicalH };
+                if (AdjustWindowRectEx(&rc, static_cast<DWORD>(style), FALSE, static_cast<DWORD>(exStyle))) {
+                    targetW = rc.right - rc.left;
+                    targetH = rc.bottom - rc.top;
+                } else {
+                    targetW = clientLogicalW;
+                    targetH = clientLogicalH;
+                }
+                needSize = true;
             }
         }
+
+        if (needStyle || needSize || config.alwaysOnTop) {
+            UINT flags = baseFlags | SWP_NOMOVE;
+            if (!needSize) {
+                flags |= SWP_NOSIZE;
+            }
+            if (needStyle) {
+                flags |= SWP_FRAMECHANGED;
+            }
+            SetWindowPos(hwnd, insertAfter, x, y, targetW, targetH, flags);
+
+            // 应用完样式和尺寸后，再获取一次实际窗口大小
+            if (GetWindowRect(hwnd, &rect)) {
+                x = rect.left;
+                y = rect.top;
+                w = rect.right - rect.left;
+                h = rect.bottom - rect.top;
+            }
+        }
+
+        // 位置（fixed_position / lock_corner）
+        bool needMove = false;
+        int targetX = x;
+        int targetY = y;
 
         // 固定位置
         if (config.fixedPosition.has_value()) {
             const auto& posVec = config.fixedPosition.value();
             if (posVec.size() >= 2) {
-                x = posVec[0];
-                y = posVec[1];
-                needUpdatePos = true;
+                targetX = posVec[0];
+                targetY = posVec[1];
+                needMove = true;
             }
         }
 
         // 锁定角落（优先级高于 fixedPosition）
         if (config.lockCorner.has_value()) {
-            // 获取工作区域（排除任务栏）
             RECT workArea{};
             SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
             int workWidth = workArea.right - workArea.left;
@@ -138,34 +200,37 @@ namespace MCDevTool::Style {
 
             switch (config.lockCorner.value()) {
                 case 1: // 左上
-                    x = workLeft;
-                    y = workTop;
+                    targetX = workLeft;
+                    targetY = workTop;
                     break;
                 case 2: // 右上
-                    x = workLeft + workWidth - w;
-                    y = workTop;
+                    targetX = workLeft + workWidth - w;
+                    targetY = workTop;
                     break;
                 case 3: // 左下
-                    x = workLeft;
-                    y = workTop + workHeight - h;
+                    targetX = workLeft;
+                    targetY = workTop + workHeight - h;
                     break;
                 case 4: // 右下
-                    x = workLeft + workWidth - w;
-                    y = workTop + workHeight - h;
+                    targetX = workLeft + workWidth - w;
+                    targetY = workTop + workHeight - h;
                     break;
                 default:
                     break;
             }
-            needUpdatePos = true;
+
+            // 保证不超出工作区
+            if (targetX < workLeft) targetX = workLeft;
+            if (targetY < workTop)  targetY = workTop;
+            if (targetX + w > workArea.right)  targetX = workArea.right  - w;
+            if (targetY + h > workArea.bottom) targetY = workArea.bottom - h;
+
+            needMove = true;
         }
 
-        // 一次性应用 SetWindowPos
-        if (needUpdatePos || needUpdateStyle) {
-            if (!needUpdatePos) {
-                // 仅样式更新，不改变位置和大小
-                swpFlags |= SWP_NOMOVE | SWP_NOSIZE;
-            }
-            SetWindowPos(hwnd, insertAfter, x, y, w, h, swpFlags);
+        if (needMove) {
+            UINT flags = baseFlags | SWP_NOSIZE;
+            SetWindowPos(hwnd, insertAfter, targetX, targetY, w, h, flags);
         }
     }
 
