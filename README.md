@@ -185,6 +185,11 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         "fixed_position": null,
         // 锁定在屏幕四个脚落（覆盖fixed_position）1. 左上 2. 右上 3. 左下 4. 右下 null | int
         "lock_corner": null
+    },
+    // 网易独占配置项
+    "netease_config": {
+        // 是否启用聊天扩展功能（nethard魔改的游戏聊天界面）
+        "chat_extension": false
     }
 }
 ```

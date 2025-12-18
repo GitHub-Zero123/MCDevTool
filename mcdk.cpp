@@ -918,10 +918,18 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
     si.hStdError  = errWrite;
     si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
 
+    auto neteaseConfig = userConfig.value("netease_config", nlohmann::json::object());
+
     // Build command
     std::string cmd = "\"" + exePath.string() + "\"";
-    if (!config.empty())
-        cmd += " config=\"" + std::string(config) + "\"";
+    if(!neteaseConfig.value("chat_extension", false)) {
+        cmd.append(" chatExtension=false");
+    }
+
+    if (!config.empty()) {
+        cmd.append(" config=\"" + std::string(config) + "\"");
+    }
+    // chatExtension=false
     // std::vector<char> cmdBuf(cmd.begin(), cmd.end());
     // cmdBuf.push_back('\0');
 
