@@ -36,8 +36,9 @@
             "command": "cmd /c mcdk",
             "options": {
                 "env": {
-                    // 传递环境变量以覆写自动进入游戏存档状态
-                    "MCDEV_AUTO_JOIN_GAME": "0"
+                    // 传递环境变量控制mcdk行为
+                    "MCDEV_AUTO_JOIN_GAME": "0",
+                    "MCDEV_IS_SUBPROCESS_MODE": "1"
                 }
             },
             "presentation": {
