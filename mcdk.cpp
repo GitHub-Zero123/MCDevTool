@@ -86,6 +86,17 @@ static bool _GET_ENV_IS_SUBPROCESS_MODE() {
     return (val == "1" || val == "true" || val == "yes");
 }
 
+// 获取环境变量 是否为插件环境
+static bool _GET_ENV_IS_PLUGIN_ENV() {
+    auto* valStr = std::getenv("MCDEV_IS_PLUGIN_ENV");
+    if(valStr == nullptr) {
+        return false;
+    }
+    std::string val(valStr);
+    std::transform(val.begin(), val.end(), val.begin(), ::tolower);
+    return (val == "1" || val == "true" || val == "yes");
+}
+
 // 字符串关键字替换
 static void stringReplace(std::string& str, const std::string& from, const std::string& to) {
     size_t startPos = 0;
@@ -1200,11 +1211,16 @@ static void startGame(const nlohmann::json& config) {
         levelFile.close();
     } else {
         // 更新level.dat的配置数据
-        MCDevTool::Level::updateLevelDatLastPlayedInFile(worldsPath / "level.dat");
-        // auto levelOptions = parseLevelOptionsFromUserConfig(config);
-        // MCDevTool::Level::updateLevelDatWorldDataInFile(worldsPath / "level.dat",
-        //     std::nullopt, levelOptions
-        // );
+        if(_GET_ENV_IS_PLUGIN_ENV()) {
+            // 插件环境每次启动都要覆盖配置
+            auto levelOptions = parseLevelOptionsFromUserConfig(config);
+            MCDevTool::Level::updateLevelDatWorldDataInFile(worldsPath / "level.dat",
+                std::nullopt, levelOptions
+            );
+        } else {
+            // 非插件环境只更新时间戳
+            MCDevTool::Level::updateLevelDatLastPlayedInFile(worldsPath / "level.dat");
+        }
     }
 
     // 生成清单文件 netease_world_behavior_packs.json / netease_world_resource_packs.json

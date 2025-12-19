@@ -20,7 +20,8 @@ static int64_t generateRandomSeed() {
 
 namespace MCDevTool::Level {
     // 更新level.dat数据中的世界选项
-    void updateLevelDatWorldData(std::vector<uint8_t>& levelDatData, std::optional<std::string_view> worldName, const LevelOptions& options) {
+    void updateLevelDatWorldData(std::vector<uint8_t>& levelDatData, std::optional<std::string_view> worldName,
+        const LevelOptions& options, bool init) {
         auto& bytes = levelDatData;
         // 去除header版本信息
         auto content = std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
@@ -36,7 +37,7 @@ namespace MCDevTool::Level {
             compoundTag["LevelName"] = nbt::StringTag(worldName.value());
         }
         // compoundTag["RandomSeed"] = nbt::LongTag(options.seed);
-        if(options.worldType != 2) {
+        if(options.worldType != 2 && init) {
             // 仅在非超平坦世界设置随机种子
             if(options.seed.has_value()) {
                 compoundTag["RandomSeed"] = nbt::LongTag(options.seed.value());
@@ -46,7 +47,10 @@ namespace MCDevTool::Level {
             }
         }
         compoundTag["GameType"] = nbt::IntTag(static_cast<int32_t>(options.gameMode));
-        compoundTag["Generator"] = nbt::IntTag(static_cast<int32_t>(options.worldType));
+        if(init) {
+            // 世界类型仅在初始化设置
+            compoundTag["Generator"] = nbt::IntTag(static_cast<int32_t>(options.worldType));
+        }
         // keepInventory Byte
         compoundTag["keepInventory"] = nbt::ByteTag(options.keepInventory ? 1 : 0);
         // cheatsEnabled Byte
@@ -135,7 +139,7 @@ namespace MCDevTool::Level {
         inputFile.close();
 
         // 更新世界数据选项
-        updateLevelDatWorldData(fileData, worldName, options);
+        updateLevelDatWorldData(fileData, worldName, options, false);
 
         // 写回文件
         std::ofstream outputFile(filePath, std::ios::binary |  std::ios::trunc);

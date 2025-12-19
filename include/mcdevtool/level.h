@@ -26,7 +26,7 @@ namespace MCDevTool::Level {
     };
 
     // 更新level.dat数据中的世界选项
-    void updateLevelDatWorldData(std::vector<uint8_t>& levelDatData, std::optional<std::string_view> worldName, const LevelOptions& options={});
+    void updateLevelDatWorldData(std::vector<uint8_t>& levelDatData, std::optional<std::string_view> worldName, const LevelOptions& options, bool init=true);
 
     // 创建一个默认存档level.dat数据
     std::vector<uint8_t> createDefaultLevelDat(
