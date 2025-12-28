@@ -33,7 +33,8 @@ namespace MCDevTool::Debug {
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = 0; // 系统自动分配端口
-        addr.sin_addr.s_addr = INADDR_ANY;
+        // addr.sin_addr.s_addr = INADDR_ANY;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 仅本地连接
 
         if (bind(listenSock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             closesocket(listenSock);

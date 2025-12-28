@@ -356,20 +356,20 @@ MCDevTool::Addon::PackInfo registerDebugMod(const nlohmann::json& config,
 }
 
 // link用户mod目录
-static void linkUserMods(const std::vector<std::string>& u8Paths, std::vector<MCDevTool::Addon::PackInfo>& linkedPacks) {
-    for(const auto& targetDir : u8Paths) {
-        auto dir = std::filesystem::u8path(targetDir);
-        auto packInfos = MCDevTool::linkSourceAddonToRuntimePacks(dir);
-        for(const auto& info : packInfos) {
-            if(info.type == MCDevTool::Addon::PackType::BEHAVIOR) {
-                std::cout << "LINK行为包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
-            } else if(info.type == MCDevTool::Addon::PackType::RESOURCE) {
-                std::cout << "LINK资源包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
-            }
-            linkedPacks.push_back(std::move(info));
-        }
-    }
-}
+// static void linkUserMods(const std::vector<std::string>& u8Paths, std::vector<MCDevTool::Addon::PackInfo>& linkedPacks) {
+//     for(const auto& targetDir : u8Paths) {
+//         auto dir = std::filesystem::u8path(targetDir);
+//         auto packInfos = MCDevTool::linkSourceAddonToRuntimePacks(dir);
+//         for(const auto& info : packInfos) {
+//             if(info.type == MCDevTool::Addon::PackType::BEHAVIOR) {
+//                 std::cout << "[MCDK] LINK行为包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
+//             } else if(info.type == MCDevTool::Addon::PackType::RESOURCE) {
+//                 std::cout << "[MCDK] LINK资源包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
+//             }
+//             linkedPacks.push_back(std::move(info));
+//         }
+//     }
+// }
 
 // link用户mod目录 基于配置结构体
 static void linkUserConfigModDirs(std::vector<UserModDirConfig>& configs,
@@ -379,7 +379,7 @@ static void linkUserConfigModDirs(std::vector<UserModDirConfig>& configs,
         auto packInfos = MCDevTool::linkSourceAddonToRuntimePacks(dir);
         for(const auto& info : packInfos) {
             if(info.type == MCDevTool::Addon::PackType::BEHAVIOR) {
-                std::cout << "LINK行为包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
+                std::cout << "[MCDK] LINK行为包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
                 if(modConfig.hotReload) {
                     std::cout << "  -> 热更新标记追踪\n";
                     if(updateConfigPaths) {
@@ -387,7 +387,7 @@ static void linkUserConfigModDirs(std::vector<UserModDirConfig>& configs,
                     }
                 }
             } else if(info.type == MCDevTool::Addon::PackType::RESOURCE) {
-                std::cout << "LINK资源包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
+                std::cout << "[MCDK] LINK资源包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
             }
             linkedPacks.push_back(std::move(info));
         }
@@ -892,7 +892,8 @@ static void launchGameExe(const std::filesystem::path& exePath, std::string_view
     if(enableIPC) {
         ipcServer->start();
         int port = ipcServer->getPort();
-        std::cout << "IPC调试服务器已启动，端口：" << port << _MCDEV_LOG_OUTPUT_ENDL;
+        // std::cout << "[MCDK] IPC调试服务器已启动，端口：" << port << _MCDEV_LOG_OUTPUT_ENDL;
+        printColoredAtomic("[MCDK] IPC调试服务器已启动，端口：" + std::to_string(port), ConsoleColor::Green);
         newEnv = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
         lpEnvironment = (void*)newEnv.data();
     }
@@ -1189,7 +1190,7 @@ static void startGame(const nlohmann::json& config) {
 
     if(config.value("include_debug_mod", true)) {
         auto debugMod = registerDebugMod(config, modDirConfigs);
-        std::cout << "已注册调试MOD：" << debugMod.uuid << "\n";
+        std::cout << "[MCDK] 已注册调试MOD：" << debugMod.uuid << "\n";
         linkedPacks.push_back(std::move(debugMod));
         linkUserConfigModDirs(modDirConfigs, linkedPacks);
     } else {
