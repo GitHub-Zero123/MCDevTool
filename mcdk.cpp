@@ -1280,24 +1280,34 @@ static void startGame(const nlohmann::json& config) {
             {"user_name", config.value("user_name", "developer") },
         }},
     };
+
+    auto defaultSkinPath = (gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png").generic_string();
+
     if(config.contains("skin_info") && config["skin_info"].is_object()) {
         // 用户自定义skin_info
         devConfig["skin_info"] = config["skin_info"];
-        // 安全校验 如果存在 skin 字段 则检查文件是否存在
         auto& skinInfo = devConfig["skin_info"];
-        if(skinInfo.contains("skin") && skinInfo["skin"].is_string()) {
-            auto skinPath = std::filesystem::u8path(skinInfo["skin"].get<std::string>());
-            if(!std::filesystem::is_regular_file(skinPath)) {
-                throw std::runtime_error("自定义皮肤文件不存在：" + skinPath.generic_string());
+        // 自动生成缺失字段
+        if(!skinInfo.contains("slim")) {
+            skinInfo["slim"] = false;
+        }
+        std::string skinPath = skinInfo.value("skin", "");
+        if (skinPath.empty()) {
+            skinInfo["skin"] = defaultSkinPath;
+            skinPath = std::move(defaultSkinPath);
+        }
+        // 安全校验 检查文件是否存在
+        if(!skinPath.empty()) {
+            auto fSkinPath = std::filesystem::u8path(skinPath);
+            if(!std::filesystem::is_regular_file(fSkinPath)) {
+                throw std::runtime_error("自定义皮肤文件不存在：" + skinPath);
             }
-        } else {
-            throw std::runtime_error("用户自定义 skin_info 配置缺少 skin 字段。");
         }
     } else {
         // 自动生成skin_info
         devConfig["skin_info"] = {
-            {"slim", false},
-            {"skin", (gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png").generic_string() }
+            { "slim", false },
+            { "skin", std::move(defaultSkinPath) }
         };
     }
     std::ofstream configFile(configPath);
