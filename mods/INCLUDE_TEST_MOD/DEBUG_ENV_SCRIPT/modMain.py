@@ -3,6 +3,7 @@ from .QuModLibs.QuMod import *
 from .Game import RELOAD_MOD, INIT_RELOAD_TIME, RELOAD_ADDON, \
     RELOAD_WORLD, RELOAD_SHADERS
 from .Config import DEBUG_CONFIG
+import threading
 import sys
 lambda: "By Zero123"
 
@@ -11,26 +12,25 @@ REF = 0
 class STD_OUT_WRAPPER(object):
     def __init__(self, baseIO):
         self.baseIO = baseIO
+        self.writeLock = threading.Lock()
         self._buffer = []
 
     def __getattr__(self, name):
         return getattr(self.baseIO, name)
 
-    def write(self, text):
-        self._buffer.append(text)
-        buf = "".join(self._buffer)
-
-        if "\n" not in buf:
-            return
-
-        lines = buf.split("\n")
-        self._buffer = [lines.pop()]
-
-        for line in lines:
-            if line.strip() == "":
-                self.baseIO.write("\n")
-            else:
-                self.baseIO.write("[Python] " + line + "\n")
+    def write(self, data):
+        with self.writeLock:
+            parts = data.splitlines(True)
+            for part in parts:
+                if part.endswith("\n"):
+                    if self._buffer:
+                        line = "".join(self._buffer) + part
+                        self._buffer = []
+                    else:
+                        line = part
+                    self.baseIO.write("[Python] " + line)
+                else:
+                    self._buffer.append(part)
 
     def close(self):
         return self.baseIO.close()

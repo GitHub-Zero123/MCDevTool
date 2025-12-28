@@ -405,6 +405,7 @@ static MCDevTool::Level::LevelOptions parseLevelOptionsFromUserConfig(const nloh
     options.enableCheats = config.value("enable_cheats", true);
     options.keepInventory = config.value("keep_inventory", true);
     options.doWeatherCycle = config.value("do_weather_cycle", true);
+    options.doDaylightCycle = config.value("do_daylight_cycle", true);
     // 处理实验性选项
     MCDevTool::Level::ExperimentsOptions expOptions;
     // 检查存在experiment_options字段
@@ -1282,6 +1283,16 @@ static void startGame(const nlohmann::json& config) {
     if(config.contains("skin_info") && config["skin_info"].is_object()) {
         // 用户自定义skin_info
         devConfig["skin_info"] = config["skin_info"];
+        // 安全校验 如果存在 skin 字段 则检查文件是否存在
+        auto& skinInfo = devConfig["skin_info"];
+        if(skinInfo.contains("skin") && skinInfo["skin"].is_string()) {
+            auto skinPath = std::filesystem::u8path(skinInfo["skin"].get<std::string>());
+            if(!std::filesystem::is_regular_file(skinPath)) {
+                throw std::runtime_error("自定义皮肤文件不存在：" + skinPath.generic_string());
+            }
+        } else {
+            throw std::runtime_error("用户自定义 skin_info 配置缺少 skin 字段。");
+        }
     } else {
         // 自动生成skin_info
         devConfig["skin_info"] = {

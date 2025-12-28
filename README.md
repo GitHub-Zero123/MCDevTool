@@ -135,6 +135,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "keep_inventory": true,
     // 天气是否自然更替
     "do_weather_cycle": true,
+    // 昼夜是否自然更替
+    "do_daylight_cycle": true,
     // 实验性玩法配置
     "experiment_options": {
         // 数据驱动生物群系

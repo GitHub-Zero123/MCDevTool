@@ -57,6 +57,8 @@ namespace MCDevTool::Level {
         compoundTag["cheatsEnabled"] = nbt::ByteTag(options.enableCheats ? 1 : 0);
         // doWeatherCycle Byte
         compoundTag["doweathercycle"] = nbt::ByteTag(options.doWeatherCycle ? 1 : 0);
+        // doDaylightCycle Byte
+        compoundTag["dodaylightcycle"] = nbt::ByteTag(options.doDaylightCycle ? 1 : 0);
 
         // 处理实验性功能 experiments 键
         if(options.experimentsOptions.enable) {

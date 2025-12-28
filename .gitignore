@@ -371,3 +371,4 @@ FodyWeavers.xsd
 
 reloadFiles/
 .mcdev.json
+logs/

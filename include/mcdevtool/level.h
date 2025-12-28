@@ -22,7 +22,8 @@ namespace MCDevTool::Level {
         bool enableCheats = true;                               // 是否启用作弊
         bool keepInventory = true;                              // 死亡时是否保留物品栏
         bool doWeatherCycle = true;                             // 是否启用天气自然变化
-        ExperimentsOptions experimentsOptions = {};     // 实验性功能选项
+        bool doDaylightCycle = true;                            // 是否启用昼夜交替
+        ExperimentsOptions experimentsOptions = {};             // 实验性功能选项
     };
 
     // 更新level.dat数据中的世界选项
