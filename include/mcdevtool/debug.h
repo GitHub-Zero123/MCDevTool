@@ -54,6 +54,7 @@ namespace MCDevTool::Debug {
     public:
         HotReloadWatcherTask() = default;
         HotReloadWatcherTask(int processId, const std::vector<std::filesystem::path>& modDirs);
+        HotReloadWatcherTask(int processId, std::vector<std::filesystem::path>&& modDirs);
 
         virtual ~HotReloadWatcherTask() = default;
 

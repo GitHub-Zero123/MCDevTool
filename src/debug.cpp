@@ -189,6 +189,10 @@ namespace MCDevTool::Debug {
         : mProcessId(processId), mModDirs(modDirs) {
     }
 
+    HotReloadWatcherTask::HotReloadWatcherTask(int processId, std::vector<std::filesystem::path>&& modDirs)
+        : mProcessId(processId), mModDirs(std::move(modDirs)) {
+    }
+
     void HotReloadWatcherTask::safeExit() {
         mStopFlag = true;
         join();

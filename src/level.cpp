@@ -20,8 +20,8 @@ static int64_t generateRandomSeed() {
 
 namespace MCDevTool::Level {
     // 更新level.dat数据中的世界选项
-    void updateLevelDatWorldData(std::vector<uint8_t>& levelDatData, std::optional<std::string_view> worldName,
-        const LevelOptions& options, bool init) {
+    void updateLevelDatWorldData(std::vector<uint8_t>& levelDatData,
+            std::optional<std::string_view> worldName, const LevelOptions& options, bool init) {
         auto& bytes = levelDatData;
         // 去除header版本信息
         auto content = std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
