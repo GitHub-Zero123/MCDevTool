@@ -136,5 +136,39 @@
                 }
             }
         }
+    ],
+    "buildPresets": [
+        {
+            "name": "x64-msvc-debug",
+            "configurePreset": "x64-msvc-debug"
+        },
+        {
+            "name": "x64-msvc-release",
+            "configurePreset": "x64-msvc-release"
+        },
+        {
+            "name": "x64-clang-debug",
+            "configurePreset": "x64-clang-debug"
+        },
+        {
+            "name": "x64-clang-release",
+            "configurePreset": "x64-clang-release"
+        },
+        {
+            "name": "android-arm64-debug",
+            "configurePreset": "android-arm64-debug"
+        },
+        {
+            "name": "android-arm64-release",
+            "configurePreset": "android-arm64-release"
+        },
+        {
+            "name": "linux-debug",
+            "configurePreset": "linux-debug"
+        },
+        {
+            "name": "macos-debug",
+            "configurePreset": "macos-debug"
+        }
     ]
 }

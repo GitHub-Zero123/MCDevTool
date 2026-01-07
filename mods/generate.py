@@ -188,11 +188,17 @@ namespace {namespace}
             return " " * indent + "inline const std::unordered_map<std::string, std::pair<const unsigned char*, size_t>> {} = {{}};".format(self.mapName)
         return " " * indent + "extern const std::unordered_map<std::string, std::pair<const unsigned char*, size_t>> {};".format(self.mapName)
 
-if __name__ == "__main__":
+def generateCode():
     # 生成嵌入资源代码
+    outDir = os.path.join(GET_CURRENT_PATH(), "Resource")
+    if not os.path.exists(outDir):
+        os.makedirs(outDir)
     target = EmbedResGenerator(
         os.path.join(GET_CURRENT_PATH(), "INCLUDE_TEST_MOD"), 
-        os.path.join(GET_CURRENT_PATH(), "Resource/INCLUDE_MOD.cpp"),
+        os.path.join(outDir, "INCLUDE_MOD.cpp"),
         namespace="INCLUDE_MOD_RES"
     )
     target.generate()
+
+if __name__ == "__main__":
+    generateCode()

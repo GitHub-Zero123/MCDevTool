@@ -52,6 +52,12 @@ if(MC_DEV_TOOL_BUILD_MCDK)
         target_compile_definitions(mcdk PRIVATE MCDK_ENABLE_CLI)
         target_sources(mcdk PRIVATE mcdk_cli.cpp)
     endif()
+
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        target_compile_options(mcdk PRIVATE
+            -Wno-implicit-const-int-float-conversion
+        )
+    endif()
 endif()
 
 # Test Executable
