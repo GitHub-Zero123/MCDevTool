@@ -1,0 +1,9 @@
+project(MC_DEV_MOD_RESOURCE)
+
+add_library(MCDEV_MOD_RESOURCE OBJECT
+    ${CMAKE_CURRENT_SOURCE_DIR}/Resource/INCLUDE_MOD.cpp
+)
+
+target_include_directories(MCDEV_MOD_RESOURCE PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/Resource
+)

@@ -3,8 +3,6 @@
 project(MC_DEV_TOOL_ROOT LANGUAGES CXX C)
 
 option(MC_DEV_TOOL_BUILD_TEST "BUILD TEST EXECUTABLE" OFF)
-option(MC_DEV_TOOL_BUILD_MCDK "BUILD MCDK EXECUTABLE" ON)
-option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" OFF)
 
 # By Zero123
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
@@ -38,28 +36,8 @@ target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlo
 # target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nbt/include)
 target_link_libraries(mcdevtool PUBLIC NBT)
 
-# MCDK Executable
-if(MC_DEV_TOOL_BUILD_MCDK)
-    add_executable(mcdk mcdk.cpp
-        mods/Resource/INCLUDE_MOD.cpp
-    )
-    target_compile_features(mcdk PRIVATE cxx_std_23)
-    target_link_libraries(mcdk PRIVATE mcdevtool)
-    target_include_directories(mcdk PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/mods/Resource
-    )
-
-    if(MC_DEV_TOOL_MCDK_ENABLE_CLI)
-        target_compile_definitions(mcdk PRIVATE MCDK_ENABLE_CLI)
-        target_sources(mcdk PRIVATE mcdk_cli.cpp)
-    endif()
-
-    if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        target_compile_options(mcdk PRIVATE
-            -Wno-implicit-const-int-float-conversion
-        )
-    endif()
-endif()
+add_subdirectory(mods)
+add_subdirectory(tools)
 
 # Test Executable
 if(MC_DEV_TOOL_BUILD_TEST)
