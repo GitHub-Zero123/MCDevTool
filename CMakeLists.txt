@@ -4,7 +4,7 @@ project(MC_DEV_TOOL_ROOT LANGUAGES CXX C)
 
 option(MC_DEV_TOOL_BUILD_TEST "BUILD TEST EXECUTABLE" OFF)
 option(MC_DEV_TOOL_BUILD_MCDK "BUILD MCDK EXECUTABLE" ON)
-option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" ON)
+option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" OFF)
 
 # By Zero123
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
@@ -17,7 +17,7 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     endif()
 endif()
 
-add_subdirectory(libs/NBT)
+add_subdirectory(libs/nbt)
 # set(LIBUV_BUILD_SHARED OFF)
 # add_subdirectory(libs/libuv)
 # add_subdirectory(libs/uvw)
@@ -35,6 +35,7 @@ target_compile_features(mcdevtool PRIVATE cxx_std_23)
 target_compile_definitions(mcdevtool PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
+# target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nbt/include)
 target_link_libraries(mcdevtool PUBLIC NBT)
 
 # MCDK Executable

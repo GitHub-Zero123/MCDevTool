@@ -37,7 +37,7 @@
 # xmake
 .xmake
 build
-CmakeLists.txt
+# CmakeLists.txt
 compile_commands.json
 artifacts
 bin
