@@ -26,8 +26,16 @@ namespace mcdk {
             mHotReloadAction = std::move(action);
         }
 
+        void setModDirs(std::vector<std::filesystem::path>&& modDirs) {
+            modRootDirPaths.clear();
+            for (const auto& dir : modDirs) {
+                modRootDirPaths.insert(dir);
+            }
+            MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(modDirs));
+        }
+
         // 从文件路径计算Python模块名
-        static void pyPathToModuleName(const std::filesystem::path& filePath, std::string& outModuleName) {
+        void pyPathToModuleName(const std::filesystem::path& filePath, std::string& outModuleName) {
             std::filesystem::path cur = filePath;
             std::filesystem::path manifestDir;
 
@@ -43,6 +51,10 @@ namespace mcdk {
                     return; // 没找到 manifest
                 }
                 cur = parent;
+                if(modRootDirPaths.size() > 0 && modRootDirPaths.find(cur) != modRootDirPaths.end()) {
+                    // 达到用户指定的mod目录上限
+                    return;
+                }
             }
 
             // 计算 filePath 相对于 manifestDir 的路径
@@ -116,6 +128,7 @@ namespace mcdk {
         // std::shared_ptr<MCDevTool::Debug::DebugIPCServer> mIpcServer;
         HotReloadAction mHotReloadAction;
         std::unordered_set<std::filesystem::path> mCachedPyModulePaths;
+        std::unordered_set<std::filesystem::path> modRootDirPaths;
         std::mutex gMutex;
         ConsoleOutputCallback mOutputCallback;
     };
