@@ -7,9 +7,7 @@ add_requires(
     "zlib 1.3.1"
 )
 
-if is_plat("windows") and not has_config("vs_runtime") then
-    set_runtimes("MD")
-end
+-- runtime is inherited from parent project via set_runtimes()
 
 option("kind")
     set_default("static")

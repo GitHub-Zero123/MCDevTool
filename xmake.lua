@@ -5,7 +5,27 @@ add_rules("mode.debug", "mode.release")
 
 set_languages("c++20")
 
+if is_plat("windows") then
+    if is_mode("release") then
+        set_runtimes("MT")
+    else
+        set_runtimes("MTd")
+    end
+end
+
 add_repositories("groupmountain-repo https://github.com/GroupMountain/xmake-repo.git")
+
+package("binarystream")
+    set_homepage("https://github.com/GlacieTeam/BinaryStream")
+    set_license("MPL-2.0")
+    add_urls("https://github.com/GlacieTeam/BinaryStream/archive/refs/tags/v$(version).tar.gz")
+    add_versions("2.3.2", "bd9fbb46948202a2b9c514d030aa1000988a9773fa4f6f3e98884333734e6349")
+    on_install(function (package)
+        io.replace("xmake.lua", "set_runtimes%(\"MD\"%)", "-- patched", {plain = false})
+        import("package.tools.xmake").install(package)
+        os.cp("include/*", package:installdir("include"))
+    end)
+package_end()
 
 add_requires(
     "binarystream 2.3.2",
@@ -34,11 +54,6 @@ if is_plat("windows") then
     add_cxflags("/utf-8", "/EHsc")
     add_defines("_CRT_SECURE_NO_WARNINGS")
     add_defines("_HAS_CXX23=1")
-    if is_mode("release") then
-        set_runtimes("MD")
-    else
-        set_runtimes("MDd")
-    end
 end
 
 if is_plat("linux") then
