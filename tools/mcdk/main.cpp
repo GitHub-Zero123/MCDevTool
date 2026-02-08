@@ -590,7 +590,7 @@ static void startGame(const nlohmann::json& config) {
     auto resPacksManifest = nlohmann::json::array();
     for (const auto& pack : linkedPacks) {
         nlohmann::json packEntry{
-            {"pack_id",                           pack.uuid},
+            {"pack_id", pack.uuid},
             {"version", nlohmann::json::parse(pack.version)},
         };
         if (pack.type == MCDevTool::Addon::PackType::BEHAVIOR) {
@@ -630,14 +630,14 @@ static void startGame(const nlohmann::json& config) {
     auto configPath = worldsPath / "dev_config.cppconfig";
     // 创建dev_config
     nlohmann::json devConfig{
-        { "world_info",{{"level_id", worldFolderName}}                       },
-        {  "room_info",        nlohmann::json::object()},
+        {"world_info", {{"level_id", worldFolderName}}},
+        {"room_info", nlohmann::json::object()},
         {"player_info",
          {
-         {"urs", ""},
-         {"user_id", 0},
-         {"user_name", config.value("user_name", "developer")},
-         }                                             },
+             {"urs", ""},
+             {"user_id", 0},
+             {"user_name", config.value("user_name", "developer")},
+         }},
     };
 
     auto defaultSkinPath = (gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png").generic_string();
@@ -664,10 +664,7 @@ static void startGame(const nlohmann::json& config) {
         }
     } else {
         // 自动生成skin_info
-        devConfig["skin_info"] = {
-            {"slim",                      false},
-            {"skin", std::move(defaultSkinPath)}
-        };
+        devConfig["skin_info"] = {{"slim", false}, {"skin", std::move(defaultSkinPath)}};
     }
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
