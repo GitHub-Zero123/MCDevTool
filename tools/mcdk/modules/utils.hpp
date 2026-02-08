@@ -7,7 +7,7 @@ namespace mcdk {
     // 字符串关键字替换
     inline void stringReplace(std::string& str, const std::string& from, const std::string& to) {
         size_t startPos = 0;
-        while((startPos = str.find(from, startPos)) != std::string::npos) {
+        while ((startPos = str.find(from, startPos)) != std::string::npos) {
             str.replace(startPos, from.length(), to);
             startPos += to.length();
         }

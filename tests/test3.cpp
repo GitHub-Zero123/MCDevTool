@@ -30,49 +30,43 @@
 // };
 
 // 根据进程 ID 和窗口标题关键字，使符合条件的窗口置顶悬浮
-static bool makeTopMostByPidAndTitleContains(
-    DWORD pid,
-    const std::wstring& keyword,
-    bool setDarkTitleBar = true
-) {
+static bool makeTopMostByPidAndTitleContains(DWORD pid, const std::wstring& keyword, bool setDarkTitleBar = true) {
     struct Context {
-        DWORD pid;
+        DWORD               pid;
         const std::wstring* keyword;
-        HWND found = nullptr;
-    } ctx { pid, &keyword, nullptr };
+        HWND                found = nullptr;
+    } ctx{pid, &keyword, nullptr};
 
-    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        auto& ctx = *(Context*)lParam;
+    EnumWindows(
+        [](HWND hwnd, LPARAM lParam) -> BOOL {
+            auto& ctx = *(Context*)lParam;
 
-        // 必须是可见顶层
-        if (!IsWindowVisible(hwnd))
-            return TRUE;
-        if (GetWindow(hwnd, GW_OWNER) != nullptr)
-            return TRUE;
+            // 必须是可见顶层
+            if (!IsWindowVisible(hwnd)) return TRUE;
+            if (GetWindow(hwnd, GW_OWNER) != nullptr) return TRUE;
 
-        // 如果指定 PID 先过滤
-        if (ctx.pid != 0) {
-            DWORD winPid = 0;
-            GetWindowThreadProcessId(hwnd, &winPid);
-            if (winPid != ctx.pid)
-                return TRUE;
-        }
+            // 如果指定 PID 先过滤
+            if (ctx.pid != 0) {
+                DWORD winPid = 0;
+                GetWindowThreadProcessId(hwnd, &winPid);
+                if (winPid != ctx.pid) return TRUE;
+            }
 
-        // 获取标题
-        wchar_t title[512];
-        int len = GetWindowTextW(hwnd, title, 512);
-        if (len == 0)
-            return TRUE;
+            // 获取标题
+            wchar_t title[512];
+            int     len = GetWindowTextW(hwnd, title, 512);
+            if (len == 0) return TRUE;
 
-        std::wstring windowTitle = title;
+            std::wstring windowTitle = title;
 
-        // 检查是否包含关键字
-        if (windowTitle.find(*ctx.keyword) == std::wstring::npos)
-            return TRUE;
+            // 检查是否包含关键字
+            if (windowTitle.find(*ctx.keyword) == std::wstring::npos) return TRUE;
 
-        ctx.found = hwnd;
-        return FALSE; // 终止搜索
-    }, (LPARAM)&ctx);
+            ctx.found = hwnd;
+            return FALSE; // 终止搜索
+        },
+        (LPARAM)&ctx
+    );
 
     if (!ctx.found) {
         return false; // 未找到
@@ -90,9 +84,9 @@ static bool makeTopMostByPidAndTitleContains(
         // DWMSBT_TRANSIENTWINDOW = Acrylic（高斯模糊，混合背景）
         // DWMSBT_MAINWINDOW = Mica（更柔和，性能更好）
         // DWMSBT_TABBEDWINDOW = Tabbed Mica
-        int backdropType = DWMSBT_TRANSIENTWINDOW;  // Acrylic 高斯模糊
+        int     backdropType = DWMSBT_TRANSIENTWINDOW; // Acrylic 高斯模糊
         HRESULT hr = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdropType, sizeof(backdropType));
-        
+
         if (FAILED(hr)) {
             // 如果 Acrylic 失败，回退到纯色
             COLORREF captionColor = RGB(0x1F, 0x1F, 0x1F);
@@ -105,13 +99,12 @@ static bool makeTopMostByPidAndTitleContains(
     }
 
     // 设置置顶悬浮属性
-    LONG_PTR ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-    ex |= WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
-    ex &= ~WS_EX_APPWINDOW;
+    LONG_PTR ex  = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+    ex          |= WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+    ex          &= ~WS_EX_APPWINDOW;
     SetWindowLongPtr(hwnd, GWL_EXSTYLE, ex);
 
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
 
     return true;
 }

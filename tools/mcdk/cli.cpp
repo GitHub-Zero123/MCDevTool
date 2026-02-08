@@ -10,8 +10,10 @@
 #include "libs/CLI11.hpp"
 
 static void ENV_INFO() {
-    std::cout << "MCStudioDownload: " << MCDevTool::autoSearchMCStudioDownloadGamePath().value_or("").generic_string() << "\n";
-    std::cout << "Minecraft.Windows.exe: " << MCDevTool::autoMatchLatestGameExePath().value_or("").generic_string() << "\n";
+    std::cout << "MCStudioDownload: " << MCDevTool::autoSearchMCStudioDownloadGamePath().value_or("").generic_string()
+              << "\n";
+    std::cout << "Minecraft.Windows.exe: " << MCDevTool::autoMatchLatestGameExePath().value_or("").generic_string()
+              << "\n";
     std::cout << "MinecraftPE_Netease: " << MCDevTool::getMinecraftDataPath().generic_string() << "\n";
     std::cout << "games/com.netease: " << MCDevTool::getGamesComNeteasePath().generic_string() << "\n";
     std::cout << "behavior_packs: " << MCDevTool::getBehaviorPacksPath().generic_string() << "\n";
@@ -21,14 +23,14 @@ static void ENV_INFO() {
 }
 
 static void CREATE_EMPTY_ADDON_PROJECT(const std::string& name) {
-    namespace Addon = MCDevTool::Addon;
-    namespace Utils = MCDevTool::Utils;
+    namespace Addon                           = MCDevTool::Addon;
+    namespace Utils                           = MCDevTool::Utils;
     auto [behaviorManifest, resourceManifest] = Addon::createEmptyAddonManifest(name, {1, 0, 0});
-    auto workPath = std::filesystem::current_path();
+    auto workPath                             = std::filesystem::current_path();
     // 生成随机文件夹名称
     std::string folderName = name;
-    if(folderName.empty()) {
-        folderName = Utils::createCompactUUID();
+    if (folderName.empty()) {
+        folderName    = Utils::createCompactUUID();
         folderName[0] = 'A';
     }
     // 生成行为包和资源包
@@ -61,17 +63,15 @@ int MCDK_CLI_PARSE(int argc, char* argv[]) {
     app.require_subcommand(1);
 
     // 列出环境信息
-    app.add_subcommand("envinfo", "列出当前环境信息")->callback([]() {
-        ENV_INFO();
-    });
+    app.add_subcommand("envinfo", "列出当前环境信息")->callback([]() { ENV_INFO(); });
 
     // 创建一个空的Addon项目
-    auto* create = app.add_subcommand("create", "创建一个空的Addon项目");
+    auto*       create = app.add_subcommand("create", "创建一个空的Addon项目");
     std::string name;
     create->add_option("-n,--name", name, "项目名称")->default_val("auto");
 
     create->callback([&name]() {
-        if(name == "auto") {
+        if (name == "auto") {
             name.clear();
         }
         CREATE_EMPTY_ADDON_PROJECT(name);

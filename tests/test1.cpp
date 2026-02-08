@@ -13,15 +13,15 @@ int main() {
         std::cerr << "APPDATA not found!\n";
         return 1;
     }
-    auto path = std::filesystem::path(appData) / "MinecraftPE_Netease";
+    auto path   = std::filesystem::path(appData) / "MinecraftPE_Netease";
     auto u8Path = path.generic_u8string();
     std::cout << "MinecraftPE_Netease path: " << reinterpret_cast<const char*>(u8Path.c_str()) << "\n\n";
 
-    auto gamePath = path / "games/com.netease";
+    auto gamePath   = path / "games/com.netease";
     auto u8GamePath = gamePath.generic_u8string();
     std::cout << "Game path: " << reinterpret_cast<const char*>(u8GamePath.c_str()) << "\n\n";
 
-    auto worldPath = path / "minecraftWorlds";
+    auto worldPath   = path / "minecraftWorlds";
     auto u8WorldPath = worldPath.generic_u8string();
     std::cout << "Worlds path: " << reinterpret_cast<const char*>(u8WorldPath.c_str()) << "\n\n";
     return 0;

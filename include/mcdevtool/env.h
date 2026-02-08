@@ -33,4 +33,4 @@ namespace MCDevTool {
     Addon::PackInfo linkSourcePackToRuntimePack(const std::filesystem::path& sourceDir);
     // 分析并link源代码addon目录到运行时行为包目录 该版本支持批量处理目录下的所有pack
     std::vector<Addon::PackInfo> linkSourceAddonToRuntimePacks(const std::filesystem::path& sourceDir);
-}   // namespace MCDevTool
+} // namespace MCDevTool

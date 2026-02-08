@@ -18,13 +18,9 @@ namespace mcdk {
         using MCDevTool::Debug::HotReloadWatcherTask::HotReloadWatcherTask;
 
         // 设置控制台输出回调
-        void setOutputCallback(ConsoleOutputCallback callback) {
-            mOutputCallback = std::move(callback);
-        }
+        void setOutputCallback(ConsoleOutputCallback callback) { mOutputCallback = std::move(callback); }
 
-        void setHotReloadAction(HotReloadAction action) {
-            mHotReloadAction = std::move(action);
-        }
+        void setHotReloadAction(HotReloadAction action) { mHotReloadAction = std::move(action); }
 
         void setModDirs(std::vector<std::filesystem::path>&& modDirs) {
             modRootDirPaths.clear();
@@ -51,7 +47,7 @@ namespace mcdk {
                     return; // 没找到 manifest
                 }
                 cur = parent;
-                if(modRootDirPaths.size() > 0 && modRootDirPaths.find(cur) != modRootDirPaths.end()) {
+                if (modRootDirPaths.size() > 0 && modRootDirPaths.find(cur) != modRootDirPaths.end()) {
                     // 达到用户指定的mod目录上限
                     return;
                 }
@@ -68,7 +64,9 @@ namespace mcdk {
                 parts.push_back(p.string());
             }
 
-            if (parts.empty()) { return; }
+            if (parts.empty()) {
+                return;
+            }
 
             std::string& last = parts.back();
             if (last.size() > 3 && last.ends_with(".py")) {
@@ -90,20 +88,20 @@ namespace mcdk {
             nlohmann::json targetPaths = nlohmann::json::array();
             {
                 std::lock_guard<std::mutex> lock(gMutex);
-                for(const auto& modulePath : mCachedPyModulePaths) {
+                for (const auto& modulePath : mCachedPyModulePaths) {
                     std::string moduleName;
                     pyPathToModuleName(modulePath, moduleName);
-                    if(moduleName.empty()) {
+                    if (moduleName.empty()) {
                         continue;
                     }
                     targetPaths.push_back(std::move(moduleName));
                 }
                 mCachedPyModulePaths.clear();
             }
-            if(targetPaths.empty()) {
+            if (targetPaths.empty()) {
                 return;
             }
-            if(mOutputCallback) {
+            if (mOutputCallback) {
                 mOutputCallback("[HotReload] 检测到修改，已触发热更新。", mcdk::ConsoleColor::Yellow);
             }
             // mIpcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
@@ -113,8 +111,11 @@ namespace mcdk {
         void onFileChanged(const std::filesystem::path& filePath) override {
             // 输出变更文件路径
             auto u8Path = filePath.generic_u8string();
-            if(mOutputCallback) {
-                mOutputCallback("[HotReload] Detected change in: " + std::string(u8Path.begin(), u8Path.end()), mcdk::ConsoleColor::Yellow);
+            if (mOutputCallback) {
+                mOutputCallback(
+                    "[HotReload] Detected change in: " + std::string(u8Path.begin(), u8Path.end()),
+                    mcdk::ConsoleColor::Yellow
+                );
             }
             std::lock_guard<std::mutex> lock(gMutex);
             mCachedPyModulePaths.insert(filePath);
@@ -126,11 +127,11 @@ namespace mcdk {
 
     private:
         // std::shared_ptr<MCDevTool::Debug::DebugIPCServer> mIpcServer;
-        HotReloadAction mHotReloadAction;
+        HotReloadAction                           mHotReloadAction;
         std::unordered_set<std::filesystem::path> mCachedPyModulePaths;
         std::unordered_set<std::filesystem::path> modRootDirPaths;
-        std::mutex gMutex;
-        ConsoleOutputCallback mOutputCallback;
+        std::mutex                                gMutex;
+        ConsoleOutputCallback                     mOutputCallback;
     };
 
 } // namespace mcdk

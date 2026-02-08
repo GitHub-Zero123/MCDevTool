@@ -17,10 +17,10 @@ namespace MCDevTool::Debug {
         ~DebugIPCServer();
 
         // 禁止复制和移动
-        DebugIPCServer(const DebugIPCServer&) = delete;
+        DebugIPCServer(const DebugIPCServer&)            = delete;
         DebugIPCServer& operator=(const DebugIPCServer&) = delete;
-        DebugIPCServer(DebugIPCServer&&) = delete;
-        DebugIPCServer& operator=(DebugIPCServer&&) = delete;
+        DebugIPCServer(DebugIPCServer&&)                 = delete;
+        DebugIPCServer& operator=(DebugIPCServer&&)      = delete;
 
         void start();
         void stop();
@@ -38,13 +38,14 @@ namespace MCDevTool::Debug {
         std::atomic<bool>* getStopFlag();
 
         unsigned short getPort() const;
+
     private:
-        unsigned short mPort = 0;
-        void* mSocketPtr = nullptr;
-        std::vector<void*> mClients;
+        unsigned short             mPort      = 0;
+        void*                      mSocketPtr = nullptr;
+        std::vector<void*>         mClients;
         std::optional<std::thread> mThread;
-        std::mutex mClientsMutex;
-        std::atomic<bool> mStopFlag = false;
+        std::mutex                 mClientsMutex;
+        std::atomic<bool>          mStopFlag = false;
     };
 
     // 创建并返回一个DebugIPCServer的智能指针
@@ -73,14 +74,14 @@ namespace MCDevTool::Debug {
         virtual void onFileChanged(const std::filesystem::path& filePath);
 
     protected:
-        bool mNeedUpdate = false;
+        bool mNeedUpdate   = false;
         bool mIsForeground = false;
 
     private:
-        int mProcessId = 0;
-        std::optional<std::thread> processWatcherThread;
-        std::optional<std::thread> fileWatcherThread;
+        int                                mProcessId = 0;
+        std::optional<std::thread>         processWatcherThread;
+        std::optional<std::thread>         fileWatcherThread;
         std::vector<std::filesystem::path> mModDirs;
-        std::atomic<bool> mStopFlag = false;
+        std::atomic<bool>                  mStopFlag = false;
     };
 } // namespace MCDevTool::Debug

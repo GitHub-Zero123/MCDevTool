@@ -12,9 +12,8 @@ namespace MCDevTool::Utils {
         bool operator<(const Version& other) const;
         bool operator==(const Version& other) const;
 
-        explicit operator bool() const {
-            return !components.empty();
-        }
+        explicit operator bool() const { return !components.empty(); }
+
     private:
         std::vector<uint32_t> components;
     };

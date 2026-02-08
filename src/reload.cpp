@@ -24,34 +24,33 @@ namespace MCDevTool::HotReload {
     namespace fs = std::filesystem;
 
     struct WatchItem {
-        fs::path                    dir;
-        HANDLE                      hDir = INVALID_HANDLE_VALUE;
-        OVERLAPPED                  ov{};
-        std::vector<BYTE>           buffer;
-        HANDLE                      eventHandle = nullptr;
-        
+        fs::path          dir;
+        HANDLE            hDir = INVALID_HANDLE_VALUE;
+        OVERLAPPED        ov{};
+        std::vector<BYTE> buffer;
+        HANDLE            eventHandle = nullptr;
+
         // 禁止拷贝，但允许移动
-        WatchItem() = default;
-        WatchItem(const WatchItem&) = delete;
+        WatchItem()                            = default;
+        WatchItem(const WatchItem&)            = delete;
         WatchItem& operator=(const WatchItem&) = delete;
         WatchItem(WatchItem&& other) noexcept
-            : dir(std::move(other.dir))
-            , hDir(std::exchange(other.hDir, INVALID_HANDLE_VALUE))
-            , ov(other.ov)
-            , buffer(std::move(other.buffer))
-            , eventHandle(std::exchange(other.eventHandle, nullptr))
-        {
+        : dir(std::move(other.dir)),
+          hDir(std::exchange(other.hDir, INVALID_HANDLE_VALUE)),
+          ov(other.ov),
+          buffer(std::move(other.buffer)),
+          eventHandle(std::exchange(other.eventHandle, nullptr)) {
             // 重置 ov 的 hEvent 指向自己
             ov.hEvent = eventHandle;
         }
         WatchItem& operator=(WatchItem&& other) noexcept {
             if (this != &other) {
-                dir = std::move(other.dir);
-                hDir = std::exchange(other.hDir, INVALID_HANDLE_VALUE);
-                ov = other.ov;
-                buffer = std::move(other.buffer);
+                dir         = std::move(other.dir);
+                hDir        = std::exchange(other.hDir, INVALID_HANDLE_VALUE);
+                ov          = other.ov;
+                buffer      = std::move(other.buffer);
                 eventHandle = std::exchange(other.eventHandle, nullptr);
-                ov.hEvent = eventHandle;
+                ov.hEvent   = eventHandle;
             }
             return *this;
         }
@@ -59,7 +58,7 @@ namespace MCDevTool::HotReload {
 
     // 仅监听文件内容修改，不监听新增/删除/重命名
     static constexpr DWORD WATCH_FILTER = FILE_NOTIFY_CHANGE_LAST_WRITE;
-    
+
     // 防抖时间间隔（毫秒）
     static constexpr int DEBOUNCE_MS = 100;
 
@@ -84,9 +83,9 @@ namespace MCDevTool::HotReload {
     // ------------------------------------------------------------
 
     std::optional<std::thread> watchAndReloadPyFiles(
-        const std::vector<fs::path>& modDirs,
+        const std::vector<fs::path>&                modDirs,
         const std::function<void(const fs::path&)>& onFileChanged,
-        std::atomic<bool>* stopFlag
+        std::atomic<bool>*                          stopFlag
     ) {
         if (modDirs.empty()) {
             return std::nullopt;
@@ -105,8 +104,7 @@ namespace MCDevTool::HotReload {
             item.buffer.resize(BUFFER_SIZE);
 
             item.eventHandle = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-            if (!item.eventHandle)
-                continue;
+            if (!item.eventHandle) continue;
 
             item.hDir = CreateFileW(
                 item.dir.wstring().c_str(),
@@ -138,7 +136,6 @@ namespace MCDevTool::HotReload {
 
         // 后台监听线程
         return std::thread([items = std::move(items), onFileChanged, stopFlag]() mutable {
-
             std::vector<HANDLE> waitHandles;
             waitHandles.reserve(items.size() + 1);
 
@@ -164,7 +161,7 @@ namespace MCDevTool::HotReload {
 
             // 防抖：记录每个文件的最后触发时间
             std::unordered_map<std::wstring, std::chrono::steady_clock::time_point> lastTriggerTime;
-            std::mutex debounceMapMutex;
+            std::mutex                                                              debounceMapMutex;
 
             // 如果有 stopFlag，启动一个辅助线程来检测并触发 stopEvent
             std::thread stopChecker;
@@ -180,12 +177,8 @@ namespace MCDevTool::HotReload {
             const DWORD itemStartIndex = stopEvent ? 1 : 0;
 
             while (true) {
-                DWORD result = WaitForMultipleObjects(
-                    static_cast<DWORD>(waitHandles.size()),
-                    waitHandles.data(),
-                    FALSE,
-                    INFINITE
-                );
+                DWORD result =
+                    WaitForMultipleObjects(static_cast<DWORD>(waitHandles.size()), waitHandles.data(), FALSE, INFINITE);
 
                 if (result == WAIT_FAILED) {
                     std::cerr << "[ERROR] WAIT_FAILED, GetLastError=" << GetLastError() << std::endl;
@@ -193,7 +186,7 @@ namespace MCDevTool::HotReload {
                 }
 
                 DWORD index = result - WAIT_OBJECT_0;
-                
+
                 // 检查是否是停止事件
                 if (stopEvent && index == 0) {
                     break;
@@ -213,15 +206,12 @@ namespace MCDevTool::HotReload {
                 }
 
                 BYTE* ptr = item.buffer.data();
-                auto now = std::chrono::steady_clock::now();
+                auto  now = std::chrono::steady_clock::now();
 
                 while (true) {
                     auto* fni = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(ptr);
 
-                    std::wstring name(
-                        fni->FileName,
-                        fni->FileNameLength / sizeof(wchar_t)
-                    );
+                    std::wstring name(fni->FileName, fni->FileNameLength / sizeof(wchar_t));
 
                     fs::path fullPath = item.dir / name;
 
@@ -230,20 +220,21 @@ namespace MCDevTool::HotReload {
                     // 仅处理文件修改事件 (FILE_ACTION_MODIFIED)
                     // 当监听 FILE_NOTIFY_CHANGE_LAST_WRITE 时，Action 仍然是 FILE_ACTION_MODIFIED
                     if (fni->Action == FILE_ACTION_MODIFIED && fullPath.extension() == L".py") {
-                        std::wstring pathKey = fullPath.wstring();
-                        bool shouldTrigger = false;
+                        std::wstring pathKey       = fullPath.wstring();
+                        bool         shouldTrigger = false;
 
                         {
                             std::lock_guard<std::mutex> lock(debounceMapMutex);
-                            auto it = lastTriggerTime.find(pathKey);
+                            auto                        it = lastTriggerTime.find(pathKey);
                             if (it == lastTriggerTime.end()) {
-                                shouldTrigger = true;
+                                shouldTrigger            = true;
                                 lastTriggerTime[pathKey] = now;
                             } else {
-                                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
+                                auto elapsed =
+                                    std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
                                 if (elapsed >= DEBOUNCE_MS) {
                                     shouldTrigger = true;
-                                    it->second = now;
+                                    it->second    = now;
                                 }
                             }
                         }
@@ -284,21 +275,20 @@ namespace MCDevTool::HotReload {
                 if (i.hDir != INVALID_HANDLE_VALUE) {
                     CloseHandle(i.hDir);
                 }
-                    
+
                 if (i.eventHandle) {
                     CloseHandle(i.eventHandle);
                 }
             }
-
         });
     }
 
     // ------------------------------------------------------------
 
     std::optional<std::thread> watchAndReloadPyFiles(
-        const std::vector<std::string_view>& modDirs,
+        const std::vector<std::string_view>&        modDirs,
         const std::function<void(const fs::path&)>& onFileChanged,
-        std::atomic<bool>* stopFlag
+        std::atomic<bool>*                          stopFlag
     ) {
         std::vector<fs::path> paths;
         paths.reserve(modDirs.size());
@@ -312,19 +302,19 @@ namespace MCDevTool::HotReload {
 
     // 监听目标pid进程是否回到前台焦点
     std::optional<std::thread> watchProcessForegroundWindow(
-        uint32_t pid,
+        uint32_t                                      pid,
         const std::function<void(bool isForeground)>& onFocusChanged,
-        std::atomic<bool>* stopFlag
+        std::atomic<bool>*                            stopFlag
     ) {
         return std::thread([pid, onFocusChanged, stopFlag]() {
             HWND lastForegroundWnd = nullptr;
-            bool lastIsForeground = false;
+            bool lastIsForeground  = false;
 
             while (true) {
                 if (stopFlag && stopFlag->load()) {
                     break;
                 }
-                HWND fgWnd = GetForegroundWindow();
+                HWND  fgWnd = GetForegroundWindow();
                 DWORD fgPid = 0;
                 GetWindowThreadProcessId(fgWnd, &fgPid);
 
@@ -355,7 +345,7 @@ namespace MCDevTool::HotReload {
         const std::vector<std::string_view>&,
         const std::function<void(const std::filesystem::path&)>&,
         std::atomic<bool>* stopFlag = nullptr
-    )  = delete;
+    ) = delete;
 
     std::optional<std::thread> watchProcessForegroundWindow(
         uint32_t,
