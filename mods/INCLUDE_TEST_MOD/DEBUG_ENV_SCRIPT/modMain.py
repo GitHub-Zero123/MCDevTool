@@ -61,9 +61,6 @@ def REST_STDOUT():
 
 sys.stdout = STD_OUT_WRAPPER(sys.stdout)
 sys.stderr = STD_OUT_WRAPPER(sys.stderr)
-if not PTVSD_ENABLED:
-    sys.stdout = STD_OUT_WRAPPER(sys.stdout)
-    sys.stderr = STD_OUT_WRAPPER(sys.stderr)
 
 
 @PRE_SERVER_LOADER_HOOK
