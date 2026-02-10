@@ -1,4 +1,5 @@
 #include "mcdevtool/level.h"
+#include "mcdevtool/utils.h"
 #include <ctime>
 #include <iterator>
 #include <fstream>
@@ -110,7 +111,7 @@ namespace MCDevTool::Level {
         // 读取文件内容
         std::ifstream inputFile(filePath, std::ios::binary);
         if (!inputFile) {
-            throw std::runtime_error("无法打开level.dat文件进行读取: " + filePath.string());
+            throw std::runtime_error("无法打开level.dat文件进行读取: " + Utils::pathToUtf8(filePath));
         }
         std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
         inputFile.close();
@@ -121,7 +122,7 @@ namespace MCDevTool::Level {
         // 写回文件
         std::ofstream outputFile(filePath, std::ios::binary | std::ios::trunc);
         if (!outputFile) {
-            throw std::runtime_error("无法打开level.dat文件进行写入: " + filePath.string());
+            throw std::runtime_error("无法打开level.dat文件进行写入: " + Utils::pathToUtf8(filePath));
         }
         outputFile.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
         outputFile.close();
@@ -136,7 +137,7 @@ namespace MCDevTool::Level {
         // 读取文件内容
         std::ifstream inputFile(filePath, std::ios::binary);
         if (!inputFile) {
-            throw std::runtime_error("无法打开level.dat文件进行读取: " + filePath.string());
+            throw std::runtime_error("无法打开level.dat文件进行读取: " + Utils::pathToUtf8(filePath));
         }
         std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
         inputFile.close();
@@ -147,7 +148,7 @@ namespace MCDevTool::Level {
         // 写回文件
         std::ofstream outputFile(filePath, std::ios::binary | std::ios::trunc);
         if (!outputFile) {
-            throw std::runtime_error("无法打开level.dat文件进行写入: " + filePath.string());
+            throw std::runtime_error("无法打开level.dat文件进行写入: " + Utils::pathToUtf8(filePath));
         }
         outputFile.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
         outputFile.close();

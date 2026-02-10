@@ -8,6 +8,7 @@
 #include <functional>
 #include <nlohmann/json.hpp>
 #include <mcdevtool/debug.h>
+#include <mcdevtool/utils.h>
 #include "console.hpp"
 
 namespace mcdk {
@@ -61,7 +62,7 @@ namespace mcdk {
 
             std::vector<std::string> parts;
             for (const auto& p : rel) {
-                parts.push_back(p.string());
+                parts.push_back(MCDevTool::Utils::pathToUtf8(p));
             }
 
             if (parts.empty()) {

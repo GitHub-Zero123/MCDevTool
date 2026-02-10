@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstdint>
 #include <string_view>
+#include <filesystem>
 
 namespace MCDevTool::Utils {
     class Version {
@@ -23,4 +24,9 @@ namespace MCDevTool::Utils {
 
     // 生成去除-符号的UUID字符串
     std::string createCompactUUID();
+
+    std::string pathToUtf8(const std::filesystem::path& p);
+
+    std::string pathToGenericUtf8(const std::filesystem::path& p);
+
 } // namespace MCDevTool::Utils

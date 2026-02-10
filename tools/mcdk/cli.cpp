@@ -10,16 +10,17 @@
 #include "libs/CLI11.hpp"
 
 static void ENV_INFO() {
-    std::cout << "MCStudioDownload: " << MCDevTool::autoSearchMCStudioDownloadGamePath().value_or("").generic_string()
+    using MCDevTool::Utils::pathToGenericUtf8;
+    std::cout << "MCStudioDownload: " << pathToGenericUtf8(MCDevTool::autoSearchMCStudioDownloadGamePath().value_or(""))
               << "\n";
-    std::cout << "Minecraft.Windows.exe: " << MCDevTool::autoMatchLatestGameExePath().value_or("").generic_string()
+    std::cout << "Minecraft.Windows.exe: " << pathToGenericUtf8(MCDevTool::autoMatchLatestGameExePath().value_or(""))
               << "\n";
-    std::cout << "MinecraftPE_Netease: " << MCDevTool::getMinecraftDataPath().generic_string() << "\n";
-    std::cout << "games/com.netease: " << MCDevTool::getGamesComNeteasePath().generic_string() << "\n";
-    std::cout << "behavior_packs: " << MCDevTool::getBehaviorPacksPath().generic_string() << "\n";
-    std::cout << "resource_packs: " << MCDevTool::getResourcePacksPath().generic_string() << "\n";
-    std::cout << "dependencies_packs: " << MCDevTool::getDependenciesPacksPath().generic_string() << "\n";
-    std::cout << "minecraftWorlds: " << MCDevTool::getMinecraftWorldsPath().generic_string() << "\n";
+    std::cout << "MinecraftPE_Netease: " << pathToGenericUtf8(MCDevTool::getMinecraftDataPath()) << "\n";
+    std::cout << "games/com.netease: " << pathToGenericUtf8(MCDevTool::getGamesComNeteasePath()) << "\n";
+    std::cout << "behavior_packs: " << pathToGenericUtf8(MCDevTool::getBehaviorPacksPath()) << "\n";
+    std::cout << "resource_packs: " << pathToGenericUtf8(MCDevTool::getResourcePacksPath()) << "\n";
+    std::cout << "dependencies_packs: " << pathToGenericUtf8(MCDevTool::getDependenciesPacksPath()) << "\n";
+    std::cout << "minecraftWorlds: " << pathToGenericUtf8(MCDevTool::getMinecraftWorldsPath()) << "\n";
 }
 
 static void CREATE_EMPTY_ADDON_PROJECT(const std::string& name) {
@@ -50,8 +51,8 @@ static void CREATE_EMPTY_ADDON_PROJECT(const std::string& name) {
         std::filesystem::create_directories(resourcePackPath / "textures");
     }
     std::cout << "创建成功:\n";
-    std::cout << "行为包路径: " << behaviorPackPath.generic_string() << "\n";
-    std::cout << "资源包路径: " << resourcePackPath.generic_string() << "\n";
+    std::cout << "行为包路径: " << MCDevTool::Utils::pathToGenericUtf8(behaviorPackPath) << "\n";
+    std::cout << "资源包路径: " << MCDevTool::Utils::pathToGenericUtf8(resourcePackPath) << "\n";
 }
 
 #ifdef _WIN32

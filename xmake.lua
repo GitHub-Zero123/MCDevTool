@@ -50,10 +50,12 @@ option("mcdk_enable_cli")
     set_description("Enable CLI for MCDK")
 option_end()
 
+
 if is_plat("windows") then
     add_cxflags("/utf-8", "/EHsc")
     add_defines("_CRT_SECURE_NO_WARNINGS")
     add_defines("_HAS_CXX23=1")
+    add_defines("UNICODE", "_UNICODE")
 end
 
 if is_plat("linux") then

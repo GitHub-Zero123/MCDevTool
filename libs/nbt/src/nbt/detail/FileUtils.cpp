@@ -21,15 +21,8 @@ namespace nbt::detail {
 
 void readFileMMap(std::filesystem::path const& path, std::string& content) {
 #ifdef _WIN32
-    HANDLE hFile = CreateFileA(
-        path.string().c_str(),
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        NULL,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
+    HANDLE hFile =
+        CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) { return; }
     DWORD size = GetFileSize(hFile, NULL);
     if (size == INVALID_FILE_SIZE) {

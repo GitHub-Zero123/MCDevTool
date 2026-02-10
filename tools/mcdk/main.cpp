@@ -31,6 +31,7 @@
 
 // mcdevtool api
 #include <mcdevtool/addon.h>
+#include <mcdevtool/utils.h>
 #include <mcdevtool/debug.h>
 #include <mcdevtool/env.h>
 #include <mcdevtool/level.h>
@@ -341,7 +342,7 @@ static void launchGameExe(
     auto neteaseConfig = userConfig.value("netease_config", nlohmann::json::object());
 
     // Build command
-    std::string cmd = "\"" + exePath.string() + "\"";
+    std::string cmd = "\"" + MCDevTool::Utils::pathToUtf8(exePath) + "\"";
     if (!neteaseConfig.value("chat_extension", false)) {
         cmd.append(" chatExtension=false");
     }
@@ -523,7 +524,7 @@ static void startGame(const nlohmann::json& config) {
     if (!std::filesystem::is_regular_file(gameExePath)) {
         // 游戏exe路径无效 重新搜索新版
         if (mcdk::updateGamePath(gameExePath)) {
-            std::cout << "游戏路径无效，重新搜索：" << gameExePath.generic_string() << "\n";
+            std::cout << "游戏路径无效，重新搜索：" << MCDevTool::Utils::pathToGenericUtf8(gameExePath) << "\n";
             std::string u8input;
             std::cout << "是否更新配置文件中的游戏路径？(y/n)：";
             std::getline(std::cin, u8input);
@@ -640,7 +641,8 @@ static void startGame(const nlohmann::json& config) {
          }},
     };
 
-    auto defaultSkinPath = (gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png").generic_string();
+    auto defaultSkinPath =
+        MCDevTool::Utils::pathToGenericUtf8(gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png");
 
     if (config.contains("skin_info") && config["skin_info"].is_object()) {
         // 用户自定义skin_info
@@ -669,7 +671,7 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
     configFile.close();
-    launchGameExe(gameExePath, configPath.generic_string(), config, &modDirConfigs);
+    launchGameExe(gameExePath, MCDevTool::Utils::pathToGenericUtf8(configPath), config, &modDirConfigs);
 }
 
 #ifdef MCDK_ENABLE_CLI

@@ -183,7 +183,7 @@ namespace MCDevTool {
         uint64_t                             latestVersionNum = 0;
         for (const auto& entry : std::filesystem::directory_iterator(gamePath.value())) {
             if (entry.is_directory()) {
-                std::string folderName = entry.path().filename().string();
+                std::string folderName = Utils::pathToUtf8(entry.path().filename());
                 // 文件夹版本号解析
                 MCDevTool::Utils::Version ver{folderName};
                 if (!ver) {
@@ -239,7 +239,7 @@ namespace MCDevTool {
             normalizeUUIDString(uuid);
             auto destPath = getBehaviorPacksPath() / uuid;
             if (!CREATE_JUNCTION(sourceDir, destPath)) {
-                std::cerr << "行为包软链接创建失败: " << sourceDir.filename().string() << "\n";
+                std::cerr << "行为包软链接创建失败: " << Utils::pathToUtf8(sourceDir.filename()) << "\n";
             } else {
                 info.path = destPath;
             }
@@ -248,7 +248,7 @@ namespace MCDevTool {
             normalizeUUIDString(uuid);
             auto destPath = getResourcePacksPath() / uuid;
             if (!CREATE_JUNCTION(sourceDir, destPath)) {
-                std::cerr << "资源包软链接创建失败: " << sourceDir.filename().string() << "\n";
+                std::cerr << "资源包软链接创建失败: " << Utils::pathToUtf8(sourceDir.filename()) << "\n";
             } else {
                 info.path = destPath;
             }

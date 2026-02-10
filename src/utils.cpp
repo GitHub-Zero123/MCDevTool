@@ -116,4 +116,17 @@ namespace MCDevTool::Utils {
         rawUUID.erase(std::remove(rawUUID.begin(), rawUUID.end(), '-'), rawUUID.end());
         return rawUUID;
     }
+
+
+    // 将 std::filesystem::path 安全转换为 UTF-8 std::string（避免 ANSI 代码页映射失败）
+    std::string pathToUtf8(const std::filesystem::path& p) {
+        auto u8s = p.u8string();
+        return std::string(u8s.begin(), u8s.end());
+    }
+
+    // 将 std::filesystem::path 安全转换为 UTF-8 generic（正斜杠）std::string
+    std::string pathToGenericUtf8(const std::filesystem::path& p) {
+        auto u8s = p.generic_u8string();
+        return std::string(u8s.begin(), u8s.end());
+    }
 } // namespace MCDevTool::Utils
