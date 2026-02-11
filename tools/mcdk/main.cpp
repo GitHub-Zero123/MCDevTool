@@ -484,7 +484,7 @@ static void launchGameExe(
         std::cout << "[HotReload] 追踪目录列表：\n";
         for (const auto& modDirConfig : *modDirList) {
             if (modDirConfig.hotReload) {
-                std::cout << "  -> " << modDirConfig.getAbsoluteU8String() << "\n";
+                std::cout << "  └── " << modDirConfig.getAbsoluteU8String() << "\n";
             }
         }
         reloadTask.setModDirs(UserModDirConfig::toPathList(*modDirList));

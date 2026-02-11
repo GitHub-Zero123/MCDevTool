@@ -13,9 +13,13 @@ namespace mcdk {
     public:
         std::filesystem::path path;
         bool                  hotReload = false;
+        bool                  enabled   = true;
 
         UserModDirConfig() = default;
-        explicit UserModDirConfig(const std::filesystem::path& p, bool hr) : path(p), hotReload(hr) {}
+        explicit UserModDirConfig(const std::filesystem::path& p, bool hotReload, bool enabled)
+        : path(p),
+          hotReload(hotReload),
+          enabled(enabled) {}
 
         // 获取基于工作区的绝对路径
         std::filesystem::path getAbsolutePath() const {
@@ -46,6 +50,7 @@ namespace mcdk {
             } else if (j.is_object()) {
                 config.path      = std::filesystem::u8path(j.value("path", "./"));
                 config.hotReload = j.value("hot_reload", true);
+                config.enabled   = j.value("enabled", true);
             } else {
                 throw std::runtime_error("Invalid mod directory configuration format.");
             }
@@ -59,7 +64,11 @@ namespace mcdk {
                 throw std::runtime_error("Mod directories configuration should be an array.");
             }
             for (const auto& item : jArray) {
-                configs.push_back(parseFromJson(item));
+                auto data = parseFromJson(item);
+                if (data.enabled) {
+                    // 仅针对启用的目录添加到列表中
+                    configs.push_back(std::move(data));
+                }
             }
             return configs;
         }
@@ -68,7 +77,7 @@ namespace mcdk {
         static std::vector<UserModDirConfig> fromStringList(const std::vector<std::string>& u8Paths) {
             std::vector<UserModDirConfig> configs;
             for (const auto& u8Path : u8Paths) {
-                configs.emplace_back(std::filesystem::u8path(u8Path), true);
+                configs.emplace_back(std::filesystem::u8path(u8Path), true, true);
             }
             return configs;
         }

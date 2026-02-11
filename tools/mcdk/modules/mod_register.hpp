@@ -97,7 +97,7 @@ namespace mcdk {
                 if (info.type == Addon::PackType::BEHAVIOR) {
                     std::cout << "[MCDK] LINK行为包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
                     if (modConfig.hotReload) {
-                        std::cout << "  -> 热更新标记追踪\n";
+                        std::cout << "  └── 热更新标记追踪\n";
                         if (updateConfigPaths) {
                             modConfig.path = info.path; // 重新更新为link后的路径
                         }
