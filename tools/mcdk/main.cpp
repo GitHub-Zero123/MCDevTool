@@ -539,18 +539,21 @@ static void startGame(const nlohmann::json& config) {
         }
     }
 
-    if (mcdk::getEnvIsSubprocessMode()) {
-        // 子进程模式 直接启动游戏exe（通常由vsc插件多开使用）
-        launchGameExe(gameExePath, "", config, nullptr);
-        return;
-    }
+    auto _isSubprocessMode = mcdk::getEnvIsSubprocessMode();
 
-    MCDevTool::cleanRuntimePacks();
-    std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
+    if (!_isSubprocessMode) {
+        MCDevTool::cleanRuntimePacks();
+    }
 
     auto modDirConfigs =
         UserModDirConfig::parseListFromJson(config.value("included_mod_dirs", nlohmann::json::array({"./"})));
 
+    if (_isSubprocessMode) {
+        // 子进程模式 直接启动游戏exe（通常由vsc插件多开使用）
+        launchGameExe(gameExePath, "", config, &modDirConfigs);
+        return;
+    }
+    std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
     if (config.value("include_debug_mod", true)) {
         auto debugMod = mcdk::registerDebugMod(config, modDirConfigs);
         std::cout << "[MCDK] 已注册调试MOD：" << debugMod.uuid << "\n";
