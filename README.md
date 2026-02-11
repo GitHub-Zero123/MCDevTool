@@ -84,13 +84,13 @@
 ```
 
 ## 在pycharm中使用
-
+> 注：PyCharm并非该项目主推的IDE，推荐使用`vscode`进行Mod开发与调试。
 1. 点击菜单栏中的 `Run → Edit Configurations`
 2. 打开`创建 Run Configuration`
 3. 创建新的配置项
 4. 配置`Shell Script`执行`mcdk`
 
-## 在pycharm中调试
+<!-- ## 在pycharm中调试
 
 > 注：mcdbg后端基于微软的`DAP`协议，**pycharm**仅**专业版**支持`DAP`远程调试，社区版用户请使用**vscode**进行断点调试。
 
@@ -98,7 +98,7 @@
 
 - [远程调试配置指南](https://www.jetbrains.com.cn/help/pycharm/remote-debugging-with-product.html)
 - [附加到DAP](https://www.jetbrains.com/zh-cn/help/pycharm/run-debug-configuration-attach-to-dap.html)
-
+ -->
 
 ## mcdev.json 配置参数
 MCDEV配置文件，若不存在字段将以此处默认值为基准。
