@@ -205,6 +205,45 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 }
 ```
 
+## MCP客户端配置
+
+支持标准MCP客户端接入，以下配置以 `Roo Code` 为例。
+
+```jsonc
+{
+    // Roo Code MCP Settings
+    "mcpServers": {
+        "minecraft_be_mcdk": {
+            "url": "http://localhost:19133/sse",
+            "name": "Minecraft(BE) MCP Server(MCDK)"
+        }
+    }
+}
+```
+
+### VSCode（Copilot）
+
+VSCode 暂不支持直接连接 SSE，需通过 `mcp-remote` 桥接，配置在 [`.vscode/mcp.json`](.vscode/mcp.json)：
+
+```jsonc
+{
+    "servers": {
+        "minecraft_be_mcdk": {
+            // 依赖nodejs环境
+            "command": "npx",
+            "args": [
+                "mcp-remote",
+                "http://localhost:19133/sse",
+                "--transport",
+                "sse-only"
+            ]
+        }
+    }
+}
+```
+
+> MCP 服务器随 `MCDK/MC` 一起启停，游戏关闭后需重新连接。各客户端对自动重连的支持情况不同，请自行测试。
+
 ## 第三方依赖
 | 库名 | 用途 | 备注 |
 |-----|------|------|
