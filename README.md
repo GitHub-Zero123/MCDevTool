@@ -195,7 +195,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     },
     // MCP服务器配置项
     "mcp_server_config": {
-        "enabled": false,   // 是否启用MCP服务器功能
+        // 是否启用MCP服务器功能
+        "enabled": false,
         // 服务器IP地址
         "server_ip": "localhost",
         // 服务器端口
