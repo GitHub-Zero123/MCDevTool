@@ -418,6 +418,7 @@ static void launchGameExe(
     DWORD pid = pi.dwProcessId;
     // 设置样式处理器PID
     styleProcessor.setPid(pid);
+    mcpServer.setMinecraftProcessId(pid);
 
     // 父进程不需要写端
     CloseHandle(outWrite);

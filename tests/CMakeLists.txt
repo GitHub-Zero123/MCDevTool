@@ -16,3 +16,7 @@ target_compile_features(test3 PRIVATE cxx_std_23)
 add_executable(mcp_server_test mcp_server_test.cpp)
 target_compile_features(mcp_server_test PRIVATE cxx_std_23)
 target_link_libraries(mcp_server_test PRIVATE mcdevtool mcp)
+
+add_executable(captureTest captureTest.cpp)
+target_compile_features(captureTest PRIVATE cxx_std_23)
+target_link_libraries(captureTest PRIVATE mcdevtool)

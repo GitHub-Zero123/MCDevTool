@@ -48,4 +48,10 @@ namespace MCDevTool::Style {
         std::optional<std::thread> mThread;
         std::atomic<bool>          mStopFlag = false;
     };
+
+    // 根据指定pid获取窗口内的画面信息 返回压缩480p的jpg数据
+    std::optional<std::vector<uint8_t>> captureMinecraftWindow480p(int pid);
+
+    // 根据指定pid点击窗口画面的指定坐标（百分比为单位确保适配不同分辨率）点击坐标为(0.0-1.0, 0.0-1.0)
+    bool clickMinecraftWindowAt(int pid, double xPercent, double yPercent);
 } // namespace MCDevTool::Style

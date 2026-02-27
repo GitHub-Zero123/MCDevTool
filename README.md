@@ -196,6 +196,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     // MCP服务器配置项
     "mcp_server_config": {
         // 是否启用MCP服务器功能
+        // 该MCP提供：日志查询，代码执行，画面捕获，自动化操作 等一系列功能。
         "enabled": false,
         // 服务器IP地址
         "server_ip": "localhost",

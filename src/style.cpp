@@ -10,9 +10,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dwmapi.h>
+#include <objidl.h>
+#include <gdiplus.h>
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "gdiplus.lib")
 #endif
 #include <iostream>
+#include <memory>
 
 namespace MCDevTool::Style {
 #ifdef _WIN32
@@ -281,5 +285,296 @@ namespace MCDevTool::Style {
             mThread->join();
             mThread.reset();
         }
+    }
+
+    // 根据指定pid获取窗口内的画面信息 返回压缩480p的jpg数据
+    std::optional<std::vector<uint8_t>> captureMinecraftWindow480p(int pid) {
+#ifdef _WIN32
+        // 延迟初始化 GDI+ (线程安全, 仅一次)
+        static ULONG_PTR s_gdipToken = []() {
+            ULONG_PTR                    token = 0;
+            Gdiplus::GdiplusStartupInput input;
+            Gdiplus::GdiplusStartup(&token, &input, nullptr);
+            return token;
+        }();
+        (void)s_gdipToken;
+
+        // 查找 Minecraft 窗口
+        static const std::wstring keyword = L"Minecraft";
+        HWND                      hwnd    = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
+        if (!hwnd || IsIconic(hwnd)) {
+            return std::nullopt; // 窗口不存在或最小化
+        }
+
+        // ---- 临时切换到 Per-Monitor DPI 感知，获取物理像素尺寸 ----
+        // 避免 DPI 虚拟化导致 GetWindowRect/GetClientRect 返回缩放后的逻辑坐标
+        using SetThreadDpiAwarenessContext_t      = DPI_AWARENESS_CONTEXT(WINAPI*)(DPI_AWARENESS_CONTEXT);
+        SetThreadDpiAwarenessContext_t pSetDpiCtx = nullptr;
+        DPI_AWARENESS_CONTEXT          oldDpiCtx  = nullptr;
+
+        if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+            pSetDpiCtx = reinterpret_cast<SetThreadDpiAwarenessContext_t>(
+                GetProcAddress(user32, "SetThreadDpiAwarenessContext")
+            );
+        }
+        if (pSetDpiCtx) {
+            oldDpiCtx = pSetDpiCtx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+
+        // 获取客户区尺寸（物理像素）
+        RECT clientRect{};
+        if (!GetClientRect(hwnd, &clientRect)) {
+            if (pSetDpiCtx && oldDpiCtx) pSetDpiCtx(oldDpiCtx);
+            return std::nullopt;
+        }
+        int srcW = clientRect.right;
+        int srcH = clientRect.bottom;
+        if (srcW <= 0 || srcH <= 0) {
+            if (pSetDpiCtx && oldDpiCtx) pSetDpiCtx(oldDpiCtx);
+            return std::nullopt;
+        }
+
+        // 获取窗口整体尺寸（物理像素, PrintWindow 需要）
+        RECT windowRect{};
+        GetWindowRect(hwnd, &windowRect);
+        int winW = windowRect.right - windowRect.left;
+        int winH = windowRect.bottom - windowRect.top;
+
+        // 计算客户区在窗口中的偏移（物理像素）
+        POINT clientOrigin = {0, 0};
+        ClientToScreen(hwnd, &clientOrigin);
+        int offsetX = clientOrigin.x - windowRect.left;
+        int offsetY = clientOrigin.y - windowRect.top;
+
+        // 恢复原 DPI 感知上下文
+        if (pSetDpiCtx && oldDpiCtx) {
+            pSetDpiCtx(oldDpiCtx);
+        }
+
+        // --- 使用屏幕 DC 以确保位图使用物理像素分辨率 ---
+        HDC hdcScreen = GetDC(nullptr);
+        if (!hdcScreen) return std::nullopt;
+
+        // 1. 捕获整个窗口（物理像素尺寸）
+        HDC     hdcCapture = CreateCompatibleDC(hdcScreen);
+        HBITMAP hCapBmp    = CreateCompatibleBitmap(hdcScreen, winW, winH);
+        HGDIOBJ hOldCap    = SelectObject(hdcCapture, hCapBmp);
+
+        // PrintWindow: PW_RENDERFULLCONTENT(0x02) 支持窗口被遮挡时也能捕获
+        if (!PrintWindow(hwnd, hdcCapture, 0x02)) {
+            // 回退到 BitBlt（窗口被遮挡时可能无法获取完整画面）
+            HDC hdcWindow = GetDC(hwnd);
+            if (hdcWindow) {
+                BitBlt(hdcCapture, 0, 0, winW, winH, hdcWindow, 0, 0, SRCCOPY);
+                ReleaseDC(hwnd, hdcWindow);
+            }
+        }
+
+        // 2. 计算目标 480p 尺寸 (基于客户区保持宽高比)
+        constexpr int TARGET_H = 480;
+        int           dstW, dstH;
+        if (srcH <= TARGET_H) {
+            dstW = srcW;
+            dstH = srcH;
+        } else {
+            double scale = static_cast<double>(TARGET_H) / srcH;
+            dstW         = static_cast<int>(srcW * scale + 0.5);
+            dstH         = TARGET_H;
+        }
+
+        // 3. 从捕获位图中裁剪客户区 -> 缩放到目标尺寸
+        HDC     hdcScaled = CreateCompatibleDC(hdcScreen);
+        HBITMAP hScaleBmp = CreateCompatibleBitmap(hdcScreen, dstW, dstH);
+        HGDIOBJ hOldScale = SelectObject(hdcScaled, hScaleBmp);
+
+        SetStretchBltMode(hdcScaled, HALFTONE);
+        SetBrushOrgEx(hdcScaled, 0, 0, nullptr);
+        StretchBlt(hdcScaled, 0, 0, dstW, dstH, hdcCapture, offsetX, offsetY, srcW, srcH, SRCCOPY);
+
+        // GDI+ Bitmap 从 HBITMAP 构建
+        Gdiplus::Bitmap bitmap(hScaleBmp, nullptr);
+
+        // 查找 JPEG 编码器 CLSID
+        CLSID jpegClsid{};
+        bool  foundEncoder = false;
+        {
+            UINT num = 0, size = 0;
+            Gdiplus::GetImageEncodersSize(&num, &size);
+            if (size > 0) {
+                auto buf    = std::make_unique<uint8_t[]>(size);
+                auto codecs = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buf.get());
+                Gdiplus::GetImageEncoders(num, size, codecs);
+                for (UINT i = 0; i < num; i++) {
+                    if (wcscmp(codecs[i].MimeType, L"image/jpeg") == 0) {
+                        jpegClsid    = codecs[i].Clsid;
+                        foundEncoder = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        std::optional<std::vector<uint8_t>> result = std::nullopt;
+
+        if (foundEncoder) {
+            // JPEG 质量参数
+            Gdiplus::EncoderParameters params;
+            ULONG                      quality = 75;
+            params.Count                       = 1;
+            params.Parameter[0].Guid           = Gdiplus::EncoderQuality;
+            params.Parameter[0].Type           = Gdiplus::EncoderParameterValueTypeLong;
+            params.Parameter[0].NumberOfValues = 1;
+            params.Parameter[0].Value          = &quality;
+
+            // 编码到内存流
+            IStream* pStream = nullptr;
+            if (SUCCEEDED(CreateStreamOnHGlobal(nullptr, TRUE, &pStream)) && pStream) {
+                if (bitmap.Save(pStream, &jpegClsid, &params) == Gdiplus::Ok) {
+                    // 读取流数据
+                    STATSTG stat{};
+                    pStream->Stat(&stat, STATFLAG_NONAME);
+                    ULONG dataSize = static_cast<ULONG>(stat.cbSize.QuadPart);
+                    if (dataSize > 0) {
+                        std::vector<uint8_t> jpegData(dataSize);
+                        LARGE_INTEGER        li{};
+                        pStream->Seek(li, STREAM_SEEK_SET, nullptr);
+                        ULONG bytesRead = 0;
+                        pStream->Read(jpegData.data(), dataSize, &bytesRead);
+                        result = std::move(jpegData);
+                    }
+                }
+                pStream->Release();
+            }
+        }
+
+        // 清理 GDI 资源
+        SelectObject(hdcCapture, hOldCap);
+        DeleteObject(hCapBmp);
+        DeleteDC(hdcCapture);
+        SelectObject(hdcScaled, hOldScale);
+        DeleteObject(hScaleBmp);
+        DeleteDC(hdcScaled);
+        ReleaseDC(nullptr, hdcScreen);
+
+        return result;
+#else
+        (void)pid;
+        return std::nullopt;
+#endif
+    }
+
+    // 根据指定pid点击窗口画面的指定坐标（百分比为单位确保适配不同分辨率）点击坐标为(0.0-1.0, 0.0-1.0)
+    bool clickMinecraftWindowAt(int pid, double xPercent, double yPercent) {
+#ifdef _WIN32
+        if (xPercent < 0.0 || xPercent > 1.0 || yPercent < 0.0 || yPercent > 1.0) {
+            return false;
+        }
+
+        // 查找 Minecraft 窗口
+        static const std::wstring keyword = L"Minecraft";
+        HWND                      hwnd    = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
+        if (!hwnd) {
+            return false;
+        }
+
+        // 如果窗口最小化则先还原
+        if (IsIconic(hwnd)) {
+            ShowWindow(hwnd, SW_RESTORE);
+            Sleep(100);
+        }
+
+        // 强制将窗口拉到前台（SendInput 只对前台窗口有效）
+        {
+            DWORD foreThread   = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+            DWORD targetThread = GetWindowThreadProcessId(hwnd, nullptr);
+            if (foreThread != targetThread) {
+                AttachThreadInput(foreThread, targetThread, TRUE);
+                SetForegroundWindow(hwnd);
+                BringWindowToTop(hwnd);
+                AttachThreadInput(foreThread, targetThread, FALSE);
+            } else {
+                SetForegroundWindow(hwnd);
+            }
+            // 等待窗口实际到达前台
+            for (int i = 0; i < 20; ++i) {
+                if (GetForegroundWindow() == hwnd) break;
+                Sleep(10);
+            }
+        }
+
+        // 临时切换 DPI 感知，获取物理像素客户区尺寸（与 captureMinecraftWindow480p 一致）
+        using SetThreadDpiAwarenessContext_t      = DPI_AWARENESS_CONTEXT(WINAPI*)(DPI_AWARENESS_CONTEXT);
+        SetThreadDpiAwarenessContext_t pSetDpiCtx = nullptr;
+        DPI_AWARENESS_CONTEXT          oldDpiCtx  = nullptr;
+
+        if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+            pSetDpiCtx = reinterpret_cast<SetThreadDpiAwarenessContext_t>(
+                GetProcAddress(user32, "SetThreadDpiAwarenessContext")
+            );
+        }
+        if (pSetDpiCtx) {
+            oldDpiCtx = pSetDpiCtx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+
+        // 获取客户区物理像素尺寸
+        RECT clientRect{};
+        if (!GetClientRect(hwnd, &clientRect)) {
+            if (pSetDpiCtx && oldDpiCtx) pSetDpiCtx(oldDpiCtx);
+            return false;
+        }
+        int clientW = clientRect.right;
+        int clientH = clientRect.bottom;
+
+        // 百分比 -> 客户区物理像素坐标
+        int clickX = static_cast<int>(xPercent * clientW + 0.5);
+        int clickY = static_cast<int>(yPercent * clientH + 0.5);
+
+        // 转换为屏幕坐标（用于 SendInput）
+        POINT screenPt = {clickX, clickY};
+        ClientToScreen(hwnd, &screenPt);
+
+        // 获取屏幕物理分辨率（必须在 DPI 感知模式内获取，与 screenPt 坐标系一致）
+        int screenW = GetSystemMetrics(SM_CXSCREEN);
+        int screenH = GetSystemMetrics(SM_CYSCREEN);
+
+        // 恢复原 DPI 感知上下文
+        if (pSetDpiCtx && oldDpiCtx) {
+            pSetDpiCtx(oldDpiCtx);
+        }
+
+        if (screenW <= 0 || screenH <= 0) return false;
+
+        // SendInput 使用 0~65535 归一化坐标
+        LONG normX = static_cast<LONG>((screenPt.x * 65535LL + screenW / 2) / screenW);
+        LONG normY = static_cast<LONG>((screenPt.y * 65535LL + screenH / 2) / screenH);
+
+        INPUT inputs[3] = {};
+
+        // 1. 移动鼠标到目标位置
+        inputs[0].type       = INPUT_MOUSE;
+        inputs[0].mi.dx      = normX;
+        inputs[0].mi.dy      = normY;
+        inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+
+        // 2. 鼠标左键按下
+        inputs[1].type       = INPUT_MOUSE;
+        inputs[1].mi.dx      = normX;
+        inputs[1].mi.dy      = normY;
+        inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN;
+
+        // 3. 鼠标左键松开
+        inputs[2].type       = INPUT_MOUSE;
+        inputs[2].mi.dx      = normX;
+        inputs[2].mi.dy      = normY;
+        inputs[2].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
+
+        UINT sent = SendInput(3, inputs, sizeof(INPUT));
+        return sent == 3;
+#else
+        (void)pid;
+        (void)xPercent;
+        (void)yPercent;
+        return false;
+#endif
     }
 } // namespace MCDevTool::Style

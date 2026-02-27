@@ -447,6 +447,9 @@ namespace mcp {
                     // If it also has "structuredContent", include that too
                     if (raw_result.is_object() && raw_result.contains("content")) {
                         tool_result["content"] = raw_result["content"];
+                        if (raw_result.contains("isError")) {
+                            tool_result["isError"] = raw_result["isError"];
+                        }
                         if (raw_result.contains("structuredContent")) {
                             tool_result["structuredContent"] = raw_result["structuredContent"];
                         }

@@ -7,6 +7,8 @@
 #include "./log_buffer.hpp"
 #include <nlohmann/json.hpp>
 #include <mcp_server.h>
+#include <base64.hpp>
+#include <mcdevtool/style.h>
 
 namespace mcdk {
 
@@ -42,6 +44,7 @@ namespace mcdk {
         std::shared_ptr<mcp::server> server;             // MCP服务器实例
         CodeExecuteHandler           codeExecuteHandler; // 代码执行处理器
         SimpleHandler                reloadGameHandler;  // 重载游戏处理器
+        int                          mcPid = 0;          // 存储Minecraft进程ID以供后续使用
 
     public:
         MCPServer(const McpServerConfig& cfg) : config(cfg) {}
@@ -50,6 +53,7 @@ namespace mcdk {
         void setLogBuffer(std::shared_ptr<LogBuffer> buffer) { logBuffer = std::move(buffer); }
         void setCodeExecuteHandler(CodeExecuteHandler handler) { codeExecuteHandler = std::move(handler); }
         void setReloadGameHandler(SimpleHandler handler) { reloadGameHandler = std::move(handler); }
+        void setMinecraftProcessId(int pid) { mcPid = pid; }
 
         static nlohmann::json _logVectorToJson(const std::vector<std::string>& logVector) {
             nlohmann::json jsonArray = nlohmann::json::array();
@@ -228,6 +232,144 @@ Parameters:
             );
         }
 
+        // 初始化游戏窗口工具（如获取画面，模拟点击）
+        void initGameWindowTools() {
+            // 截图工具：捕获游戏窗口画面，返回 480p JPEG base64 图片
+            mcp::tool captureTool = mcp::tool_builder("capture_game_window")
+                                        .with_description(
+                                            "Captures the current Minecraft game window as a 480p JPEG screenshot. "
+                                            "Returns the image as base64-encoded JPEG data. "
+                                            "Use this to observe the current game state visually."
+                                        )
+                                        .with_read_only_hint(true)
+                                        .build();
+
+            server->register_tool(
+                captureTool,
+                [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
+                    if (mcPid <= 0) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array(
+                                 {{{"type", "text"},
+                                   {"text", "Game process ID not set. The game window does not exist."}}}
+                             )}
+                        };
+                    }
+
+                    auto result = MCDevTool::Style::captureMinecraftWindow480p(mcPid);
+                    if (!result.has_value() || result->empty()) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array(
+                                 {{{"type", "text"},
+                                   {"text",
+                                    "Failed to capture game window. "
+                                    "The game window does not exist or is minimized."}}}
+                             )}
+                        };
+                    }
+
+                    // 将 JPEG 数据编码为 base64
+                    std::string b64 = base64::encode(reinterpret_cast<const char*>(result->data()), result->size());
+
+                    return nlohmann::json{
+                        {"isError", false},
+                        {"content",
+                         nlohmann::json::array(
+                             {{{"type", "image"}, {"data", b64}, {"mimeType", "image/jpeg"}}}
+                         )}
+                    };
+                }
+            );
+
+            // 点击工具：模拟点击游戏窗口指定位置
+            mcp::tool clickTool =
+                mcp::tool_builder("click_game_window")
+                    .with_description(
+                        R"(Simulates a left mouse click at a specific position on the Minecraft game window.
+
+Coordinates are percentage-based (0.0 to 1.0) relative to the client area:
+- (0.0, 0.0) = top-left corner
+- (0.5, 0.5) = center
+- (1.0, 1.0) = bottom-right corner
+
+The coordinate system matches the capture_game_window screenshot exactly.
+The game window will be brought to the foreground automatically before clicking.
+
+Parameters:
+- x: Horizontal position as a percentage (0.0-1.0)
+- y: Vertical position as a percentage (0.0-1.0))"
+                    )
+                    .with_number_param("x", "Horizontal position (0.0=left, 1.0=right)", true)
+                    .with_number_param("y", "Vertical position (0.0=top, 1.0=bottom)", true)
+                    .with_read_only_hint(false)
+                    .build();
+
+            server->register_tool(
+                clickTool,
+                [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
+                    if (mcPid <= 0) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array(
+                                 {{{"type", "text"},
+                                   {"text", "Game process ID not set. The game window does not exist."}}}
+                             )}
+                        };
+                    }
+
+                    double x = params.value("x", -1.0);
+                    double y = params.value("y", -1.0);
+
+                    if (x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array(
+                                 {{{"type", "text"},
+                                   {"text", "Invalid coordinates. x and y must be between 0.0 and 1.0."}}}
+                             )}
+                        };
+                    }
+
+                    bool success = MCDevTool::Style::clickMinecraftWindowAt(mcPid, x, y);
+                    if (!success) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array(
+                                 {{{"type", "text"},
+                                   {"text",
+                                    "Failed to click on game window. "
+                                    "The game window does not exist or is minimized."}}}
+                             )}
+                        };
+                    }
+
+                    return nlohmann::json{                        {"isError", false},                        {"content",
+                         nlohmann::json::array(
+                             {{{"type", "text"},
+                               {"text",
+                                "Click performed at (" + std::to_string(x) + ", " + std::to_string(y)
+                                    + "). Use capture_game_window to verify the result."}}}
+                         )}
+                    };
+                }
+            );
+        }
+
+        // 初始化所有工具
+        void initTools() {
+            initLogTool();
+            initCodeExecutionTool();
+            initGameTools();
+            initGameWindowTools();
+        }
+
         // 启动MCP服务器
         void start() {
             if (!config.enabled || server.get() != nullptr) {
@@ -237,11 +379,9 @@ Parameters:
             srv_conf.host = config.serverIp;
             srv_conf.port = config.serverPort;
             server        = std::make_shared<mcp::server>(srv_conf);
-            server->set_server_info("Mineraft(BE) MCP Server(MCDK)", "0.1.0");
+            server->set_server_info("Minecraft(BE) MCP Server(MCDK)", "0.1.0");
             // 注册API
-            initLogTool();
-            initCodeExecutionTool();
-            initGameTools();
+            initTools();
             server->start(false); // 非阻塞启动
         }
 
