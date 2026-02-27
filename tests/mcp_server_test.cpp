@@ -22,7 +22,7 @@ static nlohmann::json hello_handler(const json& params, const std::string& /* se
 static nlohmann::json greet_handler(const json& params, const std::string& /* session_id */) {
     std::string name = params.value("name", "World");
     std::string lang = params.value("lang", "en");
-    
+
     std::string greeting;
     if (lang == "zh") greeting = "你好, " + name + "!";
     else if (lang == "ja") greeting = "こんにちは, " + name + "!";
@@ -42,8 +42,8 @@ int main() {
     srv_conf.host = "localhost";
     srv_conf.port = 11451;
     // Streamable HTTP on /mcp (2025-03-26), legacy SSE also enabled
-    srv_conf.streamable_endpoint = "/mcp";
-    srv_conf.enable_legacy_sse = true;
+    // srv_conf.streamable_endpoint = "/mcp";
+    // srv_conf.enable_legacy_sse = true;
 
     mcp::server server(srv_conf);
     server.set_server_info("Mineraft(BE) MCP Server(MCDK)", "0.1.0");
@@ -52,27 +52,27 @@ int main() {
     mcp::tool hello_tool = mcp::tool_builder("hello")
                                .with_description("Say hello")
                                .with_string_param("name", "Name to greet", false)
-                               .with_read_only_hint(true)     // 2025-03-26 annotation
+                               .with_read_only_hint(true) // 2025-03-26 annotation
                                .build();
 
     server.register_tool(hello_tool, hello_handler);
 
     // Register greet tool with 2025-03-26 features
-    mcp::tool greet_tool = mcp::tool_builder("greet")
-                               .with_description("Greet in multiple languages")
-                               .with_title("Multilingual Greeter")      // 2025-03-26
-                               .with_string_param("name", "Name to greet", true)
-                               .with_string_param("lang", "Language code (en/zh/ja)", false)
-                               .with_read_only_hint(true)               // 2025-03-26
-                               .with_idempotent_hint(true)              // 2025-03-26
-                               .with_output_schema({                    // 2025-03-26 structured output
-                                   {"type", "object"},
-                                   {"properties", {
-                                       {"greeting", {{"type", "string"}}},
-                                       {"language", {{"type", "string"}}}
-                                   }}
-                               })
-                               .build();
+    mcp::tool greet_tool =
+        mcp::tool_builder("greet")
+            .with_description("Greet in multiple languages")
+            .with_title("Multilingual Greeter") // 2025-03-26
+            .with_string_param("name", "Name to greet", true)
+            .with_string_param("lang", "Language code (en/zh/ja)", false)
+            .with_read_only_hint(true)  // 2025-03-26
+            .with_idempotent_hint(true) // 2025-03-26
+            .with_output_schema(
+                {// 2025-03-26 structured output
+                 {"type", "object"},
+                 {"properties", {{"greeting", {{"type", "string"}}}, {"language", {{"type", "string"}}}}}
+                }
+            )
+            .build();
 
     server.register_tool(greet_tool, greet_handler);
 

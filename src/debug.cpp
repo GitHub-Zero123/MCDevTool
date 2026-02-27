@@ -152,6 +152,8 @@ namespace MCDevTool::Debug {
 
     unsigned short DebugIPCServer::getPort() const { return mPort; }
 
+    size_t DebugIPCServer::getClientCount() const { return mClients.size(); }
+
     std::atomic<bool>* DebugIPCServer::getStopFlag() { return &mStopFlag; }
 
     void DebugIPCServer::join() {

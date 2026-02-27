@@ -32,7 +32,7 @@ namespace mcdk {
             buffer.clear();
         }
 
-        // 获取最大数量的最新日志
+        // 获取最大数量的最新日志 默认排序（由旧到新）
         std::vector<std::string> getLatest(size_t maxCount) {
             std::lock_guard<std::mutex> lock(mutex);
             if (maxCount >= buffer.size()) {
@@ -41,11 +41,13 @@ namespace mcdk {
             return std::vector<std::string>(buffer.end() - maxCount, buffer.end());
         }
 
-        // 获取最大数量的最新日志并反转顺序（最新的在前）
+        // 获取最大数量的最新日志并反转顺序（由新到旧排序）
         std::vector<std::string> getLatestReversed(size_t maxCount) {
             std::lock_guard<std::mutex> lock(mutex);
 
-            if (buffer.empty()) return {};
+            if (buffer.empty()) {
+                return {};
+            }
 
             size_t                   count = std::min(maxCount, buffer.size());
             std::vector<std::string> result(buffer.end() - count, buffer.end());
@@ -53,6 +55,25 @@ namespace mcdk {
             // 反转顺序
             std::reverse(result.begin(), result.end());
 
+            return result;
+        }
+
+        // 获取指定index到index2范围的日志行，默认排序
+        std::vector<std::string> getRange(size_t index, size_t index2) {
+            std::lock_guard<std::mutex> lock(mutex);
+
+            if (buffer.empty() || index >= buffer.size() || index2 > buffer.size() || index >= index2) {
+                return {};
+            }
+
+            return std::vector<std::string>(buffer.end() - index2, buffer.end() - index);
+        }
+
+        // 获取指定index到index2范围的最新日志行，由新到旧排序
+        std::vector<std::string> getRangeReversed(size_t index, size_t index2) {
+            auto result = getRange(index, index2);
+            // 反转顺序
+            std::reverse(result.begin(), result.end());
             return result;
         }
     };

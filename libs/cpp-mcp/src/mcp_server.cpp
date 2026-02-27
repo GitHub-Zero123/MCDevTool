@@ -70,6 +70,9 @@ namespace mcp {
         register_default("prompts/list", [](const json&, const std::string&) -> json {
             return json{{"prompts", json::array()}};
         });
+        register_default("tools/list", [](const json&, const std::string&) -> json {
+            return json{{"tools", json::array()}};
+        });
 
         // Setup CORS handling
         http_server_->Options(".*", [](const httplib::Request& req, httplib::Response& res) {

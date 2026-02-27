@@ -180,23 +180,4 @@ namespace mcdk {
         }
         return "debug_ip=" + config.ip + " debug_port=" + std::to_string(config.port);
     }
-
-    // MCP服务器配置结构
-    struct McpServerConfig {
-        bool        enabled    = false;
-        std::string serverIp   = "localhost";
-        int         serverPort = 19133;
-    };
-
-    // 从JSON获取MCP服务器配置
-    inline McpServerConfig getMcpServerConfigFromJson(const nlohmann::json& userConfig) {
-        McpServerConfig config;
-        auto            mcpJson = userConfig.value("mcp_server_config", nlohmann::json::object());
-        if (mcpJson.is_object()) {
-            config.enabled    = mcpJson.value("enabled", false);
-            config.serverIp   = mcpJson.value("server_ip", "localhost");
-            config.serverPort = mcpJson.value("server_port", 19133);
-        }
-        return config;
-    }
 } // namespace mcdk

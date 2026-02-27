@@ -99,10 +99,12 @@ namespace mcp {
                 break; // Red
             }
 
-            ss << color << "[MCP] [" << label << "]\033[0m "
-               << "\033[90m" << std::put_time(now_tm, "%Y-%m-%d %H:%M:%S") << " ";
+            // INFO: gray text; others: text color matches type color
+            const char* text_color = (level == log_level::info) ? "\033[90m" : color;
 
-            // Add log content (dark gray)
+            ss << color << "[MCP] [" << label << "]\033[0m " << text_color << std::put_time(now_tm, "%Y-%m-%d %H:%M:%S")
+               << " ";
+
             log_impl(ss, std::forward<Args>(args)...);
             ss << "\033[0m";
 

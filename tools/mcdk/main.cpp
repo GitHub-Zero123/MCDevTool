@@ -291,11 +291,33 @@ static void launchGameExe(
     auto mcpServerConfig = mcdk::getMcpServerConfigFromJson(userConfig);
     auto ipcServer       = MCDevTool::Debug::createDebugServer();
     auto logBuffer       = std::make_shared<mcdk::LogBuffer>(1000, 250);
+    auto mcpServer       = mcdk::MCPServer(mcpServerConfig);
     if (mcpServerConfig.enabled) {
         // 若启用MCP服务器将自动启用IPC调试功能
         autoHotReload = true;
         enableIPC     = true;
         needLogBuffer = true;
+        printColoredAtomic(
+            "[MCDK] MCP服务器已启用：" + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
+            ConsoleColor::Green
+        );
+        mcpServer.start();
+        mcpServer.setLogBuffer(logBuffer);
+        mcpServer.setCodeExecuteHandler([ipcServer](const std::string& code, bool isClient) -> bool {
+            if (ipcServer->getClientCount() == 0) {
+                return false; // 没有连接的客户端，无法执行
+            }
+            return ipcServer->sendMessage(
+                isClient ? 3 : 4, // 3 = CLIENT_CODE_EXECUTE, 4 = SERVER_CODE_EXECUTE
+                code
+            ); // CODE EXECUTE
+        });
+        mcpServer.setReloadGameHandler([ipcServer]() -> bool {
+            if (ipcServer->getClientCount() == 0) {
+                return false; // 没有连接的客户端，无法执行
+            }
+            return ipcServer->sendMessage(5); // GAME RELOAD
+        });
     }
     mcdk::ReloadWatcherTask  reloadTask;
     mcdk::UserStyleProcessor styleProcessor(0, userConfig);
@@ -519,6 +541,8 @@ static void launchGameExe(
     ipcServer->safeExit();
     // 停止样式处理器
     styleProcessor.safeExit();
+    // 安全的关闭MCP服务器(如果已启用)
+    mcpServer.stop();
 
     // 等待读线程退出并关闭读端句柄
     tOut.join();

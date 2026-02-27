@@ -30,10 +30,14 @@ namespace MCDevTool::Debug {
 
         std::thread* getThread();
 
+        // 发送消息到所有连接的客户端
         bool sendMessage(uint16_t messageType, std::string_view data);
         bool sendMessage(uint16_t messageType, const std::vector<uint8_t>& data);
         bool sendMessage(uint16_t messageType, const uint8_t* data, size_t length);
         bool sendMessage(uint16_t messageType);
+
+        // 获取链接的客户端数量
+        size_t getClientCount() const;
 
         std::atomic<bool>* getStopFlag();
 

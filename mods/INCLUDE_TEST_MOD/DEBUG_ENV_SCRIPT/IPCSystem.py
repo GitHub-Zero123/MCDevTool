@@ -125,6 +125,13 @@ def EXEC_SERVER_CODE(data):
         print("[SERVER_CODE] Executed successfully: " + str(eval(code)))
     _SR_GAME_COMP.AddTimer(0, _EXEC_CODE)
 
+def RELOAD_GAME(_=None):
+    def _RELOAD_GAME():
+        from .Game import RELOAD_WORLD
+        print("[RELOAD_GAME] Reloading the game...")
+        RELOAD_WORLD()
+    _CL_GAME_COMP.AddTimer(0, _RELOAD_GAME)
+
 _IPCSYSTEM = IPCSystem(GET_DEBUG_IPC_PORT())
 _IPCSYSTEM.updateHandlers(
     {
@@ -132,6 +139,7 @@ _IPCSYSTEM.updateHandlers(
         2: FAST_RELOAD,
         3: EXEC_CLIENT_CODE,
         4: EXEC_SERVER_CODE,
+        5: RELOAD_GAME,
     }
 )
 
