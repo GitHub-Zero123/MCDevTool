@@ -3,7 +3,7 @@
  * @brief Core definitions for the Model Context Protocol (MCP) framework
  *
  * This file contains the core structures and definitions for the MCP protocol.
- * Implements the 2024-11-05 basic protocol specification.
+ * Supports 2025-03-26 protocol specification with backward compatibility for 2024-11-05.
  */
 
 #ifndef MCP_MESSAGE_H
@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <algorithm>
 
 // Include the JSON library for parsing and generating JSON
 #include <nlohmann/json.hpp>
@@ -24,8 +25,39 @@ namespace mcp {
     // Use the nlohmann json library
     using json = nlohmann::ordered_json;
 
-    // MCP version
-    constexpr const char* MCP_VERSION = "2024-11-05";
+    // MCP protocol version constants
+    constexpr const char* MCP_VERSION            = "2025-03-26";
+    constexpr const char* MCP_VERSION_2025_03_26 = "2025-03-26";
+    constexpr const char* MCP_VERSION_2024_11_05 = "2024-11-05";
+
+    // Supported protocol versions (newest first)
+    inline const std::vector<std::string>& supported_versions() {
+        static const std::vector<std::string> versions = {MCP_VERSION_2025_03_26, MCP_VERSION_2024_11_05};
+        return versions;
+    }
+
+    // Check if a protocol version is supported
+    inline bool is_version_supported(const std::string& version) {
+        const auto& versions = supported_versions();
+        return std::find(versions.begin(), versions.end(), version) != versions.end();
+    }
+
+    // Negotiate the best protocol version
+    // Returns requested version if supported, otherwise the latest supported version
+    inline std::string negotiate_version(const std::string& requested) {
+        if (is_version_supported(requested)) {
+            return requested;
+        }
+        return supported_versions().front();
+    }
+
+    // Content types (2025-03-26 adds audio)
+    enum class content_type {
+        text,
+        image,
+        audio,   // New in 2025-03-26
+        resource // Embedded resource
+    };
 
     // MCP error codes (JSON-RPC 2.0 standard codes)
     enum class error_code {
