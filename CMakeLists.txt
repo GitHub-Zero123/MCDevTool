@@ -19,6 +19,8 @@ add_subdirectory(libs/nbt)
 # set(LIBUV_BUILD_SHARED OFF)
 # add_subdirectory(libs/libuv)
 # add_subdirectory(libs/uvw)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
+add_subdirectory(libs/cpp-mcp)
 
 add_library(mcdevtool OBJECT
     src/env.cpp
@@ -32,7 +34,8 @@ add_library(mcdevtool OBJECT
 target_compile_features(mcdevtool PRIVATE cxx_std_23)
 target_compile_definitions(mcdevtool PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
+
+# target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
 # target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nbt/include)
 target_link_libraries(mcdevtool PUBLIC NBT)
 
@@ -41,5 +44,6 @@ add_subdirectory(tools)
 
 # Test Executable
 if(MC_DEV_TOOL_BUILD_TEST)
+    message(STATUS "Building mcdevtool test executable")
     add_subdirectory(tests)
 endif()

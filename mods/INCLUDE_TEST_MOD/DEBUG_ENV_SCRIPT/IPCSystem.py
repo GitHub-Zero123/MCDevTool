@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import mod.server.extraServerApi as serverApi
 import mod.client.extraClientApi as clientApi
 from .Config import GET_DEBUG_IPC_PORT
 import socket
@@ -92,12 +93,13 @@ class IPCSystem:
             self.sock = None
         print("[IPCSystem] 连接已关闭")
 
-GAME_COMP = None
+_CL_GAME_COMP = None
+_SR_GAME_COMP = None
 
 def AUTO_RELOAD(_=None):
     from .Game import RELOAD_MOD
-    if GAME_COMP:
-        GAME_COMP.AddTimer(0, lambda: RELOAD_MOD())
+    if _CL_GAME_COMP:
+        _CL_GAME_COMP.AddTimer(0, lambda: RELOAD_MOD())
         return
 
 def FAST_RELOAD(data):
@@ -107,22 +109,40 @@ def FAST_RELOAD(data):
         for path in pathList:
             if RELOAD_ONCE_MODULE(path):
                 print("[FAST_RELOAD] Reloaded module successfully: \"" + path + "\"")
-    if GAME_COMP:
-        GAME_COMP.AddTimer(0, _FAST_RELOAD)
+    if _CL_GAME_COMP:
+        _CL_GAME_COMP.AddTimer(0, _FAST_RELOAD)
         return
+
+def EXEC_CLIENT_CODE(data):
+    code = compile(str(data), "<string>", "exec")
+    def _EXEC_CODE():
+        print("[CLIENT_CODE] Executed successfully: " + str(eval(code)))
+    _CL_GAME_COMP.AddTimer(0, _EXEC_CODE)
+
+def EXEC_SERVER_CODE(data):
+    code = compile(str(data), "<string>", "exec")
+    def _EXEC_CODE():
+        print("[SERVER_CODE] Executed successfully: " + str(eval(code)))
+    _SR_GAME_COMP.AddTimer(0, _EXEC_CODE)
 
 _IPCSYSTEM = IPCSystem(GET_DEBUG_IPC_PORT())
 _IPCSYSTEM.updateHandlers(
     {
         1: AUTO_RELOAD,
         2: FAST_RELOAD,
+        3: EXEC_CLIENT_CODE,
+        4: EXEC_SERVER_CODE,
     }
 )
 
 def ON_CLIENT_INIT():
-    global GAME_COMP
-    GAME_COMP = clientApi.GetEngineCompFactory().CreateGame(clientApi.GetLevelId())
+    global _CL_GAME_COMP
+    _CL_GAME_COMP = clientApi.GetEngineCompFactory().CreateGame(clientApi.GetLevelId())
     _IPCSYSTEM.start()
 
 def ON_CLIENT_EXIT():
     _IPCSYSTEM.close()
+
+def ON_SERVER_INIT():
+    global _SR_GAME_COMP
+    _SR_GAME_COMP = serverApi.GetEngineCompFactory().CreateGame(serverApi.GetLevelId())

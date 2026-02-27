@@ -78,6 +78,8 @@ def SERVER_INIT():
     from .QuModLibs.Systems.Loader.Server import LoaderSystem
 
     LoaderSystem.REG_DESTROY_CALL_FUNC(_DESTROY)
+    from . import IPCSystem
+    IPCSystem.ON_SERVER_INIT()
 
 
 def CLOnKeyPressInGame(args={}):

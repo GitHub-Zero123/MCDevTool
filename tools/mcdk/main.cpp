@@ -27,6 +27,8 @@
 #include "modules/mod_register.hpp"
 #include "modules/style_processor.hpp"
 #include "modules/utils.hpp"
+#include "modules/log_buffer.hpp"
+#include "modules/mcp_server.hpp"
 
 
 // mcdevtool api
@@ -283,9 +285,18 @@ static void launchGameExe(
 ) {
     bool  autoHotReload = userConfig.value("auto_hot_reload_mods", true);
     bool  enableIPC     = autoHotReload;
+    bool  needLogBuffer = false;
     void* lpEnvironment = nullptr;
 
-    auto                     ipcServer = MCDevTool::Debug::createDebugServer();
+    auto mcpServerConfig = mcdk::getMcpServerConfigFromJson(userConfig);
+    auto ipcServer       = MCDevTool::Debug::createDebugServer();
+    auto logBuffer       = std::make_shared<mcdk::LogBuffer>(1000, 250);
+    if (mcpServerConfig.enabled) {
+        // 若启用MCP服务器将自动启用IPC调试功能
+        autoHotReload = true;
+        enableIPC     = true;
+        needLogBuffer = true;
+    }
     mcdk::ReloadWatcherTask  reloadTask;
     mcdk::UserStyleProcessor styleProcessor(0, userConfig);
     reloadTask.setHotReloadAction([ipcServer](const nlohmann::json& targetPaths) {
@@ -391,7 +402,7 @@ static void launchGameExe(
     CloseHandle(errWrite);
 
     // 输出处理回调
-    auto processStdout = [](const std::string& line) {
+    auto processStdout = [needLogBuffer, logBuffer](const std::string& line) {
         // 屏蔽 Engine 噪音行
         if (line.find(" [INFO][Engine] ") != std::string::npos) {
             return;
@@ -414,10 +425,13 @@ static void launchGameExe(
             return;
         }
         printColoredAtomic(line, ConsoleColor::Default);
+        if (needLogBuffer) {
+            logBuffer->add(std::move(line));
+        }
     };
 
     // stderr 处理回调
-    auto processStderr = [](const std::string& line) {
+    auto processStderr = [needLogBuffer, logBuffer](const std::string& line) {
         static std::regex fileRe(R"(File \"([A-Za-z0-9_\.]+)\", line (\d+))");
 
         std::string out;
@@ -449,6 +463,9 @@ static void launchGameExe(
         out.append(line, lastPos);
 
         printColoredAtomic(out, ConsoleColor::Red);
+        if (needLogBuffer) {
+            logBuffer->add(std::move(line));
+        }
     };
 
     // ===================== 用户配置后置处理 =====================

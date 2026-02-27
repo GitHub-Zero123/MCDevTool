@@ -192,6 +192,14 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "netease_config": {
         // 是否启用聊天扩展功能（nethard魔改的游戏聊天界面）
         "chat_extension": false
+    },
+    // MCP服务器配置项
+    "mcp_server_config": {
+        "enabled": false,   // 是否启用MCP服务器功能
+        // 服务器IP地址
+        "server_ip": "localhost",
+        // 服务器端口
+        "server_port": 19133
     }
 }
 ```
@@ -204,3 +212,4 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 | [BinaryStream](https://github.com/GlacieTeam/BinaryStream) | NBT 的底层二进制读写支持 | NBT 内部依赖 |
 | [Zlib](https://zlib.net) | NBT 数据压缩与解压缩 | NBT 内部依赖 |
 | [CLI11](https://github.com/CLIUtils/CLI11) | 命令行参数解析 | Header-only |
+| [cpp-mcp](https://github.com/hkr04/cpp-mcp) | 实现 MCP 协议的服务器功能 |  |
