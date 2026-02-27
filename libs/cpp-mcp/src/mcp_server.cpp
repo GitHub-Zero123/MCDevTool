@@ -53,6 +53,24 @@ namespace mcp {
 
         LOG_INFO("Starting MCP server on ", host_, ":", port_);
 
+        // Register default handlers for standard MCP methods (return empty results if not overridden)
+        auto register_default = [this](const std::string& method, method_handler handler) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (method_handlers_.find(method) == method_handlers_.end()) {
+                method_handlers_[method] = handler;
+            }
+        };
+
+        register_default("resources/list", [](const json&, const std::string&) -> json {
+            return json{{"resources", json::array()}};
+        });
+        register_default("resources/templates/list", [](const json&, const std::string&) -> json {
+            return json{{"resourceTemplates", json::array()}};
+        });
+        register_default("prompts/list", [](const json&, const std::string&) -> json {
+            return json{{"prompts", json::array()}};
+        });
+
         // Setup CORS handling
         http_server_->Options(".*", [](const httplib::Request& req, httplib::Response& res) {
             res.set_header("Access-Control-Allow-Origin", "*");
@@ -557,7 +575,7 @@ namespace mcp {
                     if (!result) {
                         // Check if dispatcher was actually closed vs just timed out
                         if (session_dispatcher->is_closed() || !running_) {
-                            LOG_WARNING("SSE connection closed: ", session_id);
+                            LOG_DEBUG("SSE connection closed: ", session_id);
                             close_session(session_id);
                             return false;
                         }
