@@ -37,16 +37,19 @@ namespace mcdk {
         using CodeExecuteHandler = std::function<bool(const std::string& code, bool isClient)>;
         // 定义单次执行返回状态bool的Handler类型 无参数
         using SimpleHandler = std::function<bool()>;
+        // 接收一个字符串参数的Handler类型（用于单个着色器重载）
+        using StringParamHandler = std::function<bool(const std::string& param)>;
 
     private:
         McpServerConfig              config;
-        std::shared_ptr<LogBuffer>   logBuffer;            // 用于存储日志的缓冲区
-        std::shared_ptr<LogBuffer>   errBuffer;            // 用于存储错误日志的缓冲区
-        std::shared_ptr<mcp::server> server;               // MCP服务器实例
-        CodeExecuteHandler           codeExecuteHandler;   // 代码执行处理器
-        SimpleHandler                reloadGameHandler;    // 重载游戏处理器
-        SimpleHandler                reloadShadersHandler; // 重载着色器处理器
-        int                          mcPid = 0;            // 存储Minecraft进程ID以供后续使用
+        std::shared_ptr<LogBuffer>   logBuffer;                // 用于存储日志的缓冲区
+        std::shared_ptr<LogBuffer>   errBuffer;                // 用于存储错误日志的缓冲区
+        std::shared_ptr<mcp::server> server;                   // MCP服务器实例
+        CodeExecuteHandler           codeExecuteHandler;       // 代码执行处理器
+        SimpleHandler                reloadGameHandler;        // 重载游戏处理器
+        SimpleHandler                reloadShadersHandler;     // 重载着色器处理器
+        StringParamHandler           reloadOnceShadersHandler; // 重载单个着色器处理器
+        int                          mcPid = 0;                // 存储Minecraft进程ID以供后续使用
 
     public:
         MCPServer(const McpServerConfig& cfg) : config(cfg) {}
@@ -57,6 +60,7 @@ namespace mcdk {
         void setCodeExecuteHandler(CodeExecuteHandler handler) { codeExecuteHandler = std::move(handler); }
         void setReloadGameHandler(SimpleHandler handler) { reloadGameHandler = std::move(handler); }
         void setReloadShadersHandler(SimpleHandler handler) { reloadShadersHandler = std::move(handler); }
+        void setReloadOnceShadersHandler(StringParamHandler handler) { reloadOnceShadersHandler = std::move(handler); }
         void setMinecraftProcessId(int pid) { mcPid = pid; }
 
         static nlohmann::json _logVectorToJson(const std::vector<std::string>& logVector) {
@@ -274,7 +278,7 @@ Parameters:
 
             // 重新编译着色器的工具（完整重新编译着色器耗时较长，不建议频繁调用，也不建议盲等完成，可以由用户确认完成后再验证结果）
             mcp::tool reloadShadersTool =
-                mcp::tool_builder("reload_shaders")
+                mcp::tool_builder("reload_all_shaders")
                     .with_description(
                         "Triggers a reload of all shaders. This is a heavy operation and may cause significant lag. "
                         "Use only when necessary, such as after modifying shader files. There is no direct feedback "
@@ -300,6 +304,61 @@ Parameters:
                                  nlohmann::json::array(
                                      {{{"type", "text"},
                                        {"text", "Shader reload failed. Player may not be in the game."}}}
+                                 )}
+                            };
+                        }
+                    } else {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content", nlohmann::json::array({{{"type", "text"}, {"text", "Reload handler not set"}}})}
+                        };
+                    }
+                }
+            );
+
+            // 重新编译单个着色器工具  描述：编译单个着色器文件如："entity.fragment"
+            // 以加速编译测试，但如果同时涉及多个文件修改可能会因为依赖关系导致错误，此时应考虑reload_all_shaders
+            mcp::tool reloadOnceShaderTool =
+                mcp::tool_builder("reload_single_shader")
+                    .with_description(
+                        R"(Triggers a reload of a single shader by filename. This is faster than reloading all shaders and can be used for quicker iteration when only one shader file is modified.
+Parameters:
+- file_name: The name of the shader file to reload, relative to the shaders directory.
+For example, "entity.fragment" or "block.vertex". Do not include the file extension.)"
+                    )
+                    .with_string_param("file_name", "Name of the shader file to reload (e.g., 'entity.fragment')", true)
+                    .with_read_only_hint(false) // 2025-03-26 annotation
+                    .build();
+            server->register_tool(
+                reloadOnceShaderTool,
+                [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
+                    std::string fileName = params.value("file_name", "");
+                    if (fileName.empty()) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array({{{"type", "text"}, {"text", "File name parameter is required"}}})}
+                        };
+                    }
+                    if (reloadOnceShadersHandler) {
+                        if (reloadOnceShadersHandler(fileName)) {
+                            return nlohmann::json{
+                                {"isError", false},
+                                {"content",
+                                 nlohmann::json::array(
+                                     {{{"type", "text"}, {"text", "Single shader reload triggered"}}}
+                                 )}
+                            };
+                        } else {
+                            // 也许玩家不在游戏中，无法执行重载
+                            return nlohmann::json{
+                                {"isError", true},
+                                {"content",
+                                 nlohmann::json::array(
+                                     {{{"type", "text"},
+                                       {"text",
+                                        "Single shader reload failed. Player may not be in the game or file name may "
+                                        "be incorrect."}}}
                                  )}
                             };
                         }

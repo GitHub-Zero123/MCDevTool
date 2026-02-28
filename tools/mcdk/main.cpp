@@ -332,6 +332,14 @@ static void launchGameExe(
             }
             return ipcServer->sendMessage(6); // SHADERS RELOAD
         });
+
+        // 重载单个着色器（重新编译单个着色器）
+        mcpServer.setReloadOnceShadersHandler([ipcServer](const std::string& fileName) -> bool {
+            if (ipcServer->getClientCount() == 0) {
+                return false; // 没有连接的客户端，无法执行
+            }
+            return ipcServer->sendMessage(7, fileName); // ONCE SHADER RELOAD
+        });
     }
     mcdk::ReloadWatcherTask  reloadTask;
     mcdk::UserStyleProcessor styleProcessor(0, userConfig);

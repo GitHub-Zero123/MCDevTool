@@ -138,6 +138,14 @@ def RELOAD_SHADERS(_=None):
         RELOAD_SHADERS()
     _CL_GAME_COMP.AddTimer(0, _RELOAD_SHADERS)
 
+def RELOAD_ONCE_SHADERS(fileName):
+    def _RELOAD_ONCE_SHADERS():
+        if clientApi.ReloadOneShader(str(fileName)):
+            print("[RELOAD_ONCE_SHADERS] Reloaded shaders successfully.")
+            return
+        print("[RELOAD_ONCE_SHADERS] Failed to reload shaders.")
+    _CL_GAME_COMP.AddTimer(0, _RELOAD_ONCE_SHADERS)
+
 _IPCSYSTEM = IPCSystem(GET_DEBUG_IPC_PORT())
 _IPCSYSTEM.updateHandlers(
     {
@@ -147,6 +155,7 @@ _IPCSYSTEM.updateHandlers(
         4: EXEC_SERVER_CODE,
         5: RELOAD_GAME,
         6: RELOAD_SHADERS,
+        7: RELOAD_ONCE_SHADERS
     }
 )
 
