@@ -40,19 +40,23 @@ namespace mcdk {
 
     private:
         McpServerConfig              config;
-        std::shared_ptr<LogBuffer>   logBuffer;          // 用于存储日志的缓冲区
-        std::shared_ptr<mcp::server> server;             // MCP服务器实例
-        CodeExecuteHandler           codeExecuteHandler; // 代码执行处理器
-        SimpleHandler                reloadGameHandler;  // 重载游戏处理器
-        int                          mcPid = 0;          // 存储Minecraft进程ID以供后续使用
+        std::shared_ptr<LogBuffer>   logBuffer;            // 用于存储日志的缓冲区
+        std::shared_ptr<LogBuffer>   errBuffer;            // 用于存储错误日志的缓冲区
+        std::shared_ptr<mcp::server> server;               // MCP服务器实例
+        CodeExecuteHandler           codeExecuteHandler;   // 代码执行处理器
+        SimpleHandler                reloadGameHandler;    // 重载游戏处理器
+        SimpleHandler                reloadShadersHandler; // 重载着色器处理器
+        int                          mcPid = 0;            // 存储Minecraft进程ID以供后续使用
 
     public:
         MCPServer(const McpServerConfig& cfg) : config(cfg) {}
         MCPServer(McpServerConfig&& cfg) : config(std::move(cfg)) {}
 
         void setLogBuffer(std::shared_ptr<LogBuffer> buffer) { logBuffer = std::move(buffer); }
+        void setErrBuffer(std::shared_ptr<LogBuffer> buffer) { errBuffer = std::move(buffer); }
         void setCodeExecuteHandler(CodeExecuteHandler handler) { codeExecuteHandler = std::move(handler); }
         void setReloadGameHandler(SimpleHandler handler) { reloadGameHandler = std::move(handler); }
+        void setReloadShadersHandler(SimpleHandler handler) { reloadShadersHandler = std::move(handler); }
         void setMinecraftProcessId(int pid) { mcPid = pid; }
 
         static nlohmann::json _logVectorToJson(const std::vector<std::string>& logVector) {
@@ -69,6 +73,7 @@ namespace mcdk {
                                     .with_description(R"(Returns the most recent game log entries.
 
 Parameters:
+- max_count: Maximum number of log entries to return
 - order: "asc" for oldest to newest
          "desc" for newest to oldest
 )")
@@ -131,6 +136,42 @@ Parameters:
                         return _logVectorToJson(logBuffer->getRangeReversed(startIndex, endIndex));
                     }
                     return _logVectorToJson(logBuffer->getRange(startIndex, endIndex));
+                }
+            );
+
+            // 错误日志查询工具
+            // 与普通日志不同，错误日志仅包含stderr的输出，甚至不一定包含非py的错误信息，例如游戏JSON错误等，完整日志需要另外查询普通日志
+            mcp::tool errLogTool =
+                mcp::tool_builder("get_latest_error_logs")
+                    .with_description(
+                        R"(Returns stderr error log entries only. May not include all errors (e.g., JSON parsing errors). Use get_latest_logs for complete logs.
+
+Parameters:
+- max_count: Maximum number of log entries to return
+- order: "asc" for oldest to newest, "desc" for newest to oldest
+)"
+                    )
+                    .with_number_param("max_count", "Maximum number of log entries to return", false)
+                    .with_string_param("order", "Order of logs (asc or desc)", false)
+                    .with_read_only_hint(true) // 2025-03-26 annotation
+                    .build();
+
+            server->register_tool(
+                errLogTool,
+                [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
+                    size_t      maxCount = params.value("max_count", 100);
+                    std::string order    = params.value("order", "asc");
+                    if (!errBuffer) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array({{{"type", "text"}, {"text", "Error log buffer not set"}}})}
+                        };
+                    }
+                    if (order == "desc") {
+                        return _logVectorToJson(errBuffer->getLatestReversed(maxCount));
+                    }
+                    return _logVectorToJson(errBuffer->getLatest(maxCount));
                 }
             );
         }
@@ -230,6 +271,46 @@ Parameters:
                     }
                 }
             );
+
+            // 重新编译着色器的工具（完整重新编译着色器耗时较长，不建议频繁调用，也不建议盲等完成，可以由用户确认完成后再验证结果）
+            mcp::tool reloadShadersTool =
+                mcp::tool_builder("reload_shaders")
+                    .with_description(
+                        "Triggers a reload of all shaders. This is a heavy operation and may cause significant lag. "
+                        "Use only when necessary, such as after modifying shader files. There is no direct feedback "
+                        "when the reload is complete, so please verify the result visually in the game."
+                    )
+                    .with_read_only_hint(false) // 2025-03-26 annotation
+                    .build();
+            server->register_tool(
+                reloadShadersTool,
+                [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
+                    if (reloadShadersHandler) {
+                        if (reloadShadersHandler()) {
+                            return nlohmann::json{
+                                {"isError", false},
+                                {"content",
+                                 nlohmann::json::array({{{"type", "text"}, {"text", "Shader reload triggered"}}})}
+                            };
+                        } else {
+                            // 也许玩家不在游戏中，无法执行重载
+                            return nlohmann::json{
+                                {"isError", true},
+                                {"content",
+                                 nlohmann::json::array(
+                                     {{{"type", "text"},
+                                       {"text", "Shader reload failed. Player may not be in the game."}}}
+                                 )}
+                            };
+                        }
+                    } else {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content", nlohmann::json::array({{{"type", "text"}, {"text", "Reload handler not set"}}})}
+                        };
+                    }
+                }
+            );
         }
 
         // 初始化游戏窗口工具（如获取画面，模拟点击）
@@ -278,9 +359,7 @@ Parameters:
                     return nlohmann::json{
                         {"isError", false},
                         {"content",
-                         nlohmann::json::array(
-                             {{{"type", "image"}, {"data", b64}, {"mimeType", "image/jpeg"}}}
-                         )}
+                         nlohmann::json::array({{{"type", "image"}, {"data", b64}, {"mimeType", "image/jpeg"}}})}
                     };
                 }
             );
@@ -350,7 +429,9 @@ Parameters:
                         };
                     }
 
-                    return nlohmann::json{                        {"isError", false},                        {"content",
+                    return nlohmann::json{
+                        {"isError", false},
+                        {"content",
                          nlohmann::json::array(
                              {{{"type", "text"},
                                {"text",

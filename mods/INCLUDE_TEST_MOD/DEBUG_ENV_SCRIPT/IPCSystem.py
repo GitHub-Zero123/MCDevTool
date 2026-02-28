@@ -132,6 +132,12 @@ def RELOAD_GAME(_=None):
         RELOAD_WORLD()
     _CL_GAME_COMP.AddTimer(0, _RELOAD_GAME)
 
+def RELOAD_SHADERS(_=None):
+    def _RELOAD_SHADERS():
+        from .Game import RELOAD_SHADERS
+        RELOAD_SHADERS()
+    _CL_GAME_COMP.AddTimer(0, _RELOAD_SHADERS)
+
 _IPCSYSTEM = IPCSystem(GET_DEBUG_IPC_PORT())
 _IPCSYSTEM.updateHandlers(
     {
@@ -140,6 +146,7 @@ _IPCSYSTEM.updateHandlers(
         3: EXEC_CLIENT_CODE,
         4: EXEC_SERVER_CODE,
         5: RELOAD_GAME,
+        6: RELOAD_SHADERS,
     }
 )
 

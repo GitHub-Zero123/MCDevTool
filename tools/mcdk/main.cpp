@@ -291,6 +291,7 @@ static void launchGameExe(
     auto mcpServerConfig = mcdk::getMcpServerConfigFromJson(userConfig);
     auto ipcServer       = MCDevTool::Debug::createDebugServer();
     auto logBuffer       = std::make_shared<mcdk::LogBuffer>(1000, 250);
+    auto errBuffer       = std::make_shared<mcdk::LogBuffer>(1000, 400);
     auto mcpServer       = mcdk::MCPServer(mcpServerConfig);
     if (mcpServerConfig.enabled) {
         // 若启用MCP服务器将自动启用IPC调试功能
@@ -303,6 +304,9 @@ static void launchGameExe(
         );
         mcpServer.start();
         mcpServer.setLogBuffer(logBuffer);
+        mcpServer.setErrBuffer(errBuffer);
+
+        // 代码执行Handler
         mcpServer.setCodeExecuteHandler([ipcServer](const std::string& code, bool isClient) -> bool {
             if (ipcServer->getClientCount() == 0) {
                 return false; // 没有连接的客户端，无法执行
@@ -312,11 +316,21 @@ static void launchGameExe(
                 code
             ); // CODE EXECUTE
         });
+
+        // 重载游戏
         mcpServer.setReloadGameHandler([ipcServer]() -> bool {
             if (ipcServer->getClientCount() == 0) {
                 return false; // 没有连接的客户端，无法执行
             }
             return ipcServer->sendMessage(5); // GAME RELOAD
+        });
+
+        // 重载着色器（重新编译着色器）
+        mcpServer.setReloadShadersHandler([ipcServer]() -> bool {
+            if (ipcServer->getClientCount() == 0) {
+                return false; // 没有连接的客户端，无法执行
+            }
+            return ipcServer->sendMessage(6); // SHADERS RELOAD
         });
     }
     mcdk::ReloadWatcherTask  reloadTask;
@@ -454,7 +468,7 @@ static void launchGameExe(
     };
 
     // stderr 处理回调
-    auto processStderr = [needLogBuffer, logBuffer](const std::string& line) {
+    auto processStderr = [needLogBuffer, logBuffer, errBuffer](const std::string& line) {
         static std::regex fileRe(R"(File \"([A-Za-z0-9_\.]+)\", line (\d+))");
 
         std::string out;
@@ -487,7 +501,8 @@ static void launchGameExe(
 
         printColoredAtomic(out, ConsoleColor::Red);
         if (needLogBuffer) {
-            logBuffer->add(std::move(line));
+            logBuffer->add(out);
+            errBuffer->add(std::move(out));
         }
     };
 
