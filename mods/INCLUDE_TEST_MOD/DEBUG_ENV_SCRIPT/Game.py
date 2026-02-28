@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from common.utils import xupdate
+import mod.client.extraClientApi as clientApi
 from .Config import TARGET_MOD_DIRS
 
 def _RELOAD_MOD():
