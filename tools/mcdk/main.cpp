@@ -325,6 +325,14 @@ static void launchGameExe(
             return ipcServer->sendMessage(5); // GAME RELOAD
         });
 
+        // 重载插件和游戏
+        mcpServer.setReloadAddonAndGameHandler([ipcServer]() -> bool {
+            if (ipcServer->getClientCount() == 0) {
+                return false; // 没有连接的客户端，无法执行
+            }
+            return ipcServer->sendMessage(8); // ADDON AND GAME RELOAD
+        });
+
         // 重载着色器（重新编译着色器）
         mcpServer.setReloadShadersHandler([ipcServer]() -> bool {
             if (ipcServer->getClientCount() == 0) {

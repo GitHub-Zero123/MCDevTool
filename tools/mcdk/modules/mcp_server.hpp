@@ -42,14 +42,15 @@ namespace mcdk {
 
     private:
         McpServerConfig              config;
-        std::shared_ptr<LogBuffer>   logBuffer;                // 用于存储日志的缓冲区
-        std::shared_ptr<LogBuffer>   errBuffer;                // 用于存储错误日志的缓冲区
-        std::shared_ptr<mcp::server> server;                   // MCP服务器实例
-        CodeExecuteHandler           codeExecuteHandler;       // 代码执行处理器
-        SimpleHandler                reloadGameHandler;        // 重载游戏处理器
-        SimpleHandler                reloadShadersHandler;     // 重载着色器处理器
-        StringParamHandler           reloadOnceShadersHandler; // 重载单个着色器处理器
-        int                          mcPid = 0;                // 存储Minecraft进程ID以供后续使用
+        std::shared_ptr<LogBuffer>   logBuffer;                 // 用于存储日志的缓冲区
+        std::shared_ptr<LogBuffer>   errBuffer;                 // 用于存储错误日志的缓冲区
+        std::shared_ptr<mcp::server> server;                    // MCP服务器实例
+        CodeExecuteHandler           codeExecuteHandler;        // 代码执行处理器
+        SimpleHandler                reloadGameHandler;         // 重载游戏处理器
+        SimpleHandler                reloadShadersHandler;      // 重载着色器处理器
+        SimpleHandler                reloadAddonAndGameHandler; // 重载插件和游戏处理器
+        StringParamHandler           reloadOnceShadersHandler;  // 重载单个着色器处理器
+        int                          mcPid = 0;                 // 存储Minecraft进程ID以供后续使用
 
     public:
         MCPServer(const McpServerConfig& cfg) : config(cfg) {}
@@ -61,6 +62,7 @@ namespace mcdk {
         void setReloadGameHandler(SimpleHandler handler) { reloadGameHandler = std::move(handler); }
         void setReloadShadersHandler(SimpleHandler handler) { reloadShadersHandler = std::move(handler); }
         void setReloadOnceShadersHandler(StringParamHandler handler) { reloadOnceShadersHandler = std::move(handler); }
+        void setReloadAddonAndGameHandler(SimpleHandler handler) { reloadAddonAndGameHandler = std::move(handler); }
         void setMinecraftProcessId(int pid) { mcPid = pid; }
 
         static nlohmann::json _logVectorToJson(const std::vector<std::string>& logVector) {
@@ -264,6 +266,47 @@ Parameters:
                                  nlohmann::json::array(
                                      {{{"type", "text"},
                                        {"text", "Game reload failed. Player may not be in the game."}}}
+                                 )}
+                            };
+                        }
+                    } else {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content", nlohmann::json::array({{{"type", "text"}, {"text", "Reload handler not set"}}})}
+                        };
+                    }
+                }
+            );
+
+            // 重新加载游戏以及addon数据（增量贴图/音频之类时需要使用该工具以确保资源被正确重新加载）
+            mcp::tool reloadAddonAndGameTool =
+                mcp::tool_builder("reload_addon_and_game")
+                    .with_description(
+                        "Reloads both the game environment and the addon data. Use this when you have made changes to "
+                        "addon resources (e.g., textures, sounds) that require a full reload to take effect."
+                    )
+                    .with_read_only_hint(false) // 2025-03-26 annotation
+                    .build();
+            server->register_tool(
+                reloadAddonAndGameTool,
+                [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
+                    if (reloadAddonAndGameHandler) {
+                        if (reloadAddonAndGameHandler()) {
+                            return nlohmann::json{
+                                {"isError", false},
+                                {"content",
+                                 nlohmann::json::array(
+                                     {{{"type", "text"}, {"text", "Addon and game reload triggered"}}}
+                                 )}
+                            };
+                        } else {
+                            // 也许玩家不在游戏中，无法执行重载
+                            return nlohmann::json{
+                                {"isError", true},
+                                {"content",
+                                 nlohmann::json::array(
+                                     {{{"type", "text"},
+                                       {"text", "Addon and game reload failed. Player may not be in the game."}}}
                                  )}
                             };
                         }

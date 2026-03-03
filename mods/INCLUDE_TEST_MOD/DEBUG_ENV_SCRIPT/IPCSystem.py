@@ -146,6 +146,14 @@ def RELOAD_ONCE_SHADERS(fileName):
         print("[RELOAD_ONCE_SHADERS] Failed to reload shaders.")
     _CL_GAME_COMP.AddTimer(0, _RELOAD_ONCE_SHADERS)
 
+def RELOAD_ADDON_AND_GAME(_=None):
+    def _RELOAD_ADDON_AND_GAME():
+        from .Game import RELOAD_WORLD, RELOAD_ADDON
+        print("[RELOAD_ADDON_AND_GAME] Reloading the addon and the game...")
+        RELOAD_ADDON()
+        RELOAD_WORLD()
+    _CL_GAME_COMP.AddTimer(0, _RELOAD_ADDON_AND_GAME)
+
 _IPCSYSTEM = IPCSystem(GET_DEBUG_IPC_PORT())
 _IPCSYSTEM.updateHandlers(
     {
@@ -155,7 +163,8 @@ _IPCSYSTEM.updateHandlers(
         4: EXEC_SERVER_CODE,
         5: RELOAD_GAME,
         6: RELOAD_SHADERS,
-        7: RELOAD_ONCE_SHADERS
+        7: RELOAD_ONCE_SHADERS,
+        8: RELOAD_ADDON_AND_GAME,
     }
 )
 
