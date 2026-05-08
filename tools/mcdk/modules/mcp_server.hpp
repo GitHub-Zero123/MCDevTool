@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include "./log_buffer.hpp"
+#include "./mcp_tool_definitions.hpp"
 #include <nlohmann/json.hpp>
 #include <mcp_server.h>
 #include <base64.hpp>
@@ -75,18 +76,7 @@ namespace mcdk {
 
         // 初始化日志相关的工具
         void initLogTool() {
-            mcp::tool logTool = mcp::tool_builder("get_latest_logs")
-                                    .with_description(R"(Returns the most recent game log entries.
-
-Parameters:
-- max_count: Maximum number of log entries to return
-- order: "asc" for oldest to newest
-         "desc" for newest to oldest
-)")
-                                    .with_number_param("max_count", "Maximum number of log entries to return", false)
-                                    .with_string_param("order", "Order of logs (asc or desc)", false)
-                                    .with_read_only_hint(true) // 2025-03-26 annotation
-                                    .build();
+            mcp::tool logTool = mcp_tool_definitions::buildGetLatestLogsTool();
 
             server->register_tool(
                 logTool,
@@ -106,25 +96,7 @@ Parameters:
                 }
             );
 
-            mcp::tool rangeLogTool =
-                mcp::tool_builder("get_log_range")
-                    .with_description(R"TAG(Returns a specific range of recent game log entries by index.
-
-Logs are indexed relative to the most recent entry:
-- index 0 refers to the newest log
-- index 1 refers to the second newest log
-- and so on
-
-Parameters:
-- start_index: Starting index (inclusive)
-- end_index: Ending index (exclusive)
-- order: "asc" for oldest to newest
-         "desc" for newest to oldest)TAG")
-                    .with_number_param("start_index", "Starting index (inclusive)", true)
-                    .with_number_param("end_index", "Ending index (exclusive)", true)
-                    .with_string_param("order", "Order of logs (asc or desc)", false)
-                    .with_read_only_hint(true) // 2025-03-26 annotation
-                    .build();
+            mcp::tool rangeLogTool = mcp_tool_definitions::buildGetLogRangeTool();
 
             server->register_tool(
                 rangeLogTool,
@@ -147,20 +119,7 @@ Parameters:
 
             // 错误日志查询工具
             // 与普通日志不同，错误日志仅包含stderr的输出，甚至不一定包含非py的错误信息，例如游戏JSON错误等，完整日志需要另外查询普通日志
-            mcp::tool errLogTool =
-                mcp::tool_builder("get_latest_error_logs")
-                    .with_description(
-                        R"(Returns stderr error log entries only. May not include all errors (e.g., JSON parsing errors). Use get_latest_logs for complete logs.
-
-Parameters:
-- max_count: Maximum number of log entries to return
-- order: "asc" for oldest to newest, "desc" for newest to oldest
-)"
-                    )
-                    .with_number_param("max_count", "Maximum number of log entries to return", false)
-                    .with_string_param("order", "Order of logs (asc or desc)", false)
-                    .with_read_only_hint(true) // 2025-03-26 annotation
-                    .build();
+            mcp::tool errLogTool = mcp_tool_definitions::buildGetLatestErrorLogsTool();
 
             server->register_tool(
                 errLogTool,
@@ -184,16 +143,7 @@ Parameters:
 
         // 初始化代码执行相关的工具
         void initCodeExecutionTool() {
-            mcp::tool codeExecTool = mcp::tool_builder("execute_code")
-                                         .with_description(
-                                             R"(Executes provided code in the game environment.
-Parameters:
-- code: The code to Py2 execute
-- is_client: Whether to execute on client side (true) or server side (false))"
-                                         )
-                                         .with_string_param("code", "Code to execute", true)
-                                         .with_boolean_param("is_client", "Execute on client side?", false)
-                                         .build();
+            mcp::tool codeExecTool = mcp_tool_definitions::buildExecuteCodeTool();
 
             server->register_tool(
                 codeExecTool,
@@ -240,14 +190,7 @@ Parameters:
         // 初始化游戏相关工具
         void initGameTools() {
             // 提供重新加载游戏的工具
-            mcp::tool reloadGameTool =
-                mcp::tool_builder("reload_game")
-                    .with_description(
-                        "Reloads the game environment. Use with caution and only when necessary. Python code supports "
-                        "incremental hot-reload, so a full reload should be avoided unless hot-reload is insufficient."
-                    )
-                    .with_read_only_hint(false) // 2025-03-26 annotation
-                    .build();
+            mcp::tool reloadGameTool = mcp_tool_definitions::buildReloadGameTool();
             server->register_tool(
                 reloadGameTool,
                 [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
@@ -279,14 +222,7 @@ Parameters:
             );
 
             // 重新加载游戏以及addon数据（增量贴图/音频之类时需要使用该工具以确保资源被正确重新加载）
-            mcp::tool reloadAddonAndGameTool =
-                mcp::tool_builder("reload_addon_and_game")
-                    .with_description(
-                        "Reloads both the game environment and the addon data. Use this when you have made changes to "
-                        "addon resources (e.g., textures, sounds) that require a full reload to take effect."
-                    )
-                    .with_read_only_hint(false) // 2025-03-26 annotation
-                    .build();
+            mcp::tool reloadAddonAndGameTool = mcp_tool_definitions::buildReloadAddonAndGameTool();
             server->register_tool(
                 reloadAddonAndGameTool,
                 [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
@@ -320,15 +256,7 @@ Parameters:
             );
 
             // 重新编译着色器的工具（完整重新编译着色器耗时较长，不建议频繁调用，也不建议盲等完成，可以由用户确认完成后再验证结果）
-            mcp::tool reloadShadersTool =
-                mcp::tool_builder("reload_all_shaders")
-                    .with_description(
-                        "Triggers a reload of all shaders. This is a heavy operation and may cause significant lag. "
-                        "Use only when necessary, such as after modifying shader files. There is no direct feedback "
-                        "when the reload is complete, so please verify the result visually in the game."
-                    )
-                    .with_read_only_hint(false) // 2025-03-26 annotation
-                    .build();
+            mcp::tool reloadShadersTool = mcp_tool_definitions::buildReloadAllShadersTool();
             server->register_tool(
                 reloadShadersTool,
                 [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
@@ -361,17 +289,7 @@ Parameters:
 
             // 重新编译单个着色器工具  描述：编译单个着色器文件如："entity.fragment"
             // 以加速编译测试，但如果同时涉及多个文件修改可能会因为依赖关系导致错误，此时应考虑reload_all_shaders
-            mcp::tool reloadOnceShaderTool =
-                mcp::tool_builder("reload_single_shader")
-                    .with_description(
-                        R"(Triggers a reload of a single shader by filename. This is faster than reloading all shaders and can be used for quicker iteration when only one shader file is modified.
-Parameters:
-- file_name: The name of the shader file to reload, relative to the shaders directory.
-For example, "entity.fragment" or "block.vertex". Do not include the file extension.)"
-                    )
-                    .with_string_param("file_name", "Name of the shader file to reload (e.g., 'entity.fragment')", true)
-                    .with_read_only_hint(false) // 2025-03-26 annotation
-                    .build();
+            mcp::tool reloadOnceShaderTool = mcp_tool_definitions::buildReloadSingleShaderTool();
             server->register_tool(
                 reloadOnceShaderTool,
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
@@ -418,14 +336,7 @@ For example, "entity.fragment" or "block.vertex". Do not include the file extens
         // 初始化游戏窗口工具（如获取画面，模拟点击）
         void initGameWindowTools() {
             // 截图工具：捕获游戏窗口画面，返回 480p JPEG base64 图片
-            mcp::tool captureTool = mcp::tool_builder("capture_game_window")
-                                        .with_description(
-                                            "Captures the current Minecraft game window as a 480p JPEG screenshot. "
-                                            "Returns the image as base64-encoded JPEG data. "
-                                            "Use this to observe the current game state visually."
-                                        )
-                                        .with_read_only_hint(true)
-                                        .build();
+            mcp::tool captureTool = mcp_tool_definitions::buildCaptureGameWindowTool();
 
             server->register_tool(
                 captureTool,
@@ -467,27 +378,7 @@ For example, "entity.fragment" or "block.vertex". Do not include the file extens
             );
 
             // 点击工具：模拟点击游戏窗口指定位置
-            mcp::tool clickTool =
-                mcp::tool_builder("click_game_window")
-                    .with_description(
-                        R"(Simulates a left mouse click at a specific position on the Minecraft game window.
-
-Coordinates are percentage-based (0.0 to 1.0) relative to the client area:
-- (0.0, 0.0) = top-left corner
-- (0.5, 0.5) = center
-- (1.0, 1.0) = bottom-right corner
-
-The coordinate system matches the capture_game_window screenshot exactly.
-The game window will be brought to the foreground automatically before clicking.
-
-Parameters:
-- x: Horizontal position as a percentage (0.0-1.0)
-- y: Vertical position as a percentage (0.0-1.0))"
-                    )
-                    .with_number_param("x", "Horizontal position (0.0=left, 1.0=right)", true)
-                    .with_number_param("y", "Vertical position (0.0=top, 1.0=bottom)", true)
-                    .with_read_only_hint(false)
-                    .build();
+            mcp::tool clickTool = mcp_tool_definitions::buildClickGameWindowTool();
 
             server->register_tool(
                 clickTool,
