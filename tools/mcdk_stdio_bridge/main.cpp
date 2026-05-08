@@ -1,4 +1,13 @@
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
 #include <fcntl.h>
 #include <io.h>
 #endif
@@ -12,6 +21,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <clocale>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -24,6 +34,18 @@
 #include <vector>
 
 namespace {
+
+#ifdef _WIN32
+    void configureStdioAndUtf8Console() {
+        _setmode(_fileno(stdin), _O_BINARY);
+        _setmode(_fileno(stdout), _O_BINARY);
+        SetConsoleCP(CP_UTF8);
+        SetConsoleOutputCP(CP_UTF8);
+        std::setlocale(LC_ALL, ".UTF-8");
+    }
+#else
+    void configureStdioAndUtf8Console() { std::setlocale(LC_ALL, ""); }
+#endif
 
     using json = nlohmann::ordered_json;
 
@@ -129,17 +151,27 @@ namespace {
             if (!std::getline(std::cin, firstLine)) {
                 return std::nullopt;
             }
-
             if (!firstLine.empty() && firstLine.back() == '\r') {
                 firstLine.pop_back();
             }
+            if (firstLine.empty()) {
+                return std::nullopt;
+            }
 
-            if (firstLine.rfind("Content-Length:", 0) == 0 || firstLine.rfind("content-length:", 0) == 0) {
-                size_t      colon = firstLine.find(':');
-                std::string sizeText = colon == std::string::npos ? "" : trim(std::string_view(firstLine).substr(colon + 1));
-                size_t      contentLength = 0;
+            std::string headerKey = firstLine.substr(0, firstLine.find(':'));
+            for (auto& c : headerKey) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+
+            if (headerKey == "content-length") {
+                auto colon = firstLine.find(':');
+                if (colon == std::string::npos) {
+                    return std::nullopt;
+                }
+
+                size_t contentLength = 0;
                 try {
-                    contentLength = static_cast<size_t>(std::stoull(sizeText));
+                    contentLength = static_cast<size_t>(std::stoull(trim(std::string_view(firstLine).substr(colon + 1))));
                 } catch (...) {
                     return std::nullopt;
                 }
@@ -162,16 +194,12 @@ namespace {
                 return json::parse(body, nullptr, false);
             }
 
-            if (firstLine.empty()) {
-                return std::nullopt;
-            }
             return json::parse(firstLine, nullptr, false);
         }
 
         void writeMessage(const json& message) {
             std::lock_guard<std::mutex> lock(writeMutex_);
-            std::string                 body = message.dump();
-            std::cout << "Content-Length: " << body.size() << "\r\n\r\n" << body;
+            std::cout << message.dump() << '\n';
             std::cout.flush();
         }
 
@@ -412,11 +440,7 @@ namespace {
 } // namespace
 
 int main(int argc, char** argv) {
-#ifdef _WIN32
-    _setmode(_fileno(stdin), _O_BINARY);
-    _setmode(_fileno(stdout), _O_BINARY);
-#endif
-
+    configureStdioAndUtf8Console();
     BridgeServer server(parseArgs(argc, argv));
     server.run();
     return 0;
