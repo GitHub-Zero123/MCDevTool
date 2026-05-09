@@ -5,6 +5,7 @@ from .Config import GET_DEBUG_IPC_PORT
 import socket
 import threading
 import json
+import traceback
 
 def U16_BE(b):
     # type: (bytearray | str) -> int
@@ -18,13 +19,47 @@ def U32_BE(b):
         return (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]
     return (ord(b[0]) << 24) | (ord(b[1]) << 16) | (ord(b[2]) << 8) | ord(b[3])
 
+IPC_JSON_REQUEST_TYPE = 100
+IPC_JSON_RESPONSE_TYPE = 101
+
+
+def _U16_BE_BYTES(v):
+    # type: (int) -> str
+    return chr((int(v) >> 8) & 0xFF) + chr(int(v) & 0xFF)
+
+
+def _U32_BE_BYTES(v):
+    # type: (int) -> str
+    return chr((int(v) >> 24) & 0xFF) + chr((int(v) >> 16) & 0xFF) + chr((int(v) >> 8) & 0xFF) + chr(int(v) & 0xFF)
+
+
+def _BYTES_TO_STR(data):
+    if isinstance(data, bytearray):
+        return str(data)
+    return data
+
+
+try:
+    _UNICODE_TYPE = unicode
+except NameError:
+    _UNICODE_TYPE = str
+
+
+def _TEXT_TO_BYTES(data):
+    if isinstance(data, _UNICODE_TYPE) and not isinstance(data, str):
+        return data.encode("utf-8")
+    return data
+
+
 class IPCSystem:
     def __init__(self, port=None):
         # type: (int | None) -> None
         self.port = port
         self.sock = None
         self.mLock = threading.Lock()
+        self.mSendLock = threading.Lock()
         self.handers = {}
+        self.jsonHandlers = {}
 
     def registerHandler(self, typeID, handler):
         # type: (int, callable) -> None
@@ -33,6 +68,34 @@ class IPCSystem:
     def updateHandlers(self, handlers):
         # type: (dict[int, callable]) -> None
         self.handers.update(handlers)
+
+    def registerJsonHandler(self, method, handler):
+        # type: (str, callable) -> None
+        self.jsonHandlers[method] = handler
+
+    def updateJsonHandlers(self, handlers):
+        # type: (dict[str, callable]) -> None
+        self.jsonHandlers.update(handlers)
+
+    def sendPacket(self, typeID, data=""):
+        # type: (int, str | bytearray) -> bool
+        if data is None:
+            data = ""
+        if isinstance(data, bytearray):
+            data = str(data)
+        data = _TEXT_TO_BYTES(data)
+        length = len(data)
+        packet = _U16_BE_BYTES(typeID) + _U32_BE_BYTES(length) + data
+        with self.mLock:
+            sock = self.sock
+        if not sock:
+            return False
+        try:
+            with self.mSendLock:
+                sock.sendall(packet)
+            return True
+        except Exception:
+            return False
 
     def start(self):
         if self.sock or not self.port:
@@ -78,20 +141,104 @@ class IPCSystem:
             except socket.error:
                 break
             except Exception:
-                import traceback
                 traceback.print_exc()
                 break
-            if typeID in self.handers:
+            if typeID == IPC_JSON_REQUEST_TYPE:
+                self._handleJsonRequest(data)
+            elif typeID in self.handers:
                 try:
                     self.handers[typeID](data)
                 except Exception:
-                    import traceback
                     traceback.print_exc()
             else:
                 print("[IPCSystem] 未知的TypeID数据包：" + str(typeID))
         with self.mLock:
             self.sock = None
         print("[IPCSystem] 连接已关闭")
+
+    def _sendJsonResponse(self, requestId, ok=True, result=None, error=None):
+        resp = {"id": requestId, "ok": ok}
+        if ok:
+            resp["result"] = result
+        else:
+            resp["error"] = error or {"code": "exception", "message": "Unknown JSON IPC error"}
+        try:
+            payload = json.dumps(resp, ensure_ascii=False)
+        except Exception as e:
+            payload = json.dumps({
+                "id": requestId,
+                "ok": False,
+                "error": {
+                    "code": "json_encode_error",
+                    "message": str(e),
+                    "traceback": traceback.format_exc()
+                }
+            }, ensure_ascii=False)
+        try:
+            return self.sendPacket(IPC_JSON_RESPONSE_TYPE, payload)
+        except Exception:
+            traceback.print_exc()
+        return False
+
+    def _handleJsonRequest(self, data):
+        requestId = None
+        try:
+            req = json.loads(_BYTES_TO_STR(data))
+            requestId = req.get("id", None)
+            method = req.get("method", "")
+            params = req.get("params", {})
+            if method not in self.jsonHandlers:
+                raise Exception("Unknown JSON IPC method: " + str(method))
+
+            handler = self.jsonHandlers[method]
+            state = {"done": False}
+            stateLock = threading.Lock()
+
+            def _callback(result=None, ok=True, error=None):
+                with stateLock:
+                    if state["done"]:
+                        return False
+                    state["done"] = True
+                if ok:
+                    return self._sendJsonResponse(requestId, True, result, None)
+                return self._sendJsonResponse(requestId, False, None, error)
+
+            if self._isJsonCallbackHandler(handler):
+                handler(params, _callback)
+            else:
+                _callback(handler(params))
+        except Exception as e:
+            error = {
+                "code": "exception",
+                "message": str(e),
+                "traceback": traceback.format_exc()
+            }
+            callback = locals().get("_callback", None)
+            if callback:
+                callback(None, False, error)
+            else:
+                self._sendJsonResponse(requestId, False, None, error)
+
+    def _isJsonCallbackHandler(self, handler):
+        code = getattr(handler, "func_code", None)
+        if code is None:
+            code = getattr(handler, "__code__", None)
+        if code is None:
+            return False
+        argCount = getattr(code, "co_argcount", 0)
+        if getattr(handler, "im_self", None) is not None or getattr(handler, "__self__", None) is not None:
+            argCount -= 1
+        defaults = getattr(handler, "func_defaults", None)
+        if defaults is None:
+            defaults = getattr(handler, "__defaults__", None)
+        defaultCount = len(defaults) if defaults else 0
+        requiredCount = argCount - defaultCount
+        argNames = getattr(code, "co_varnames", ())
+        if getattr(handler, "im_self", None) is not None or getattr(handler, "__self__", None) is not None:
+            argNames = argNames[1:]
+        argNames = argNames[:argCount]
+        callbackNames = ("callback", "cb", "done", "reply", "respond")
+        return requiredCount <= 2 and argCount >= 2 and len(argNames) >= 2 and argNames[1] in callbackNames
 
 _CL_GAME_COMP = None
 _SR_GAME_COMP = None
@@ -154,6 +301,65 @@ def RELOAD_ADDON_AND_GAME(_=None):
         RELOAD_WORLD()
     _CL_GAME_COMP.AddTimer(0, _RELOAD_ADDON_AND_GAME)
 
+
+def CALL_ON_CLIENT_THREAD(func, timeout=10.0):
+    if not _CL_GAME_COMP:
+        raise Exception("Client game component is not initialized")
+    event = threading.Event()
+    box = {"ok": False, "value": None, "error": None, "traceback": None}
+
+    def _TASK():
+        try:
+            box["value"] = func()
+            box["ok"] = True
+        except Exception as e:
+            box["error"] = str(e)
+            box["traceback"] = traceback.format_exc()
+        finally:
+            event.set()
+
+    _CL_GAME_COMP.AddTimer(0, _TASK)
+    if not event.wait(timeout):
+        raise Exception("Client thread task timed out")
+    if not box["ok"]:
+        raise Exception(str(box["error"]) + "\n" + str(box["traceback"]))
+    return box["value"]
+
+
+def CALL_ON_SERVER_THREAD(func, timeout=10.0):
+    if not _SR_GAME_COMP:
+        raise Exception("Server game component is not initialized")
+    event = threading.Event()
+    box = {"ok": False, "value": None, "error": None, "traceback": None}
+
+    def _TASK():
+        try:
+            box["value"] = func()
+            box["ok"] = True
+        except Exception as e:
+            box["error"] = str(e)
+            box["traceback"] = traceback.format_exc()
+        finally:
+            event.set()
+
+    _SR_GAME_COMP.AddTimer(0, _TASK)
+    if not event.wait(timeout):
+        raise Exception("Server thread task timed out")
+    if not box["ok"]:
+        raise Exception(str(box["error"]) + "\n" + str(box["traceback"]))
+    return box["value"]
+
+
+def JSON_PING(params, callback):
+    callback({
+        "pong": True,
+        "params": params,
+        "client_ready": _CL_GAME_COMP is not None,
+        "server_ready": _SR_GAME_COMP is not None
+    })
+
+
+
 _IPCSYSTEM = IPCSystem(GET_DEBUG_IPC_PORT())
 _IPCSYSTEM.updateHandlers(
     {
@@ -165,6 +371,11 @@ _IPCSYSTEM.updateHandlers(
         6: RELOAD_SHADERS,
         7: RELOAD_ONCE_SHADERS,
         8: RELOAD_ADDON_AND_GAME,
+    }
+)
+_IPCSYSTEM.updateJsonHandlers(
+    {
+        "ping": JSON_PING,
     }
 )
 
