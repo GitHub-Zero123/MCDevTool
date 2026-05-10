@@ -1,5 +1,6 @@
 // MCDK
 #include <algorithm>
+#include <sstream>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -307,15 +308,86 @@ static void launchGameExe(
         mcpServer.setErrBuffer(errBuffer);
 
         // 代码执行Handler
-        mcpServer.setCodeExecuteHandler([ipcServer](const std::string& code, bool isClient) -> bool {
-            if (ipcServer->getClientCount() == 0) {
-                return false; // 没有连接的客户端，无法执行
+        mcpServer.setCodeExecuteHandler(
+            [ipcServer](const std::string& code, bool isClient, bool directReturn) -> nlohmann::json {
+                auto makeTextResult = [](bool isError, const std::string& text) -> nlohmann::json {
+                    return nlohmann::json{
+                        {"isError", isError},
+                        {"content", nlohmann::json::array({{{"type", "text"}, {"text", text}}})}
+                    };
+                };
+
+                if (ipcServer->getClientCount() == 0) {
+                    return makeTextResult(
+                        true,
+                        "Code execution failed. The player may not be in the game or the target is unavailable."
+                    );
+                }
+
+                if (!directReturn) {
+                    bool success = ipcServer->sendMessage(
+                        isClient ? 3 : 4, // 3 = CLIENT_CODE_EXECUTE, 4 = SERVER_CODE_EXECUTE
+                        code
+                    ); // CODE EXECUTE
+                    if (!success) {
+                        return makeTextResult(
+                            true,
+                            "Code execution failed. The player may not be in the game or the target is unavailable."
+                        );
+                    }
+                    return makeTextResult(
+                        false,
+                        "Code executed successfully on the target side. Please use get_latest_logs to observe the "
+                        "execution result."
+                    );
+                }
+
+                nlohmann::json params = {
+                    {"code", code},
+                    {"is_client", isClient}
+                };
+                auto result = ipcServer->requestJson("execute_code", params.dump(), 10000);
+                if (!result.success) {
+                    return makeTextResult(true, "Code execution failed: " + result.errorMessage);
+                }
+
+                auto response = nlohmann::json::parse(result.responseJson, nullptr, false);
+                if (response.is_discarded() || !response.is_object()) {
+                    return makeTextResult(true, "Code execution returned invalid JSON: " + result.responseJson);
+                }
+                if (!response.value("ok", false)) {
+                    std::string message = response.dump();
+                    if (response.contains("error")) {
+                        const auto& error = response["error"];
+                        if (error.is_object() && error.contains("message")) {
+                            message = error.value("message", message);
+                        }
+                    }
+                    return makeTextResult(true, "Code execution failed: " + message);
+                }
+
+                nlohmann::json payload = nlohmann::json::object();
+                if (response.contains("result")) {
+                    payload = response["result"];
+                }
+                std::ostringstream text;
+                text << "Code executed successfully on " << (isClient ? "client" : "server") << ".";
+                if (payload.is_object()) {
+                    if (payload.contains("return_type")) {
+                        text << "\nReturn type: " << payload.value("return_type", "unknown");
+                    }
+                    if (payload.contains("return_repr")) {
+                        text << "\nReturn repr: " << payload.value("return_repr", "");
+                    }
+                    if (payload.contains("return_value")) {
+                        text << "\nReturn value JSON: " << payload["return_value"].dump(2);
+                    }
+                } else {
+                    text << "\nReturn value JSON: " << payload.dump(2);
+                }
+                return makeTextResult(false, text.str());
             }
-            return ipcServer->sendMessage(
-                isClient ? 3 : 4, // 3 = CLIENT_CODE_EXECUTE, 4 = SERVER_CODE_EXECUTE
-                code
-            ); // CODE EXECUTE
-        });
+        );
 
         // 重载游戏
         mcpServer.setReloadGameHandler([ipcServer]() -> bool {

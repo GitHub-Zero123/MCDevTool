@@ -35,7 +35,7 @@ namespace mcdk {
     // 专为MCBE设计的MCP服务器
     class MCPServer {
     public:
-        using CodeExecuteHandler = std::function<bool(const std::string& code, bool isClient)>;
+        using CodeExecuteHandler = std::function<nlohmann::json(const std::string& code, bool isClient, bool directReturn)>;
         // 定义单次执行返回状态bool的Handler类型 无参数
         using SimpleHandler = std::function<bool()>;
         // 接收一个字符串参数的Handler类型（用于单个着色器重载）
@@ -156,33 +156,11 @@ namespace mcdk {
                         };
                     }
 
-                    std::string code     = params.value("code", "");
-                    bool        isClient = params.value("is_client", true);
+                    std::string code         = params.value("code", "");
+                    bool        isClient     = params.value("is_client", true);
+                    bool        directReturn = params.value("direct_return", true);
 
-                    bool success = codeExecuteHandler(code, isClient);
-                    if (!success) {
-                        return nlohmann::json{
-                            {"isError", true},
-                            {"content",
-                             nlohmann::json::array(
-                                 {{{"type", "text"},
-                                   {"text",
-                                    "Code execution failed. The player may not be in the game or the target is "
-                                    "unavailable."}}}
-                             )}
-                        };
-                    }
-
-                    return nlohmann::json{
-                        {"isError", false},
-                        {"content",
-                         nlohmann::json::array(
-                             {{{"type", "text"},
-                               {"text",
-                                "Code executed successfully on the target side. Please use get_latest_logs to observe "
-                                "the execution result."}}}
-                         )}
-                    };
+                    return codeExecuteHandler(code, isClient, directReturn);
                 }
             );
         }

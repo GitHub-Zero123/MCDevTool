@@ -38,8 +38,9 @@ Parameters:
     inline constexpr const char* ExecuteCodeName = "execute_code";
     inline constexpr const char* ExecuteCodeDescription = R"(Executes provided code in the game environment.
 Parameters:
-- code: The code to Py2 execute
-- is_client: Whether to execute on client side (true) or server side (false))";
+- code: The code to Py2 execute. Expression code returns the expression value; statement code may assign _result to define the returned value.
+- is_client: Whether to execute on client side (true) or server side (false)
+- direct_return: Whether to wait for and directly return the execution result (default true). Set false to use the legacy async log-based behavior.)";
 
     inline constexpr const char* ReloadGameName = "reload_game";
     inline constexpr const char* ReloadGameDescription =
@@ -118,6 +119,7 @@ Parameters:
             .with_description(ExecuteCodeDescription)
             .with_string_param("code", "Code to execute", true)
             .with_boolean_param("is_client", "Execute on client side?", false)
+            .with_boolean_param("direct_return", "Directly return execution result instead of relying on logs? Default true.", false)
             .build();
     }
 

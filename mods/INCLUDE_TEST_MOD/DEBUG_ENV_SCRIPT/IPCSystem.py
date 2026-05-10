@@ -260,12 +260,106 @@ def FAST_RELOAD(data):
         _CL_GAME_COMP.AddTimer(0, _FAST_RELOAD)
         return
 
+def _SAFE_REPR(value):
+    try:
+        return repr(value)
+    except Exception:
+        return "<repr failed>"
+
+
+def _GET_TYPE_NAME(value):
+    try:
+        return type(value).__name__
+    except Exception:
+        return "unknown"
+
+
+try:
+    _LONG_TYPE = long
+except NameError:
+    _LONG_TYPE = int
+
+
+def _JSON_SAFE_VALUE(value, depth=0):
+    if depth > 8:
+        return {"__type__": _GET_TYPE_NAME(value), "__repr__": _SAFE_REPR(value)}
+    if value is None or isinstance(value, (bool, int, _LONG_TYPE, float)):
+        return value
+    if isinstance(value, _UNICODE_TYPE):
+        return value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_JSON_SAFE_VALUE(v, depth + 1) for v in value]
+    if isinstance(value, dict):
+        result = {}
+        for k, v in value.items():
+            try:
+                key = k if isinstance(k, _UNICODE_TYPE) else str(k)
+            except Exception:
+                key = _SAFE_REPR(k)
+            result[key] = _JSON_SAFE_VALUE(v, depth + 1)
+        return result
+    return {"__type__": _GET_TYPE_NAME(value), "__repr__": _SAFE_REPR(value)}
+
+
+def _CODE_TEXT(codeText):
+    if isinstance(codeText, _UNICODE_TYPE) and not isinstance(codeText, str):
+        return codeText.encode("utf-8")
+    return str(codeText)
+
+
+def _EXEC_CODE_OBJECT(code, globalVars):
+    exec("exec code in globalVars, globalVars")
+
+
+def _EXEC_CODE_VALUE(codeText):
+    codeText = _CODE_TEXT(codeText)
+    globalVars = globals()
+    try:
+        code = compile(codeText, "<string>", "eval")
+        return eval(code, globalVars, globalVars)
+    except SyntaxError:
+        code = compile(codeText, "<string>", "exec")
+        resultName = "_result"
+        hadResult = resultName in globalVars
+        oldResult = globalVars.get(resultName, None)
+        if hadResult:
+            try:
+                del globalVars[resultName]
+            except Exception:
+                pass
+        try:
+            _EXEC_CODE_OBJECT(code, globalVars)
+            if resultName in globalVars:
+                return globalVars[resultName]
+            return None
+        finally:
+            if resultName in globalVars:
+                try:
+                    del globalVars[resultName]
+                except Exception:
+                    pass
+            if hadResult:
+                globalVars[resultName] = oldResult
+
+
+def _EXEC_CODE_RESULT(codeText, sideName):
+    value = _EXEC_CODE_VALUE(codeText)
+    return {
+        "side": sideName,
+        "return_value": _JSON_SAFE_VALUE(value),
+        "return_repr": _SAFE_REPR(value),
+        "return_type": _GET_TYPE_NAME(value)
+    }
+
+
 def EXEC_CLIENT_CODE(data):
     code = compile(str(data), "<string>", "exec")
     def _EXEC_CODE():
         print("[CLIENT_CODE] Executed successfully: " + str(eval(code)))
     _CL_GAME_COMP.AddTimer(0, _EXEC_CODE)
-
+ 
 def EXEC_SERVER_CODE(data):
     code = compile(str(data), "<string>", "exec")
     def _EXEC_CODE():
@@ -350,6 +444,35 @@ def CALL_ON_SERVER_THREAD(func, timeout=10.0):
     return box["value"]
 
 
+def JSON_EXECUTE_CODE(params, callback):
+    isClient = params.get("is_client", True)
+    codeText = params.get("code", "")
+    timeout = params.get("timeout", 10.0)
+    try:
+        timeout = float(timeout)
+    except Exception:
+        timeout = 10.0
+
+    def _RUN_CLIENT_CODE():
+        return _EXEC_CODE_RESULT(codeText, "client")
+
+    def _RUN_SERVER_CODE():
+        return _EXEC_CODE_RESULT(codeText, "server")
+
+    try:
+        if isClient:
+            result = CALL_ON_CLIENT_THREAD(_RUN_CLIENT_CODE, timeout)
+        else:
+            result = CALL_ON_SERVER_THREAD(_RUN_SERVER_CODE, timeout)
+        callback(result)
+    except Exception as e:
+        callback(None, False, {
+            "code": "execute_code_error",
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        })
+
+
 def JSON_PING(params, callback):
     callback({
         "pong": True,
@@ -376,6 +499,7 @@ _IPCSYSTEM.updateHandlers(
 _IPCSYSTEM.updateJsonHandlers(
     {
         "ping": JSON_PING,
+        "execute_code": JSON_EXECUTE_CODE,
     }
 )
 
