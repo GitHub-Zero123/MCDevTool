@@ -245,6 +245,20 @@ VSCode 暂不支持直接连接 SSE，需通过 `mcp-remote` 桥接，配置在 
 
 > MCP 服务器随 `MCDK/MC` 一起启停，游戏关闭后需重新连接。各客户端对自动重连的支持情况不同，请自行测试。
 
+## MCP 游戏测试工作流策略
+
+MCDK MCP 的定位不是让通用 Agent 仅凭 LLM、截图和点击完成复杂游戏测试。现阶段更可靠的方式是：在开发代码时预留测试函数、诊断入口和结构化日志，再通过 MCP 客户端 / 服务端代码执行 Tool 触发这些入口，并用日志查询 Tool 收集结果做统计分析。
+
+推荐工作流：
+
+1. 在 Mod / Addon 代码中预留开发期测试函数；
+2. 使用 MCP `execute_code` 调用客户端或服务端测试入口；
+3. 使用 `get_latest_logs` / `get_latest_error_logs` 收集结构化日志；
+4. 多轮执行后统计成功率、耗时和异常分布；
+5. 仅在视觉效果本身是测试目标时使用截图和点击能力。
+
+详细规范见 [MCP 游戏测试功能介绍与工作流策略规范](docs/mcp-game-testing-workflow.md)。面向 Agent 的可复用 Skill 位于 [.roo/skills/mcdk-mcp-game-testing-workflow/SKILL.md](.roo/skills/mcdk-mcp-game-testing-workflow/SKILL.md)。
+
 ## 第三方依赖
 | 库名 | 用途 | 备注 |
 |-----|------|------|
