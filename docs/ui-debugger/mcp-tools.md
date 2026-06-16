@@ -26,6 +26,7 @@ Analyze native Minecraft JSON UI runtime state. Use jsonui_debugger("/help") to 
 ```text
 /help
 /help screens
+/help overview
 /help children
 /help node
 /help tree
@@ -39,11 +40,12 @@ Analyze native Minecraft JSON UI runtime state. Use jsonui_debugger("/help") to 
 | 命令 | 用途 |
 | --- | --- |
 | `/screens` | 返回当前 screen 栈和 UI 逻辑尺寸 |
+| `/overview [--screen=top|all|<screen>] [--child-limit=12]` | 自动探测当前 screen 的建议根路径和直接子节点摘要 |
 | `/probe <screen> <path>` | 安全检查路径是否存在、类型、直接子节点数量 |
 | `/children <screen> <path> [--detail] [--limit=50]` | 返回直接子节点 |
 | `/node <screen> <path> [--fields=basic,layout,text,container]` | 返回单节点布局和内容信息 |
 | `/tree <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]` | 安全浅层树 |
-| `/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]` | 返回由 MC 实时布局数据派生的 HTML 伪表达，仅用于参考布局 |
+| `/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only] [--html-only]` | 返回由 MC 实时布局数据派生的 HTML 伪表达，仅用于参考布局 |
 | `/find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]` | 按名称/路径/类型搜索，默认只匹配节点名 |
 
 ## 返回格式
@@ -106,6 +108,14 @@ jsonui_debugger("/screens")
   }
 }
 ```
+
+### `/overview`
+
+```text
+jsonui_debugger("/overview --screen=top --child-limit=12")
+```
+
+这是推荐的第一步命令。它会返回当前 screen、可用的候选根路径、直接子节点摘要和 `suggested_next`，避免 AI 在不知道 `component_path` 时盲试 `/`。
 
 ### `/children`
 
@@ -171,12 +181,14 @@ jsonui_debugger("/tree hud.hud_screen /.../root_panel --depth=2 --max-nodes=80 -
 ### `/html`
 
 ```text
-jsonui_debugger("/html hud.hud_screen /.../root_panel --depth=2 --max-nodes=80")
+jsonui_debugger("/html hud.hud_screen /.../root_panel --depth=2 --max-nodes=80 --visible-only --html-only")
 ```
 
 返回给 AI 阅读的 HTML 伪表达。实现上仍由 Py 侧读取结构化树数据，C++ MCP 层在解析 JSON 后追加 `data.html`，避免把表达转换逻辑放进游戏执行环境。
 
 注意：`data.html` 是由 Minecraft 当前运行时渲染/布局数据转换来的参考表达，只用于快速理解节点层级、类型、锚点、尺寸和位置。它不是 JSON UI 源码还原，也不是浏览器可精确渲染的 HTML/CSS。
+
+默认调试时建议加 `--html-only`，只返回 `html`、`html_note` 和 `summary`，避免完整 `tree` 占用过多上下文。需要详细结构化树时再去掉该选项。
 
 ### `/find`
 

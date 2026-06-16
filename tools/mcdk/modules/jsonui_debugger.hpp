@@ -49,6 +49,12 @@ Output data:
 - ui_size: JSON UI logical size.
 - window_size: client window size.)";
         }
+        if (command == "overview" || command == "/overview") {
+            return R"(/overview [--screen=top|all|<screen>] [--child-limit=12]
+Return a compact starting point for AI UI inspection.
+
+It lists current screens, probes common native JSON UI root candidates, returns direct child summaries, and suggests next commands. Use this before /tree or /html when you do not know the component path.)";
+        }
         if (command == "probe" || command == "/probe") {
             return R"(/probe <screen> <path>
 Check whether a node path can be read and return a compact summary.
@@ -83,10 +89,13 @@ Safety:
 - --visible-only filters hidden nodes.)";
         }
         if (command == "html" || command == "/html") {
-            return R"(/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]
+            return R"(/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only] [--html-only]
 Return the same bounded tree plus HTML-like pseudo output for AI layout reading.
 
-The HTML-like output is derived from Minecraft runtime layout/render data. It is only a layout reference, not a source JSON UI reconstruction and not browser-accurate HTML.)";
+The HTML-like output is derived from Minecraft runtime layout/render data. It is only a layout reference, not a source JSON UI reconstruction and not browser-accurate HTML.
+
+Options:
+- --html-only omits the full tree and returns html plus a compact summary.)";
         }
         if (command == "find" || command == "/find") {
             return R"(/find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]
@@ -103,14 +112,16 @@ Options:
 /help
 /help <command>
 /screens
+/overview [--screen=top|all|<screen>] [--child-limit=12]
 /probe <screen> <path>
 /children <screen> <path> [--detail] [--limit=50]
 /node <screen> <path> [--fields=basic,layout,text,container]
 /tree <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]
-/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]
+/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only] [--html-only]
 /find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]
 
 Safety:
+- Start with /overview when component paths are unknown.
 - Tree commands expand level by level.
 - Default /tree limits: depth=2, max-nodes=80.
 - /html is a runtime layout reference, not source JSON UI reconstruction.
@@ -256,20 +267,37 @@ def _string_option(args, name, default, allowed=None):
         value = default
     return value
 
+)PY";
+        py << R"PY(
+
 def _node_basic(screen, path):
     t = gui.get_control_def_type(screen, path)
+    visible = False
+    computed = {'size': None, 'position': None, 'global_position': None}
+    try:
+        visible = gui.get_visible(screen, path)
+    except Exception:
+        pass
+    try:
+        computed['size'] = _as_list(gui.get_size(screen, path))
+    except Exception:
+        pass
+    try:
+        computed['position'] = _as_list(gui.get_position(screen, path))
+    except Exception:
+        pass
+    try:
+        computed['global_position'] = _as_list(gui.get_global_position(screen, path))
+    except Exception:
+        pass
     data = {
         'screen': screen,
         'path': path,
         'name': path.rstrip('/').rsplit('/', 1)[-1] if path else '',
         'type_value': t,
         'type': _type_name(t),
-        'visible': gui.get_visible(screen, path),
-        'computed': {
-            'size': _as_list(gui.get_size(screen, path)),
-            'position': _as_list(gui.get_position(screen, path)),
-            'global_position': _as_list(gui.get_global_position(screen, path))
-        }
+        'visible': visible,
+        'computed': computed
     }
     try:
         data['children_count'] = len(gui.get_children_name_from_parent(screen, path))
@@ -323,6 +351,136 @@ def _children(screen, path, limit, detail):
         'children': out,
         'truncated': len(names) > limit
     }
+
+ROOT_CANDIDATES = [
+    '/variables_button_mappings_and_controls/safezone_screen_matrix/inner_matrix/safezone_screen_panel/root_screen_panel',
+    '/variables_button_mappings_and_controls/safezone_screen_matrix/inner_matrix/safezone_screen_panel/root_screen_panel/root_panel',
+    '/variables_button_mappings_and_controls/safezone_screen_matrix/inner_matrix/safezone_screen_panel/root_screen_panel/stack_panel',
+    '/variables_button_mappings_and_controls/safezone_screen_matrix/inner_matrix/safezone_screen_panel/root_screen_panel/pause_screen_main_panels',
+    '/variables_button_mappings_and_controls/safezone_screen_matrix/inner_matrix/safezone_screen_panel/root_screen_panel/base_panel',
+    '/variables_button_mappings_and_controls/safezone_screen_matrix/inner_matrix/safezone_screen_panel/root_screen_panel/content_stack_panel',
+    '/variables_button_mappings_and_controls/safezone_screen_matrix/inner_matrix/safezone_screen_panel/root_screen_panel/bg',
+]
+
+def _child_summary(screen, path, limit):
+    try:
+        names = gui.get_children_name_from_parent(screen, path)
+    except Exception as exc:
+        return {'ok': False, 'error': repr(exc), 'children': [], 'children_count': None, 'truncated': False}
+    children = []
+    visible_count = 0
+    hidden_count = 0
+    for name in names[:limit]:
+        child_path = path.rstrip('/') + '/' + name
+        item = {'name': name, 'path': child_path}
+        try:
+            item['type'] = _type_name(gui.get_control_def_type(screen, child_path))
+        except Exception as exc:
+            item['type_error'] = repr(exc)
+        try:
+            item['visible'] = gui.get_visible(screen, child_path)
+            if item['visible']:
+                visible_count += 1
+            else:
+                hidden_count += 1
+        except Exception as exc:
+            item['visible_error'] = repr(exc)
+        try:
+            item['size'] = _as_list(gui.get_size(screen, child_path))
+        except Exception as exc:
+            item['size_error'] = repr(exc)
+        children.append(item)
+    if len(names) > limit:
+        hidden_count = None
+    return {
+        'ok': True,
+        'children_count': len(names),
+        'children': children,
+        'visible_in_sample': visible_count,
+        'hidden_in_sample': hidden_count,
+        'truncated': len(names) > limit
+    }
+
+def _probe_root_candidate(screen, path, child_limit):
+    try:
+        node = _node_basic(screen, path)
+    except Exception as exc:
+        return {'path': path, 'ok': False, 'error': repr(exc)}
+    try:
+        summary = _child_summary(screen, path, child_limit)
+        ok = summary.get('ok') and summary.get('children_count') is not None
+        if not ok:
+            return {'path': path, 'ok': False, 'node': node, 'error': summary.get('error')}
+        result = {
+            'path': path,
+            'ok': True,
+            'type': node.get('type'),
+            'visible': node.get('visible'),
+            'computed': node.get('computed'),
+            'children_count': summary.get('children_count'),
+            'children': summary.get('children'),
+            'visible_in_sample': summary.get('visible_in_sample'),
+            'hidden_in_sample': summary.get('hidden_in_sample'),
+            'truncated': summary.get('truncated')
+        }
+        return result
+    except Exception as exc:
+        return {'path': path, 'ok': False, 'node': node, 'error': repr(exc)}
+
+def _screen_short_to_full(short_name, screens):
+    for item in screens:
+        if item == short_name or item.endswith('.' + short_name):
+            return item
+    return short_name
+
+def _overview(screen_arg, child_limit):
+    screens = gui.get_all_screen_fullnames()
+    top_short = gui.get_top_screen()
+    top_full = _screen_short_to_full(top_short, screens)
+    if screen_arg == 'all':
+        target_screens = screens
+    elif screen_arg == 'top':
+        target_screens = [top_full] if top_full else []
+    else:
+        target_screens = [_screen_short_to_full(screen_arg, screens)]
+    out_screens = []
+    for screen in target_screens:
+        roots = []
+        for path in ROOT_CANDIDATES:
+            try:
+                root = _probe_root_candidate(screen, path, child_limit)
+                if root.get('ok'):
+                    roots.append(root)
+            except Exception:
+                pass
+        suggested_root = None
+        if roots:
+            visible_roots = [r for r in roots if r.get('visible')]
+            suggested_root = (visible_roots or roots)[0].get('path')
+        out_screens.append({
+            'screen': screen,
+            'is_top': screen == top_full,
+            'roots': roots,
+            'suggested_root': suggested_root,
+            'suggested_next': [
+                '/html %s %s --depth=2 --max-nodes=80 --visible-only --html-only' % (screen, suggested_root),
+                '/find %s %s <query> --depth=5 --limit=30' % (screen, suggested_root),
+                '/children %s %s --detail --limit=30' % (screen, suggested_root)
+            ] if suggested_root else []
+        })
+    return {
+        'top_screen': top_short,
+        'top_screen_fullname': top_full,
+        'screens': screens,
+        'ui_size': _as_list(gui.get_client_ui_screen_size()),
+        'window_size': _as_list(gui.get_client_screen_size()),
+        'child_limit': child_limit,
+        'screen_overviews': out_screens,
+        'note': 'Use suggested_root as the starting component_path. Do not use / as a native JSON UI root.'
+    }
+
+)PY";
+        py << R"PY(
 
 def _tree(screen, root, max_depth, max_nodes, visible_only, include_text=False):
     scan_limit = max(max_nodes * 5, max_nodes + 50)
@@ -471,9 +629,12 @@ def _find(screen, root, query, type_filter, match_mode, max_depth, max_nodes, li
     }
 
 def _screens():
+    screens = gui.get_all_screen_fullnames()
+    top_short = gui.get_top_screen()
     return {
-        'top_screen': gui.get_top_screen(),
-        'screens': gui.get_all_screen_fullnames(),
+        'top_screen': top_short,
+        'top_screen_fullname': _screen_short_to_full(top_short, screens),
+        'screens': screens,
         'ui_size': _as_list(gui.get_client_ui_screen_size()),
         'window_size': _as_list(gui.get_client_screen_size())
     }
@@ -481,10 +642,14 @@ def _screens():
 def _run(cmd):
     args = _split_args(cmd)
     if not args or args[0] == '/help':
-        return _ok('/help', {'text': 'Commands: /help, /screens, /probe, /children, /node, /tree, /html, /find'})
+        return _ok('/help', {'text': 'Commands: /help, /screens, /overview, /probe, /children, /node, /tree, /html, /find'})
     name = args[0]
     if name == '/screens':
         return _ok(name, _screens())
+    if name == '/overview':
+        screen_arg = args[1] if len(args) >= 2 and not args[1].startswith('--') else _string_option(args[1:], 'screen', 'top')
+        child_limit = _int_option(args[1:], 'child-limit', 12, 1, 50)
+        return _ok(name, _overview(screen_arg, child_limit))
     if name == '/probe':
         if len(args) < 3:
             return _err(name, 'usage: /probe <screen> <path>', 'USAGE')
@@ -780,6 +945,20 @@ except Exception as exc:
         const auto   follow   = jsonStringOr(value, "followType", "none");
 
         std::ostringstream out;
+        if (follow == "children") {
+            if (absValue == 0.0 && relValue == 1.0) {
+                return "fit-content";
+            }
+            out << "calc(fit-content * " << relValue << " + " << absValue << "px)";
+            return out.str();
+        }
+        if (follow == "maxChildren") {
+            if (absValue == 0.0 && relValue == 1.0) {
+                return "max-content";
+            }
+            out << "calc(max-content * " << relValue << " + " << absValue << "px)";
+            return out.str();
+        }
         if (follow == "none" || relValue == 0.0) {
             out << absValue << "px";
             return out.str();
@@ -824,6 +1003,16 @@ except Exception as exc:
             }
             if (layout.contains("anchor_to")) {
                 attrs.push_back("data-anchor-to=\"" + htmlEscape(jsonScalarToString(layout["anchor_to"]), true) + "\"");
+            }
+            if (layout.contains("size_x") && layout["size_x"].is_object()) {
+                attrs.push_back(
+                    "data-follow-x=\"" + htmlEscape(jsonStringOr(layout["size_x"], "followType", "none"), true) + "\""
+                );
+            }
+            if (layout.contains("size_y") && layout["size_y"].is_object()) {
+                attrs.push_back(
+                    "data-follow-y=\"" + htmlEscape(jsonStringOr(layout["size_y"], "followType", "none"), true) + "\""
+                );
             }
         }
 
@@ -930,10 +1119,35 @@ except Exception as exc:
         if (!data.contains("tree")) {
             return;
         }
+        const bool htmlOnly = text.find("--html-only") != std::string::npos;
         data["html"] = treeToHtmlPseudo(data["tree"]);
         data["html_note"] =
             "HTML-like pseudo output derived from Minecraft runtime layout/render data. Use it as a layout reference "
             "only; it is not source JSON UI reconstruction and not browser-accurate HTML.";
+        if (htmlOnly) {
+            nlohmann::json summary = {
+                {"screen", data.value("screen", std::string())},
+                {"root", data.value("root", std::string())},
+                {"max_depth", data.value("max_depth", 0)},
+                {"max_nodes", data.value("max_nodes", 0)},
+                {"returned_nodes", data.value("returned_nodes", 0)},
+                {"scanned_nodes", data.value("scanned_nodes", data.value("visited_nodes", 0))},
+                {"scan_limit", data.value("scan_limit", 0)},
+                {"truncated", data.value("truncated", false)},
+                {"truncated_reason", data.value("truncated_reason", nlohmann::json(nullptr))}
+            };
+            if (data["tree"].is_object()) {
+                summary["tree_root"] = {
+                    {"name", data["tree"].value("name", std::string())},
+                    {"type", data["tree"].value("type", std::string())},
+                    {"path", data["tree"].value("path", std::string())},
+                    {"visible", data["tree"].value("visible", false)},
+                    {"children_count", data["tree"].value("children_count", 0)}
+                };
+            }
+            data.erase("tree");
+            data["summary"] = std::move(summary);
+        }
     }
 
 } // namespace mcdk::jsonui_debugger
