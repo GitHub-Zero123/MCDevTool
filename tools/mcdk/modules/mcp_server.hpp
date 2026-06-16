@@ -6,6 +6,7 @@
 #include <functional>
 #include "./log_buffer.hpp"
 #include "./mcp_tool_definitions.hpp"
+#include "./jsonui_debugger.hpp"
 #include <nlohmann/json.hpp>
 #include <mcp_server.h>
 #include <base64.hpp>
@@ -161,6 +162,58 @@ namespace mcdk {
                     bool        directReturn = params.value("direct_return", true);
 
                     return codeExecuteHandler(code, isClient, directReturn);
+                }
+            );
+        }
+
+        void initJsonUiDebuggerTool() {
+            mcp::tool jsonUiTool = mcp_tool_definitions::buildJsonUiDebuggerTool();
+
+            server->register_tool(
+                jsonUiTool,
+                [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
+                    const std::string cmd = params.value("cmd", "/help");
+                    if (cmd.empty() || cmd.rfind("/help", 0) == 0) {
+                        const auto help = jsonui_debugger::buildLocalHelpJson(cmd.empty() ? "/help" : cmd);
+                        return nlohmann::json{
+                            {"isError", false},
+                            {"content", nlohmann::json::array({{{"type", "text"}, {"text", help.dump(2)}}})}
+                        };
+                    }
+
+                    if (!codeExecuteHandler) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array({{{"type", "text"}, {"text", "Code execution handler not set"}}})}
+                        };
+                    }
+
+                    const std::string code = jsonui_debugger::buildPythonCode(cmd);
+                    auto              raw  = codeExecuteHandler(code, true, true);
+
+                    if (raw.value("isError", false)) {
+                        return raw;
+                    }
+
+                    std::string text;
+                    if (raw.contains("content") && raw["content"].is_array() && !raw["content"].empty()) {
+                        const auto& first = raw["content"][0];
+                        if (first.is_object()) {
+                            text = first.value("text", "");
+                        }
+                    }
+                    if (text.empty()) {
+                        text = raw.dump();
+                    }
+
+                    auto parsed = jsonui_debugger::parseFirstJsonFromDirtyText(text);
+                    jsonui_debugger::attachHtmlPseudoIfRequested(cmd, parsed);
+                    const bool isError = !parsed.is_object() || !parsed.value("ok", false);
+                    return nlohmann::json{
+                        {"isError", isError},
+                        {"content", nlohmann::json::array({{{"type", "text"}, {"text", parsed.dump(2)}}})}
+                    };
                 }
             );
         }
@@ -418,6 +471,7 @@ namespace mcdk {
         void initTools() {
             initLogTool();
             initCodeExecutionTool();
+            initJsonUiDebuggerTool();
             initGameTools();
             initGameWindowTools();
         }

@@ -23,13 +23,14 @@ AI 编写 JSON UI -> 游戏运行验证 -> 读取结构化布局信息 -> 转 HT
    建议封装的 MCP Tool：列 screen、列子节点、取单节点布局、浅层树、转 HTML 伪表达等。
 
 5. [netease-ui-debugger.md](netease-ui-debugger.md)
-   `gui.set_netease_ui_debugger_enable(True)` 和 `nud_*` 能力。它偏编辑器/选择器，会改变点击行为，未来做可视化编辑器时再启用。
+   可选附录。`gui.set_netease_ui_debugger_enable(True)` 和 `nud_*` 偏编辑器/选择器，会影响用户点击和持续输入状态，MVP 阶段不建议纳入默认 MCP 功能。
 
 ## 当前结论
 
 - JSON UI 开发反馈只围绕 `minecraft.gui` 原生界面接口展开。
 - 关键低风险接口是 `get_all_screen_fullnames`、`get_control_def_type`、`get_children_name_from_parent`、`get_size/get_position/get_global_position/get_visible`、`get_size_x/y`、`get_position_x/y`、`get_anchor_from/to`。
 - `get_all_children_path_from_parent`、`recursively_get_children`、`get_property_bag_value` 必须谨慎封装，不能裸调大节点。
+- `set_netease_ui_debugger_enable` / `nud_*` 暂不作为 MVP 主线；若未来封装，必须短事务启用、操作后立即禁用并清理状态。
 - AI 需要两类输出：结构化 UI 布局 JSON，以及保留 JSON UI 语义的 HTML 伪表达。
 
 ## 实测基线

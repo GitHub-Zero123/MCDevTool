@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mcp_tool.h>
+#include "jsonui_debugger.hpp"
 
 namespace mcdk::mcp_tool_definitions {
 
@@ -168,12 +169,21 @@ Parameters:
             .build();
     }
 
+    inline mcp::tool buildJsonUiDebuggerTool() {
+        return mcp::tool_builder(jsonui_debugger::ToolName)
+            .with_description(jsonui_debugger::ToolDescription)
+            .with_string_param("cmd", "Command string. Use /help to list commands and usage.", true)
+            .with_read_only_hint(true)
+            .build();
+    }
+
     inline std::vector<mcp::tool> buildAllTools() {
         return {
             buildGetLatestLogsTool(),
             buildGetLogRangeTool(),
             buildGetLatestErrorLogsTool(),
             buildExecuteCodeTool(),
+            buildJsonUiDebuggerTool(),
             buildReloadGameTool(),
             buildReloadAddonAndGameTool(),
             buildReloadAllShadersTool(),

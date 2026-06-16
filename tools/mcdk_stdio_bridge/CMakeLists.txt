@@ -1,7 +1,7 @@
 project(MC_DEV_TOOL_MCDK_STDIO_BRIDGE)
 
 add_executable(mcdk_stdio_bridge main.cpp)
-target_compile_features(mcdk_stdio_bridge PRIVATE cxx_std_17)
+target_compile_features(mcdk_stdio_bridge PRIVATE cxx_std_20)
 target_link_libraries(mcdk_stdio_bridge PRIVATE mcp)
 
 target_include_directories(mcdk_stdio_bridge PRIVATE
