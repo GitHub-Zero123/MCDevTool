@@ -109,7 +109,7 @@ Options:
 - --visible-only filters hidden nodes.
 - --image keeps a compact text fallback only. Direct SVG image content is disabled by default because some clients mix tool images into later model context and break subsequent chats.
 - --out=<absolute.svg> writes the generated SVG to an absolute file path, creates parent directories, and returns only compact text plus svg_path.
-- --unsafe-svg-image also returns the SVG as MCP image/svg+xml content for clients known to handle it safely. This may break subsequent AI turns in incompatible clients.
+- --unsafe-svg-image is accepted for backward compatibility but direct MCP image/svg+xml content is disabled by this server; use --out for user visual inspection.
 - The SVG is not a screenshot and does not contain real textures.)";
         }
         if (command == "find" || command == "/find") {
@@ -141,7 +141,7 @@ Safety:
 - Tree commands expand level by level.
 - Default /tree limits: depth=2, max-nodes=80.
 - /html is a runtime layout reference, not source JSON UI reconstruction.
-- /render is mainly for human visual inspection. Use --out=<absolute.svg> to write a viewable SVG file. --image returns compact text only; use --unsafe-svg-image only with clients known to handle SVG image content safely.
+- /render is mainly for human visual inspection. Use --out=<absolute.svg> to write a viewable SVG file. --image and --unsafe-svg-image both return compact text only.
 - Avoid raw recursive JSON UI APIs on large roots.)";
     }
 

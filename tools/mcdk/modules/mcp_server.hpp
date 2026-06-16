@@ -254,10 +254,12 @@ namespace mcdk {
                     jsonui_debugger::attachSvgDiagramIfRequested(cmd, parsed);
                     const bool isError = !parsed.is_object() || !parsed.value("ok", false);
 
-                    const bool wantsImageContent = jsonui_debugger::commandHasFlag(cmd, "--unsafe-svg-image");
-                    const auto outSvgPath        = jsonui_debugger::commandOptionValue(cmd, "out");
+                    const bool unsafeSvgImageRequested =
+                        jsonui_debugger::commandHasFlag(cmd, "--unsafe-svg-image");
+                    const auto outSvgPath = jsonui_debugger::commandOptionValue(cmd, "out");
                     const bool wantsImageFallback =
-                        jsonui_debugger::commandHasFlag(cmd, "--image") || wantsImageContent || outSvgPath.has_value();
+                        jsonui_debugger::commandHasFlag(cmd, "--image") || unsafeSvgImageRequested
+                        || outSvgPath.has_value();
 
                     if (!isError && wantsImageFallback && parsed.contains("data") && parsed["data"].is_object()
                         && parsed["data"].contains("svg") && parsed["data"]["svg"].is_string()) {
@@ -281,11 +283,12 @@ namespace mcdk {
                                 }
                             }
                             textOnly["data"].erase("svg");
-                            if (wantsImageContent) {
+                            if (unsafeSvgImageRequested) {
+                                textOnly["data"]["unsafe_svg_image_disabled"] = true;
                                 textOnly["data"]["image_note"] =
-                                    "The SVG is also returned as MCP image/svg+xml content because --unsafe-svg-image "
-                                    "was requested. Some clients mix tool images into later model context and may break "
-                                    "subsequent AI turns.";
+                                    "--unsafe-svg-image was requested, but direct MCP image/svg+xml content is disabled "
+                                    "by this server to avoid breaking subsequent AI turns in clients that mix tool images "
+                                    "into later model context. Use --out=<absolute.svg> for user visual inspection.";
                             } else if (outSvgPath.has_value()) {
                                 textOnly["data"]["image_note"] =
                                     "The SVG was written to disk and omitted from the tool text payload to avoid mixing "
@@ -294,26 +297,13 @@ namespace mcdk {
                                 textOnly["data"]["image_note"] =
                                     "--image requested compact text fallback only. Direct MCP image/svg+xml content is "
                                     "disabled by default because some clients mix tool images into later model context "
-                                    "and break subsequent AI turns. Use --unsafe-svg-image only with a compatible client.";
+                                    "and break subsequent AI turns. Use --out=<absolute.svg> for user visual inspection.";
                             }
                         }
 
-                        if (svgWriteFailed || !wantsImageContent) {
-                            return nlohmann::json{
-                                {"isError", !textOnly.value("ok", true)},
-                                {"content",
-                                 nlohmann::json::array({{{"type", "text"}, {"text", textOnly.dump(2)}}})}
-                            };
-                        }
-
-                        std::string b64 = base64::encode(svg.data(), svg.size());
                         return nlohmann::json{
-                            {"isError", false},
-                            {"content",
-                             nlohmann::json::array(
-                                 {{{"type", "image"}, {"data", b64}, {"mimeType", "image/svg+xml"}},
-                                  {{"type", "text"}, {"text", textOnly.dump(2)}}}
-                             )}
+                            {"isError", !textOnly.value("ok", true)},
+                            {"content", nlohmann::json::array({{{"type", "text"}, {"text", textOnly.dump(2)}}})}
                         };
                     }
 

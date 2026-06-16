@@ -216,13 +216,13 @@ jsonui_debugger("/render hud.hud_screen /.../root_panel --depth=2 --max-nodes=80
 
 此时 MCP 返回仍是文本 content，但文本摘要会移除 `data.svg` 大字符串，只保留 `summary` 和说明。不要默认返回 `type=image`、`mimeType=image/svg+xml` 的 MCP content：部分 Agent 客户端会把工具图片结果混入后续模型上下文，而上游模型/网关未必接受 SVG 图片块，可能导致后续聊天请求失败。
 
-如果明确知道当前客户端能安全处理 SVG 图片 content，可以使用实验开关：
+历史版本中存在实验开关：
 
 ```text
 jsonui_debugger("/render hud.hud_screen /.../root_panel --depth=2 --max-nodes=80 --visible-only --label=path-tail --unsafe-svg-image")
 ```
 
-`--unsafe-svg-image` 会额外返回 `type=image`、`mimeType=image/svg+xml` 的 content。它主要用于验证客户端渲染能力，不建议在普通 AI 会话中使用。
+`--unsafe-svg-image` 现在仅为兼容旧命令而保留；服务端会降级为纯文本摘要，并设置 `unsafe_svg_image_disabled: true`，不会再额外返回 `type=image`、`mimeType=image/svg+xml` 的 content。需要给用户视觉检查时，请使用 `--out=<absolute.svg>` 写出文件。
 
 可用选项：
 
@@ -230,7 +230,7 @@ jsonui_debugger("/render hud.hud_screen /.../root_panel --depth=2 --max-nodes=80
 - `--legend=false`：隐藏底部图例，适合空间很小的 UI。
 - `--out=<absolute.svg>`：把 SVG 写到绝对路径，并在 tool 返回中只保留路径和摘要。
 - `--image`：移除文本摘要里的 SVG 大字符串，只保留紧凑摘要，避免上下文膨胀。
-- `--unsafe-svg-image`：额外返回 MCP `image/svg+xml` image content。仅用于已知兼容的客户端。
+- `--unsafe-svg-image`：兼容旧命令；服务端仍只返回紧凑文本，不再返回 MCP `image/svg+xml` image content。
 
 AI 默认仍应优先使用 `/overview`、`/html --html-only`、`/find` 和结构化 JSON；只有当客户端/模型具备足够图像理解能力时，才把 `/render` 输出当作辅助输入。
 
