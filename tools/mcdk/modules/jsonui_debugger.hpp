@@ -97,6 +97,21 @@ The HTML-like output is derived from Minecraft runtime layout/render data. It is
 Options:
 - --html-only omits the full tree and returns html plus a compact summary.)";
         }
+        if (command == "render" || command == "/render") {
+            return R"(/render <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only] [--label=name|type|path-tail|none] [--legend=false] [--image] [--out=<absolute.svg>] [--unsafe-svg-image]
+Return an SVG layout diagram derived from Minecraft runtime layout/render data.
+
+This is mainly for users to visually inspect layout boxes. AI should prefer /overview, /html --html-only, and structured JSON unless it has strong image understanding.
+
+Options:
+- --label=name|type|path-tail|none controls rectangle labels, default name.
+- --legend=false hides the color legend.
+- --visible-only filters hidden nodes.
+- --image keeps a compact text fallback only. Direct SVG image content is disabled by default because some clients mix tool images into later model context and break subsequent chats.
+- --out=<absolute.svg> writes the generated SVG to an absolute file path, creates parent directories, and returns only compact text plus svg_path.
+- --unsafe-svg-image also returns the SVG as MCP image/svg+xml content for clients known to handle it safely. This may break subsequent AI turns in incompatible clients.
+- The SVG is not a screenshot and does not contain real textures.)";
+        }
         if (command == "find" || command == "/find") {
             return R"(/find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]
 Search under a bounded root. Defaults to node-name matching to avoid parent path noise.
@@ -118,6 +133,7 @@ Options:
 /node <screen> <path> [--fields=basic,layout,text,container]
 /tree <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]
 /html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only] [--html-only]
+/render <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only] [--label=name|type|path-tail|none] [--image] [--out=<absolute.svg>]
 /find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]
 
 Safety:
@@ -125,7 +141,75 @@ Safety:
 - Tree commands expand level by level.
 - Default /tree limits: depth=2, max-nodes=80.
 - /html is a runtime layout reference, not source JSON UI reconstruction.
+- /render is mainly for human visual inspection. Use --out=<absolute.svg> to write a viewable SVG file. --image returns compact text only; use --unsafe-svg-image only with clients known to handle SVG image content safely.
 - Avoid raw recursive JSON UI APIs on large roots.)";
+    }
+
+    inline bool commandHasFlag(std::string_view command, std::string_view flag) {
+        std::size_t pos = 0;
+        while ((pos = command.find(flag, pos)) != std::string_view::npos) {
+            const bool leftOk  = pos == 0 || std::isspace(static_cast<unsigned char>(command[pos - 1]));
+            const auto end     = pos + flag.size();
+            const bool rightOk = end >= command.size() || std::isspace(static_cast<unsigned char>(command[end]));
+            if (leftOk && rightOk) {
+                return true;
+            }
+            pos = end;
+        }
+        return false;
+    }
+
+    inline std::optional<std::string> commandOptionValue(std::string_view command, std::string_view optionName) {
+        const auto flag = std::string("--") + std::string(optionName) + "=";
+        std::size_t pos = 0;
+        while ((pos = command.find(flag, pos)) != std::string_view::npos) {
+            const bool leftOk = pos == 0 || std::isspace(static_cast<unsigned char>(command[pos - 1]));
+            if (!leftOk) {
+                pos += flag.size();
+                continue;
+            }
+
+            std::size_t valueStart = pos + flag.size();
+            if (valueStart >= command.size()) {
+                return std::string();
+            }
+
+            std::string out;
+            const char first = command[valueStart];
+            if (first == '"' || first == '\'') {
+                const char quote = first;
+                ++valueStart;
+                bool escaped = false;
+                for (std::size_t i = valueStart; i < command.size(); ++i) {
+                    const char ch = command[i];
+                    if (escaped) {
+                        out.push_back(ch);
+                        escaped = false;
+                        continue;
+                    }
+                    if (ch == '\\') {
+                        if (i + 1 < command.size() && (command[i + 1] == quote || command[i + 1] == '\\')) {
+                            escaped = true;
+                            continue;
+                        }
+                        out.push_back(ch);
+                        continue;
+                    }
+                    if (ch == quote) {
+                        return out;
+                    }
+                    out.push_back(ch);
+                }
+                return out;
+            }
+
+            std::size_t valueEnd = valueStart;
+            while (valueEnd < command.size() && !std::isspace(static_cast<unsigned char>(command[valueEnd]))) {
+                ++valueEnd;
+            }
+            return std::string(command.substr(valueStart, valueEnd - valueStart));
+        }
+        return std::nullopt;
     }
 
     inline std::string commandNameAfterHelp(std::string_view command) {
@@ -688,6 +772,16 @@ def _run(cmd):
         visible_only = bool(_option(args[3:], 'visible-only', False))
         data = _tree(args[1], args[2], depth, max_nodes, visible_only, True)
         return _ok(name, data)
+    if name == '/render':
+        if len(args) < 3:
+            return _err(name, 'usage: /render <screen> <path> [--depth=2] [--max-nodes=80]', 'USAGE')
+        depth = _int_option(args[3:], 'depth', 2, 0, 6)
+        max_nodes = _int_option(args[3:], 'max-nodes', 80, 1, 300)
+        visible_only = bool(_option(args[3:], 'visible-only', False))
+        data = _tree(args[1], args[2], depth, max_nodes, visible_only, True)
+        data['render_label'] = _string_option(args[3:], 'label', 'name', ('name', 'type', 'path-tail', 'none'))
+        data['render_legend'] = _string_option(args[3:], 'legend', 'true', ('true', 'false')) != 'false'
+        return _ok(name, data)
     if name == '/find':
         if len(args) < 4:
             return _err(name, 'usage: /find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]', 'USAGE')
@@ -1107,6 +1201,182 @@ except Exception as exc:
         return out.str();
     }
 
+    inline double jsonArrayNumberOr(const nlohmann::json& array, std::size_t index, double fallback) {
+        if (!array.is_array() || array.size() <= index || !array[index].is_number()) {
+            return fallback;
+        }
+        return array[index].get<double>();
+    }
+
+    inline const char* svgColorForType(std::string_view typeName) {
+        if (typeName == "Button") {
+            return "#2f80ed";
+        }
+        if (typeName == "Label" || typeName == "RichText") {
+            return "#27ae60";
+        }
+        if (typeName == "Image") {
+            return "#9b51e0";
+        }
+        if (typeName == "StackPanel" || typeName == "Grid" || typeName == "StackGrid") {
+            return "#f2994a";
+        }
+        if (typeName == "Factory" || typeName == "Custom") {
+            return "#eb5757";
+        }
+        return "#4f4f4f";
+    }
+
+    struct SvgNodeRef {
+        const nlohmann::json* node = nullptr;
+        int                   depth = 0;
+    };
+
+    inline void collectSvgNodes(const nlohmann::json& node, std::vector<SvgNodeRef>& out, int depth = 0) {
+        if (!node.is_object() || node.contains("error")) {
+            return;
+        }
+        out.push_back({&node, depth});
+        if (!node.contains("children") || !node["children"].is_array()) {
+            return;
+        }
+        for (const auto& child : node["children"]) {
+            collectSvgNodes(child, out, depth + 1);
+        }
+    }
+
+    inline std::string renderLabelForNode(const nlohmann::json& node, std::string_view labelMode) {
+        if (labelMode == "none") {
+            return {};
+        }
+        if (labelMode == "type") {
+            return node.value("type", std::string());
+        }
+        if (labelMode == "path-tail") {
+            auto path = node.value("path", std::string());
+            if (path.empty()) {
+                return node.value("name", std::string());
+            }
+            std::replace(path.begin(), path.end(), '/', ' ');
+            std::istringstream parts(path);
+            std::vector<std::string> names;
+            for (std::string item; parts >> item;) {
+                names.push_back(std::move(item));
+            }
+            if (names.empty()) {
+                return {};
+            }
+            const auto begin = names.size() > 3 ? names.size() - 3 : 0;
+            std::ostringstream out;
+            for (std::size_t i = begin; i < names.size(); ++i) {
+                if (i != begin) {
+                    out << '/';
+                }
+                out << names[i];
+            }
+            return out.str();
+        }
+        auto name = node.value("name", std::string());
+        if (name.empty()) {
+            name = node.value("type", std::string());
+        }
+        return name;
+    }
+
+    inline std::string svgTitleForNode(const nlohmann::json& node) {
+        std::ostringstream out;
+        out << node.value("type", std::string("Unknown")) << " ";
+        out << node.value("path", std::string());
+        return out.str();
+    }
+
+    inline std::string treeToSvgDiagram(const nlohmann::json& data) {
+        if (!data.is_object() || !data.contains("tree") || !data["tree"].is_object()) {
+            return {};
+        }
+        const auto& root     = data["tree"];
+        const auto& computed = root.contains("computed") && root["computed"].is_object() ? root["computed"] : nlohmann::json();
+        const auto& size     = computed.contains("size") ? computed["size"] : nlohmann::json();
+        const double width   = std::max(1.0, jsonArrayNumberOr(size, 0, 640.0));
+        const double height  = std::max(1.0, jsonArrayNumberOr(size, 1, 360.0));
+        const auto labelMode  = data.value("render_label", std::string("name"));
+        const bool showLegend = data.value("render_legend", true);
+
+        std::vector<SvgNodeRef> nodes;
+        collectSvgNodes(root, nodes);
+
+        std::ostringstream svg;
+        svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 " << width << ' ' << height
+            << "\" width=\"" << width << "\" height=\"" << height << "\">\n";
+        svg << "  <rect x=\"0\" y=\"0\" width=\"" << width << "\" height=\"" << height
+            << "\" fill=\"#111827\" opacity=\"0.08\"/>\n";
+        svg << "  <text x=\"6\" y=\"14\" font-family=\"monospace\" font-size=\"10\" fill=\"#111827\">"
+            << htmlEscape(data.value("screen", std::string()), false) << " runtime layout diagram</text>\n";
+
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            const auto& node = *nodes[i].node;
+            const auto& comp = node.contains("computed") && node["computed"].is_object() ? node["computed"] : nlohmann::json();
+            const auto& gp   = comp.contains("global_position") ? comp["global_position"] : nlohmann::json();
+            const auto& ns   = comp.contains("size") ? comp["size"] : nlohmann::json();
+            double       x    = jsonArrayNumberOr(gp, 0, 0.0);
+            double       y    = jsonArrayNumberOr(gp, 1, 0.0);
+            double       w    = jsonArrayNumberOr(ns, 0, 0.0);
+            double       h    = jsonArrayNumberOr(ns, 1, 0.0);
+            const auto type  = node.value("type", std::string());
+            const bool visible = node.value("visible", false);
+            const char* color = svgColorForType(type);
+            const double opacity = visible ? 0.20 : 0.06;
+            const double strokeOpacity = visible ? 0.95 : 0.35;
+            const double inset = std::min(3.0, static_cast<double>(nodes[i].depth) * 0.65);
+
+            if (w <= 0.5 || h <= 0.5) {
+                const double cx = std::min(std::max(x, 0.0), width);
+                const double cy = std::min(std::max(y, 0.0), height);
+                svg << "  <g opacity=\"" << strokeOpacity << "\"><title>" << htmlEscape(svgTitleForNode(node))
+                    << "</title><line x1=\"" << cx - 3 << "\" y1=\"" << cy
+                    << "\" x2=\"" << cx + 3 << "\" y2=\"" << cy << "\" stroke=\"" << color
+                    << "\" stroke-width=\"1\"/><line x1=\"" << cx << "\" y1=\"" << cy - 3 << "\" x2=\"" << cx
+                    << "\" y2=\"" << cy + 3 << "\" stroke=\"" << color << "\" stroke-width=\"1\"/></g>\n";
+                continue;
+            }
+
+            if (w > inset * 2.0 && h > inset * 2.0) {
+                x += inset;
+                y += inset;
+                w -= inset * 2.0;
+                h -= inset * 2.0;
+            }
+
+            svg << "  <rect x=\"" << x << "\" y=\"" << y << "\" width=\"" << w << "\" height=\"" << h
+                << "\" fill=\"" << color << "\" fill-opacity=\"" << opacity << "\" stroke=\"" << color
+                << "\" stroke-opacity=\"" << strokeOpacity << "\" stroke-width=\"" << (i == 0 ? 1.4 : 0.8)
+                << "\"><title>" << htmlEscape(svgTitleForNode(node)) << "</title></rect>\n";
+
+            const auto label = renderLabelForNode(node, labelMode);
+            if (!label.empty() && w >= 24.0 && h >= 10.0) {
+                const double labelWidth = std::min(w - 2.0, 8.0 + static_cast<double>(std::min<std::size_t>(label.size(), 42)) * 4.8);
+                svg << "  <rect x=\"" << x + 1 << "\" y=\"" << y + 1 << "\" width=\"" << labelWidth
+                    << "\" height=\"11\" fill=\"#ffffff\" fill-opacity=\"0.72\"/>\n";
+                svg << "  <text x=\"" << x + 4 << "\" y=\"" << y + 10
+                    << "\" font-family=\"monospace\" font-size=\"8\" fill=\"#111827\"><title>"
+                    << htmlEscape(svgTitleForNode(node)) << "</title>"
+                    << htmlEscape(label.substr(0, 42)) << "</text>\n";
+            }
+        }
+
+        if (showLegend) {
+            svg << "  <g transform=\"translate(6 " << std::max(24.0, height - 42)
+                << ")\" font-family=\"monospace\" font-size=\"8\" fill=\"#111827\">\n";
+            svg << "    <rect x=\"-3\" y=\"-10\" width=\"" << std::max(1.0, width - 12.0)
+                << "\" height=\"28\" fill=\"#ffffff\" fill-opacity=\"0.72\"/>\n";
+            svg << "    <text y=\"0\">Panel gray, Button blue, Label green, Image purple, Stack/Grid orange, Custom/Factory red</text>\n";
+            svg << "    <text y=\"11\">Generated from Minecraft runtime layout data; not a screenshot and not source JSON UI.</text>\n";
+            svg << "  </g>\n";
+        }
+        svg << "</svg>";
+        return svg.str();
+    }
+
     inline void attachHtmlPseudoIfRequested(std::string_view command, nlohmann::json& parsed) {
         const auto text = trimCopy(command);
         if (text.rfind("/html", 0) != 0 || !parsed.is_object() || !parsed.value("ok", false)) {
@@ -1152,6 +1422,52 @@ except Exception as exc:
             data["html_note"] = htmlNote;
             data["summary"]   = std::move(summary);
         }
+    }
+
+    inline void attachSvgDiagramIfRequested(std::string_view command, nlohmann::json& parsed) {
+        const auto text = trimCopy(command);
+        if (text.rfind("/render", 0) != 0 || !parsed.is_object() || !parsed.value("ok", false)) {
+            return;
+        }
+        if (!parsed.contains("data") || !parsed["data"].is_object()) {
+            return;
+        }
+        auto& data = parsed["data"];
+        if (!data.contains("tree")) {
+            return;
+        }
+
+        const auto svg = treeToSvgDiagram(data);
+        nlohmann::json summary = {
+            {"screen", data.value("screen", std::string())},
+            {"root", data.value("root", std::string())},
+            {"max_depth", data.value("max_depth", 0)},
+            {"max_nodes", data.value("max_nodes", 0)},
+            {"returned_nodes", data.value("returned_nodes", 0)},
+            {"scanned_nodes", data.value("scanned_nodes", data.value("visited_nodes", 0))},
+            {"scan_limit", data.value("scan_limit", 0)},
+            {"truncated", data.value("truncated", false)},
+            {"truncated_reason", data.value("truncated_reason", nlohmann::json(nullptr))},
+            {"label", data.value("render_label", std::string("name"))},
+            {"legend", data.value("render_legend", true)}
+        };
+        if (data["tree"].is_object()) {
+            summary["tree_root"] = {
+                {"name", data["tree"].value("name", std::string())},
+                {"type", data["tree"].value("type", std::string())},
+                {"path", data["tree"].value("path", std::string())},
+                {"visible", data["tree"].value("visible", false)},
+                {"children_count", data["tree"].value("children_count", 0)}
+            };
+        }
+
+        data.clear();
+        data["svg"] = svg;
+        data["svg_note"] =
+            "SVG layout diagram for user visual inspection. It is generated from Minecraft runtime layout data; it is "
+            "not a screenshot and not source JSON UI. AI should prefer structured JSON or /html --html-only unless it "
+            "has strong image understanding.";
+        data["summary"] = std::move(summary);
     }
 
 } // namespace mcdk::jsonui_debugger

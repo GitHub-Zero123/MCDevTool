@@ -69,6 +69,8 @@ For example, "entity.fragment" or "block.vertex". Do not include the file extens
     inline constexpr const char* CaptureGameWindowDescription =
         "Captures the current Minecraft game window as a 480p JPEG screenshot and returns base64-encoded image data. "
         "This is a relatively expensive visual inspection tool and can distract from code/log based debugging. "
+        "For UI structure, layout, node visibility, or JSON UI validation, prefer the specialized jsonui_debugger tool "
+        "before using screenshots. "
         "Prefer get_latest_logs, get_latest_error_logs, and deterministic file/code checks first; use screenshots only "
         "when the task explicitly requires visual confirmation or logs cannot answer the question.";
 

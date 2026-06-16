@@ -31,6 +31,7 @@ Analyze native Minecraft JSON UI runtime state. Use jsonui_debugger("/help") to 
 /help node
 /help tree
 /help html
+/help render
 /help find
 /help probe
 ```
@@ -46,6 +47,7 @@ Analyze native Minecraft JSON UI runtime state. Use jsonui_debugger("/help") to 
 | `/node <screen> <path> [--fields=basic,layout,text,container]` | 返回单节点布局和内容信息 |
 | `/tree <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]` | 安全浅层树 |
 | `/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only] [--html-only]` | 返回由 MC 实时布局数据派生的 HTML 伪表达，仅用于参考布局 |
+| `/render <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only] [--label=name] [--out=<absolute.svg>]` | 返回或写出 SVG 布局图，主要给用户视觉检查 |
 | `/find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]` | 按名称/路径/类型搜索，默认只匹配节点名 |
 
 ## 返回格式
@@ -189,6 +191,48 @@ jsonui_debugger("/html hud.hud_screen /.../root_panel --depth=2 --max-nodes=80 -
 注意：`data.html` 是由 Minecraft 当前运行时渲染/布局数据转换来的参考表达，只用于快速理解节点层级、类型、锚点、尺寸和位置。它不是 JSON UI 源码还原，也不是浏览器可精确渲染的 HTML/CSS。
 
 默认调试时建议加 `--html-only`，只返回 `html`、`html_note` 和 `summary`，避免完整 `tree` 占用过多上下文。需要详细结构化树时再去掉该选项。
+
+### `/render`
+
+```text
+jsonui_debugger("/render hud.hud_screen /.../root_panel --depth=2 --max-nodes=80 --visible-only --label=name")
+```
+
+返回 SVG 布局图字符串，用不同颜色和透明度展示运行时节点矩形。它主要给用户看，用于快速发现重叠、0 尺寸、隐藏节点和大致布局关系。它不是游戏截图，不包含真实贴图，也不是 JSON UI 源码还原。
+
+如果希望用户稳定查看 SVG，推荐写出到完整路径：
+
+```text
+jsonui_debugger("/render hud.hud_screen /.../root_panel --depth=2 --max-nodes=80 --visible-only --label=path-tail --out=D:/Zero123/CPP/CMAKE/MCDevTool/temps/jsonui/root_panel.svg")
+```
+
+`--out` 要求绝对路径且扩展名为 `.svg`，会自动创建父目录。此模式下 tool 返回紧凑文本、`svg_written` 和 `svg_path`，不会把 SVG 大字符串或 MCP image content 混入后续模型上下文。用户/客户端可以直接打开该文件，AI 也可以按需读取 SVG 文本。
+
+如果希望压缩文本上下文，可以追加 `--image`：
+
+```text
+jsonui_debugger("/render hud.hud_screen /.../root_panel --depth=2 --max-nodes=80 --visible-only --label=path-tail --image")
+```
+
+此时 MCP 返回仍是文本 content，但文本摘要会移除 `data.svg` 大字符串，只保留 `summary` 和说明。不要默认返回 `type=image`、`mimeType=image/svg+xml` 的 MCP content：部分 Agent 客户端会把工具图片结果混入后续模型上下文，而上游模型/网关未必接受 SVG 图片块，可能导致后续聊天请求失败。
+
+如果明确知道当前客户端能安全处理 SVG 图片 content，可以使用实验开关：
+
+```text
+jsonui_debugger("/render hud.hud_screen /.../root_panel --depth=2 --max-nodes=80 --visible-only --label=path-tail --unsafe-svg-image")
+```
+
+`--unsafe-svg-image` 会额外返回 `type=image`、`mimeType=image/svg+xml` 的 content。它主要用于验证客户端渲染能力，不建议在普通 AI 会话中使用。
+
+可用选项：
+
+- `--label=name|type|path-tail|none`：控制矩形标签。`path-tail` 适合大树里辨认相近节点。
+- `--legend=false`：隐藏底部图例，适合空间很小的 UI。
+- `--out=<absolute.svg>`：把 SVG 写到绝对路径，并在 tool 返回中只保留路径和摘要。
+- `--image`：移除文本摘要里的 SVG 大字符串，只保留紧凑摘要，避免上下文膨胀。
+- `--unsafe-svg-image`：额外返回 MCP `image/svg+xml` image content。仅用于已知兼容的客户端。
+
+AI 默认仍应优先使用 `/overview`、`/html --html-only`、`/find` 和结构化 JSON；只有当客户端/模型具备足够图像理解能力时，才把 `/render` 输出当作辅助输入。
 
 ### `/find`
 

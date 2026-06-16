@@ -1,4 +1,8 @@
 #pragma once
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <memory>
@@ -13,6 +17,44 @@
 #include <mcdevtool/style.h>
 
 namespace mcdk {
+
+    inline bool writeTextFileUtf8(const std::filesystem::path& path, const std::string& text, std::string& error) {
+        try {
+            if (!path.is_absolute()) {
+                error = "Output path must be absolute.";
+                return false;
+            }
+            auto ext = path.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+            if (ext != ".svg") {
+                error = "Output path must end with .svg.";
+                return false;
+            }
+            const auto parent = path.parent_path();
+            if (!parent.empty()) {
+                std::filesystem::create_directories(parent);
+            }
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            if (!file) {
+                error = "Failed to open output file.";
+                return false;
+            }
+            file.write(text.data(), static_cast<std::streamsize>(text.size()));
+            if (!file) {
+                error = "Failed to write output file.";
+                return false;
+            }
+            return true;
+        } catch (const std::exception& exc) {
+            error = exc.what();
+            return false;
+        } catch (...) {
+            error = "Unknown file write error.";
+            return false;
+        }
+    }
 
     // MCP服务器配置结构
     struct McpServerConfig {
@@ -209,7 +251,72 @@ namespace mcdk {
 
                     auto parsed = jsonui_debugger::parseFirstJsonFromDirtyText(text);
                     jsonui_debugger::attachHtmlPseudoIfRequested(cmd, parsed);
+                    jsonui_debugger::attachSvgDiagramIfRequested(cmd, parsed);
                     const bool isError = !parsed.is_object() || !parsed.value("ok", false);
+
+                    const bool wantsImageContent = jsonui_debugger::commandHasFlag(cmd, "--unsafe-svg-image");
+                    const auto outSvgPath        = jsonui_debugger::commandOptionValue(cmd, "out");
+                    const bool wantsImageFallback =
+                        jsonui_debugger::commandHasFlag(cmd, "--image") || wantsImageContent || outSvgPath.has_value();
+
+                    if (!isError && wantsImageFallback && parsed.contains("data") && parsed["data"].is_object()
+                        && parsed["data"].contains("svg") && parsed["data"]["svg"].is_string()) {
+                        const auto  svg = parsed["data"]["svg"].get<std::string>();
+                        nlohmann::json textOnly = parsed;
+                        bool svgWriteFailed = false;
+                        if (textOnly.contains("data") && textOnly["data"].is_object()) {
+                            if (outSvgPath.has_value()) {
+                                std::string writeError;
+                                if (writeTextFileUtf8(std::filesystem::u8path(*outSvgPath), svg, writeError)) {
+                                    textOnly["data"]["svg_written"] = true;
+                                    textOnly["data"]["svg_path"]    = *outSvgPath;
+                                } else {
+                                    textOnly["ok"]            = false;
+                                    textOnly["data"]["error"] = {
+                                        {"code", "SVG_WRITE_FAILED"},
+                                        {"message", writeError},
+                                        {"path", *outSvgPath}
+                                    };
+                                    svgWriteFailed = true;
+                                }
+                            }
+                            textOnly["data"].erase("svg");
+                            if (wantsImageContent) {
+                                textOnly["data"]["image_note"] =
+                                    "The SVG is also returned as MCP image/svg+xml content because --unsafe-svg-image "
+                                    "was requested. Some clients mix tool images into later model context and may break "
+                                    "subsequent AI turns.";
+                            } else if (outSvgPath.has_value()) {
+                                textOnly["data"]["image_note"] =
+                                    "The SVG was written to disk and omitted from the tool text payload to avoid mixing "
+                                    "large SVG/image data into later model context.";
+                            } else {
+                                textOnly["data"]["image_note"] =
+                                    "--image requested compact text fallback only. Direct MCP image/svg+xml content is "
+                                    "disabled by default because some clients mix tool images into later model context "
+                                    "and break subsequent AI turns. Use --unsafe-svg-image only with a compatible client.";
+                            }
+                        }
+
+                        if (svgWriteFailed || !wantsImageContent) {
+                            return nlohmann::json{
+                                {"isError", !textOnly.value("ok", true)},
+                                {"content",
+                                 nlohmann::json::array({{{"type", "text"}, {"text", textOnly.dump(2)}}})}
+                            };
+                        }
+
+                        std::string b64 = base64::encode(svg.data(), svg.size());
+                        return nlohmann::json{
+                            {"isError", false},
+                            {"content",
+                             nlohmann::json::array(
+                                 {{{"type", "image"}, {"data", b64}, {"mimeType", "image/svg+xml"}},
+                                  {{"type", "text"}, {"text", textOnly.dump(2)}}}
+                             )}
+                        };
+                    }
+
                     return nlohmann::json{
                         {"isError", isError},
                         {"content", nlohmann::json::array({{{"type", "text"}, {"text", parsed.dump(2)}}})}
