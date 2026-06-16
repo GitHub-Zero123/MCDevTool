@@ -25,6 +25,11 @@ jobs:
             artifact: mcdk-windows-x64
             configure_extra: -A x64
             archive_ext: zip
+          - name: macos-arm64
+            runner: macos-15
+            artifact: mcdk-macos-arm64
+            configure_extra: -DCMAKE_OSX_ARCHITECTURES=arm64
+            archive_ext: tar.gz
 
     steps:
       - name: Checkout
