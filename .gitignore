@@ -373,3 +373,5 @@ reloadFiles/
 .mcdev.json
 logs/
 /.roo/
+/.codex/
+/temps/
