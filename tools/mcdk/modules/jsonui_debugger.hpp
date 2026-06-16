@@ -1145,8 +1145,12 @@ except Exception as exc:
                     {"children_count", data["tree"].value("children_count", 0)}
                 };
             }
-            data.erase("tree");
-            data["summary"] = std::move(summary);
+            const auto html     = data["html"];
+            const auto htmlNote = data["html_note"];
+            data.clear();
+            data["html"]      = html;
+            data["html_note"] = htmlNote;
+            data["summary"]   = std::move(summary);
         }
     }
 
