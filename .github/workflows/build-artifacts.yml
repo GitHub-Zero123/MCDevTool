@@ -63,7 +63,7 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          cmake --build build --config Release --target mcdk mcdk_stdio_bridge --parallel
+          cmake --build build --config Release --target mcdk mcdk_stdio_bridge --parallel --verbose
 
       - name: Package Unix
         if: runner.os != 'Windows'
