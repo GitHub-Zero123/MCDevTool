@@ -2,7 +2,7 @@
 
 这组能力偏编辑器和选择器，可以用于未来可视化 UI 编辑器，但不适合作为普通 UI 自动化测试或 JSON UI 开发反馈的默认路径。
 
-当前结论：**MVP 阶段不建议把这部分封装进 `jsonui_debugger`**。我们现在的目标是让 AI 读取原生 JSON UI 的实时布局信息，优先使用 [runtime-jsonui-api.md](runtime-jsonui-api.md) 中的只读接口即可。网易 UI Debugger 会改变用户点击和持续输入状态，纳入 MCP 后容易干扰真实操作。
+当前策略：`jsonui_debugger` 的常规读取仍优先使用 [runtime-jsonui-api.md](runtime-jsonui-api.md) 中的只读接口。网易 UI Debugger 会改变用户点击和持续输入状态，因此只允许在显式请求时作为短事务 fallback 使用：当 `/overview --nud` 无法在常规根路径中发现当前 top screen 的根节点时，临时启用调试器，调用 `gui.nud_get_control_tree("/")`，从 `UIDebuggerNotifyEvent` 返回的 screen 树中提取顶层控件名，再立刻清理选择/描边并恢复开关状态。
 
 源码参考：
 
@@ -20,6 +20,14 @@
 | `gui.nud_get_control_tree(control_path)` | 获取指定控件树 |
 | `gui.nud_set_bounds_visible(visible)` | 设置控件边框显示 |
 | `gui.nud_update_bounds_color(updatesJson)` | 更新边框颜色 |
+
+实测注意：
+
+- `gui.nud_get_control_tree("/")` 不通过函数返回值返回树，而是触发 `UIDebuggerNotifyEvent`，事件参数的 `data` 字段是 JSON 字符串。
+- 该 JSON 的典型结构是 `{"success": true, "data": {"path": "/", "data": {"type": "screen", "name": "...", "controls": [...]}}}`。
+- 对没有继承常规基类画布的 Mod UI，`controls` 中可能直接出现裸根节点，例如 `/panel`。普通 `gui.get_children_name_from_parent(screen, "/")` 仍可能返回 `None`，不能替代官方调试器树。
+- 拿到候选根后，应再用普通 runtime API 验证该路径可枚举、可见、有布局数据；后续 `/tree`、`/html`、`/find` 继续走普通 runtime API。
+- 不应通过 `ScreenNode`、`GetTopUINode()`、`component_path`、回调字段或缓存字段兜底推断根节点。这些属于 Python 业务侧面向对象封装，用户态可以改写或伪造，不能代表 C++ 底层 UI 树语义。
 
 ## 行为
 

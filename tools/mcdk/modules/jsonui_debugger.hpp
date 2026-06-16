@@ -50,10 +50,13 @@ Output data:
 - window_size: client window size.)";
         }
         if (command == "overview" || command == "/overview") {
-            return R"(/overview [--screen=top|all|<screen>] [--child-limit=12]
+            return R"(/overview [--screen=top|all|<screen>] [--child-limit=12] [--nud]
 Return a compact starting point for AI UI inspection.
 
-It lists current screens, probes common native JSON UI root candidates, returns direct child summaries, and suggests next commands. Use this before /tree or /html when you do not know the component path.)";
+It lists current screens, probes common native JSON UI root candidates, returns direct child summaries, and suggests next commands. Use this before /tree or /html when you do not know the component path.
+
+Options:
+- --nud: allow a short NetEase UI Debugger tree probe for the current top screen when normal native root candidates fail. This uses the official debugger event path, not Python ScreenNode state.)";
         }
         if (command == "probe" || command == "/probe") {
             return R"(/probe <screen> <path>
@@ -127,7 +130,7 @@ Options:
 /help
 /help <command>
 /screens
-/overview [--screen=top|all|<screen>] [--child-limit=12]
+/overview [--screen=top|all|<screen>] [--child-limit=12] [--nud]
 /probe <screen> <path>
 /children <screen> <path> [--detail] [--limit=50]
 /node <screen> <path> [--fields=basic,layout,text,container]
@@ -418,6 +421,15 @@ def _node_text(screen, path):
 
 def _children(screen, path, limit, detail):
     names = gui.get_children_name_from_parent(screen, path)
+    if names is None:
+        return {
+            'screen': screen,
+            'path': path,
+            'children_count': None,
+            'children': [],
+            'truncated': False,
+            'note': 'get_children_name_from_parent returned None; this path is not an enumerable native JSON UI parent.'
+        }
     out = []
     for name in names[:limit]:
         child_path = path.rstrip('/') + '/' + name
@@ -451,6 +463,14 @@ def _child_summary(screen, path, limit):
         names = gui.get_children_name_from_parent(screen, path)
     except Exception as exc:
         return {'ok': False, 'error': repr(exc), 'children': [], 'children_count': None, 'truncated': False}
+    if names is None:
+        return {
+            'ok': False,
+            'error': 'get_children_name_from_parent returned None',
+            'children': [],
+            'children_count': None,
+            'truncated': False
+        }
     children = []
     visible_count = 0
     hidden_count = 0
@@ -517,7 +537,115 @@ def _screen_short_to_full(short_name, screens):
             return item
     return short_name
 
-def _overview(screen_arg, child_limit):
+def _nud_extract_tree_from_event(args):
+    try:
+        raw = args.get('data') if isinstance(args, dict) else None
+        obj = json.loads(raw) if isinstance(raw, str) or raw.__class__.__name__ in ('unicode', 'str') else raw
+        if not isinstance(obj, dict) or not obj.get('success'):
+            return None
+        data = obj.get('data')
+        if isinstance(data, dict):
+            data = data.get('data')
+        if isinstance(data, dict) and data.get('type') == 'screen':
+            return data
+    except Exception:
+        return None
+    return None
+
+def _nud_root_candidates_from_tree(tree):
+    out = []
+    seen = set()
+    for child in tree.get('controls', []) if isinstance(tree, dict) else []:
+        if not isinstance(child, dict):
+            continue
+        name = child.get('name')
+        if not name or '/' in name:
+            continue
+        path = '/' + name
+        if path in seen:
+            continue
+        seen.add(path)
+        out.append({
+            'path': path,
+            'name': name,
+            'type': child.get('type'),
+            'visible': child.get('visible'),
+            'children_count_hint': len(child.get('controls', [])) if isinstance(child.get('controls'), list) else None
+        })
+    return out
+
+def _discover_screen_roots_with_nud(screen, child_limit):
+    # The official NetEase UI debugger can see the screen-level control tree. Its API returns data through
+    # UIDebuggerNotifyEvent, so keep this as a short fallback transaction and validate candidates with normal APIs.
+    try:
+        from common import eventUtil
+    except Exception as exc:
+        return {'ok': False, 'error': 'eventUtil import failed: ' + repr(exc), 'candidate_roots': [], 'validated_roots': []}
+
+    class _NudProbe(object):
+        def __init__(self):
+            self.events = []
+        def on_event(self, args):
+            self.events.append(args)
+
+    probe = _NudProbe()
+    old_enabled = False
+    old_known = False
+    out = {'ok': False, 'candidate_roots': [], 'validated_roots': [], 'used_root_path': '/'}
+    try:
+        try:
+            old_enabled = gui.get_netease_ui_debugger_enable()
+            old_known = True
+        except Exception:
+            pass
+        eventUtil.instance.ListenForEngineClient('UIDebuggerNotifyEvent', probe, probe.on_event)
+        gui.set_netease_ui_debugger_enable(True)
+        gui.nud_get_control_tree('/')
+    except Exception as exc:
+        out['error'] = repr(exc)
+    finally:
+        try:
+            eventUtil.instance.UnListenForEngineClient('UIDebuggerNotifyEvent', probe, probe.on_event)
+        except Exception:
+            pass
+        try:
+            gui.nud_set_selected_controls(json.dumps([]))
+        except Exception:
+            pass
+        try:
+            gui.nud_set_bounds_visible(False)
+        except Exception:
+            pass
+        try:
+            gui.set_netease_ui_debugger_enable(old_enabled if old_known and old_enabled else False)
+        except Exception:
+            pass
+
+    tree = None
+    for event_args in probe.events:
+        tree = _nud_extract_tree_from_event(event_args)
+        if tree:
+            break
+    if not tree:
+        out['event_count'] = len(probe.events)
+        out.setdefault('error', 'No control tree was returned through UIDebuggerNotifyEvent.')
+        return out
+
+    out['ok'] = True
+    out['screen_node'] = {'name': tree.get('name'), 'type': tree.get('type'), 'visible': tree.get('visible')}
+    out['candidate_roots'] = _nud_root_candidates_from_tree(tree)
+    for candidate in out['candidate_roots']:
+        try:
+            root = _probe_root_candidate(screen, candidate.get('path'), child_limit)
+            if root.get('ok'):
+                root['discovered_by'] = 'netease_ui_debugger_tree'
+                root['debugger_hint'] = candidate
+                out['validated_roots'].append(root)
+        except Exception as exc:
+            candidate['validation_error'] = repr(exc)
+    return out
+
+def _overview(screen_arg, child_limit, allow_nud=False):
     screens = gui.get_all_screen_fullnames()
     top_short = gui.get_top_screen()
     top_full = _screen_short_to_full(top_short, screens)
@@ -530,6 +658,7 @@ def _overview(screen_arg, child_limit):
     out_screens = []
     for screen in target_screens:
         roots = []
+        root_discovery = None
         for path in ROOT_CANDIDATES:
             try:
                 root = _probe_root_candidate(screen, path, child_limit)
@@ -537,11 +666,14 @@ def _overview(screen_arg, child_limit):
                     roots.append(root)
             except Exception:
                 pass
+        if allow_nud and not roots and screen == top_full:
+            root_discovery = _discover_screen_roots_with_nud(screen, child_limit)
+            roots.extend(root_discovery.get('validated_roots', []))
         suggested_root = None
         if roots:
             visible_roots = [r for r in roots if r.get('visible')]
             suggested_root = (visible_roots or roots)[0].get('path')
-        out_screens.append({
+        screen_overview = {
             'screen': screen,
             'is_top': screen == top_full,
             'roots': roots,
@@ -551,7 +683,10 @@ def _overview(screen_arg, child_limit):
                 '/find %s %s <query> --depth=5 --limit=30' % (screen, suggested_root),
                 '/children %s %s --detail --limit=30' % (screen, suggested_root)
             ] if suggested_root else []
-        })
+        }
+        if root_discovery is not None:
+            screen_overview['root_discovery'] = root_discovery
+        out_screens.append(screen_overview)
     return {
         'top_screen': top_short,
         'top_screen_fullname': top_full,
@@ -560,7 +695,8 @@ def _overview(screen_arg, child_limit):
         'window_size': _as_list(gui.get_client_screen_size()),
         'child_limit': child_limit,
         'screen_overviews': out_screens,
-        'note': 'Use suggested_root as the starting component_path. Do not use / as a native JSON UI root.'
+        'nud_enabled': allow_nud,
+        'note': 'Use suggested_root as the starting component_path. Do not use / as a native JSON UI root. Use --nud only when you need the official NetEase UI Debugger tree fallback; never infer roots from Python ScreenNode state.'
     }
 
 )PY";
@@ -593,7 +729,7 @@ def _tree(screen, root, max_depth, max_nodes, visible_only, include_text=False):
             if depth >= max_depth:
                 return None
             try:
-                names = gui.get_children_name_from_parent(screen, path)
+                names = gui.get_children_name_from_parent(screen, path) or []
             except Exception:
                 names = []
             visible_children = []
@@ -620,7 +756,7 @@ def _tree(screen, root, max_depth, max_nodes, visible_only, include_text=False):
                 pass
             return node
         try:
-            names = gui.get_children_name_from_parent(screen, path)
+            names = gui.get_children_name_from_parent(screen, path) or []
         except Exception:
             names = []
         for name in names:
@@ -687,7 +823,7 @@ def _find(screen, root, query, type_filter, match_mode, max_depth, max_nodes, li
         if depth >= max_depth:
             return
         try:
-            names = gui.get_children_name_from_parent(screen, path)
+            names = gui.get_children_name_from_parent(screen, path) or []
         except Exception:
             names = []
         for name in names:
@@ -733,7 +869,8 @@ def _run(cmd):
     if name == '/overview':
         screen_arg = args[1] if len(args) >= 2 and not args[1].startswith('--') else _string_option(args[1:], 'screen', 'top')
         child_limit = _int_option(args[1:], 'child-limit', 12, 1, 50)
-        return _ok(name, _overview(screen_arg, child_limit))
+        allow_nud = bool(_option(args[1:], 'nud', False))
+        return _ok(name, _overview(screen_arg, child_limit, allow_nud))
     if name == '/probe':
         if len(args) < 3:
             return _err(name, 'usage: /probe <screen> <path>', 'USAGE')
