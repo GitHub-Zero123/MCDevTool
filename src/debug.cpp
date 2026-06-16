@@ -11,10 +11,15 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 namespace MCDevTool::Debug {
-#ifdef _WIN32
     namespace {
         constexpr size_t IPC_HEADER_SIZE       = 6;
         constexpr size_t IPC_MAX_PACKET_LENGTH = 16 * 1024 * 1024;
@@ -40,6 +45,8 @@ namespace MCDevTool::Debug {
             }
         }
     }
+
+#ifdef _WIN32
 
     DebugIPCServer::~DebugIPCServer() { safeExit(); }
 
@@ -476,6 +483,488 @@ namespace MCDevTool::Debug {
         }
         if (existed && closeSocket) {
             closesocket(reinterpret_cast<SOCKET>(socketPtr));
+        }
+    }
+
+    unsigned short DebugIPCServer::getPort() const { return mPort; }
+
+    size_t DebugIPCServer::getClientCount() const {
+        std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+        return mClients.size();
+    }
+
+    std::atomic<bool>* DebugIPCServer::getStopFlag() { return &mStopFlag; }
+
+    void DebugIPCServer::join() {
+        if (mThread.has_value() && mThread->joinable()) {
+            mThread->join();
+        }
+        {
+            std::lock_guard<std::mutex> lockGuard(mClientThreadsMutex);
+            for (auto& thread : mClientThreads) {
+                if (thread.joinable()) {
+                    thread.join();
+                }
+            }
+            mClientThreads.clear();
+        }
+    }
+
+    void DebugIPCServer::safeExit() {
+        stop();
+        join();
+    }
+
+    void DebugIPCServer::detach() {
+        if (mThread.has_value() && mThread->joinable()) {
+            mThread->detach();
+        }
+    }
+
+    std::thread* DebugIPCServer::getThread() { return mThread.has_value() ? &mThread.value() : nullptr; }
+#else
+
+    namespace {
+        constexpr int INVALID_SOCKET_FD = -1;
+
+        int socketFromPtr(void* socketPtr) {
+            return static_cast<int>(reinterpret_cast<intptr_t>(socketPtr)) - 1;
+        }
+
+        void* ptrFromSocket(int socketFd) {
+            return reinterpret_cast<void*>(static_cast<intptr_t>(socketFd + 1));
+        }
+
+        void closeSocketFd(int socketFd) {
+            if (socketFd >= 0) {
+                close(socketFd);
+            }
+        }
+
+        bool setNonBlocking(int socketFd) {
+            int flags = fcntl(socketFd, F_GETFL, 0);
+            if (flags == -1) {
+                return false;
+            }
+            return fcntl(socketFd, F_SETFL, flags | O_NONBLOCK) != -1;
+        }
+    } // namespace
+
+    DebugIPCServer::~DebugIPCServer() { safeExit(); }
+
+    void DebugIPCServer::start() {
+        if (mSocketPtr) {
+            return;
+        }
+        mStopFlag = false;
+
+        int listenSock = socket(AF_INET, SOCK_STREAM, 0);
+        if (listenSock == INVALID_SOCKET_FD) {
+            throw std::runtime_error("socket creation failed");
+        }
+
+        int reuse = 1;
+        setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        sockaddr_in addr{};
+        addr.sin_family      = AF_INET;
+        addr.sin_port        = 0;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+        if (bind(listenSock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+            closeSocketFd(listenSock);
+            throw std::runtime_error("bind failed");
+        }
+
+        socklen_t addrLen = sizeof(addr);
+        if (getsockname(listenSock, reinterpret_cast<sockaddr*>(&addr), &addrLen) != 0) {
+            closeSocketFd(listenSock);
+            throw std::runtime_error("getsockname failed");
+        }
+        mPort = ntohs(addr.sin_port);
+
+        if (listen(listenSock, SOMAXCONN) != 0) {
+            closeSocketFd(listenSock);
+            throw std::runtime_error("listen failed");
+        }
+
+        setNonBlocking(listenSock);
+        mSocketPtr = ptrFromSocket(listenSock);
+
+        mThread = std::thread([this]() {
+            int listenSock = socketFromPtr(mSocketPtr);
+            while (!mStopFlag.load() && listenSock != INVALID_SOCKET_FD) {
+                int clientSock = accept(listenSock, nullptr, nullptr);
+                if (clientSock == INVALID_SOCKET_FD) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        continue;
+                    }
+                    break;
+                }
+
+                setNonBlocking(clientSock);
+                void* clientPtr = ptrFromSocket(clientSock);
+                {
+                    std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+                    mClients.push_back(clientPtr);
+                }
+                {
+                    std::lock_guard<std::mutex> lockGuard(mClientThreadsMutex);
+                    mClientThreads.emplace_back([this, clientPtr]() { clientReadLoop(clientPtr); });
+                }
+            }
+        });
+    }
+
+    void DebugIPCServer::stop() {
+        mPort     = 0;
+        mStopFlag = true;
+
+        if (mSocketPtr) {
+            int listenSock = socketFromPtr(mSocketPtr);
+            mSocketPtr     = nullptr;
+            closeSocketFd(listenSock);
+        }
+
+        {
+            std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+            for (void* c : mClients) {
+                closeSocketFd(socketFromPtr(c));
+            }
+            mClients.clear();
+        }
+
+        std::map<uint64_t, std::shared_ptr<PendingJsonRequest>> pendingSnapshot;
+        {
+            std::lock_guard<std::mutex> lockGuard(mPendingJsonMutex);
+            pendingSnapshot.swap(mPendingJsonRequests);
+        }
+        for (auto& [_, pending] : pendingSnapshot) {
+            if (!pending) continue;
+            {
+                std::lock_guard<std::mutex> pendingLock(pending->mutex);
+                pending->completed = true;
+            }
+            pending->cv.notify_all();
+        }
+    }
+
+    bool DebugIPCServer::sendMessage(uint16_t messageType, const std::vector<uint8_t>& data) {
+        return sendMessage(messageType, data.data(), data.size());
+    }
+
+    bool DebugIPCServer::sendMessage(uint16_t messageType) { return sendMessage(messageType, nullptr, 0); }
+
+    bool DebugIPCServer::sendMessage(uint16_t messageType, std::string_view data) {
+        return sendMessage(messageType, reinterpret_cast<const uint8_t*>(data.data()), data.size());
+    }
+
+    bool DebugIPCServer::sendMessage(uint16_t messageType, const uint8_t* data, size_t length) {
+        if (length > UINT32_MAX || (length > 0 && !data)) {
+            return false;
+        }
+
+        std::vector<uint8_t> buffer(IPC_HEADER_SIZE + length);
+        buffer[0]    = static_cast<uint8_t>(messageType >> 8);
+        buffer[1]    = static_cast<uint8_t>(messageType & 0xFF);
+        uint32_t len = static_cast<uint32_t>(length);
+        buffer[2]    = (len >> 24) & 0xFF;
+        buffer[3]    = (len >> 16) & 0xFF;
+        buffer[4]    = (len >> 8) & 0xFF;
+        buffer[5]    = len & 0xFF;
+        if (length > 0) {
+            memcpy(buffer.data() + IPC_HEADER_SIZE, data, length);
+        }
+
+        std::vector<void*> clientsSnapshot;
+        {
+            std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+            clientsSnapshot = mClients;
+        }
+
+        bool sentAny = false;
+        for (void* clientPtr : clientsSnapshot) {
+            if (sendBufferToSocket(clientPtr, buffer.data(), buffer.size())) {
+                sentAny = true;
+            } else {
+                eraseClient(clientPtr, true);
+            }
+        }
+
+        return sentAny;
+    }
+
+    bool DebugIPCServer::sendMessageToOneClient(uint16_t messageType, const uint8_t* data, size_t length) {
+        if (length > UINT32_MAX || (length > 0 && !data)) {
+            return false;
+        }
+
+        std::vector<uint8_t> buffer(IPC_HEADER_SIZE + length);
+        buffer[0]    = static_cast<uint8_t>(messageType >> 8);
+        buffer[1]    = static_cast<uint8_t>(messageType & 0xFF);
+        uint32_t len = static_cast<uint32_t>(length);
+        buffer[2]    = (len >> 24) & 0xFF;
+        buffer[3]    = (len >> 16) & 0xFF;
+        buffer[4]    = (len >> 8) & 0xFF;
+        buffer[5]    = len & 0xFF;
+        if (length > 0) {
+            memcpy(buffer.data() + IPC_HEADER_SIZE, data, length);
+        }
+
+        void* clientPtr = nullptr;
+        {
+            std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+            if (mClients.empty()) return false;
+            clientPtr = mClients.front();
+        }
+
+        if (!sendBufferToSocket(clientPtr, buffer.data(), buffer.size())) {
+            eraseClient(clientPtr, true);
+            return false;
+        }
+        return true;
+    }
+
+    bool DebugIPCServer::sendBufferToSocket(void* socketPtr, const uint8_t* data, size_t length) {
+        if (!socketPtr || !data) return false;
+
+        int    clientSock = socketFromPtr(socketPtr);
+        size_t sentTotal  = 0;
+        auto   deadline   = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+
+        std::lock_guard<std::mutex> sendLock(mSendMutex);
+        while (sentTotal < length && !mStopFlag.load()) {
+            ssize_t sent = send(clientSock, data + sentTotal, length - sentTotal, 0);
+            if (sent > 0) {
+                sentTotal += static_cast<size_t>(sent);
+                continue;
+            }
+            if (sent == 0) {
+                return false;
+            }
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                return false;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return sentTotal == length;
+    }
+
+    IPCJsonResult DebugIPCServer::requestJson(std::string_view method, std::string_view paramsJson, uint32_t timeoutMs) {
+        IPCJsonResult result;
+        try {
+            auto params = nlohmann::json::parse(paramsJson.empty() ? "{}" : std::string(paramsJson), nullptr, false);
+            if (params.is_discarded()) {
+                result.errorMessage = "Invalid params JSON";
+                return result;
+            }
+
+            uint64_t id = mNextJsonRequestId.fetch_add(1);
+            if (id == 0) {
+                id = mNextJsonRequestId.fetch_add(1);
+            }
+
+            nlohmann::json req = {{"id", id}, {"method", std::string(method)}, {"params", params}};
+            result             = requestJsonRaw(jsonDumpNoThrow(req), timeoutMs);
+            if (result.requestId == 0) {
+                result.requestId = id;
+            }
+            return result;
+        } catch (const std::exception& e) {
+            result.errorMessage = e.what();
+            return result;
+        } catch (...) {
+            result.errorMessage = "Unknown requestJson error";
+            return result;
+        }
+    }
+
+    IPCJsonResult DebugIPCServer::requestJsonRaw(std::string_view requestJson, uint32_t timeoutMs) {
+        IPCJsonResult result;
+        try {
+            if (requestJson.empty()) {
+                result.errorMessage = "Empty request JSON";
+                return result;
+            }
+            if (getClientCount() == 0) {
+                result.errorMessage = "No IPC client connected";
+                return result;
+            }
+
+            auto req = nlohmann::json::parse(std::string(requestJson), nullptr, false);
+            if (req.is_discarded() || !req.is_object() || !req.contains("id")) {
+                result.errorMessage = "Request JSON must be an object with id";
+                return result;
+            }
+
+            uint64_t id = 0;
+            try {
+                id = req["id"].get<uint64_t>();
+            } catch (...) {
+                result.errorMessage = "Request id must be uint64";
+                return result;
+            }
+            if (id == 0) {
+                result.errorMessage = "Request id must not be 0";
+                return result;
+            }
+            result.requestId = id;
+
+            auto pending = std::make_shared<PendingJsonRequest>();
+            {
+                std::lock_guard<std::mutex> lockGuard(mPendingJsonMutex);
+                mPendingJsonRequests[id] = pending;
+            }
+
+            bool sent = sendMessageToOneClient(
+                IPC_JSON_REQUEST_TYPE,
+                reinterpret_cast<const uint8_t*>(requestJson.data()),
+                requestJson.size()
+            );
+            if (!sent) {
+                std::lock_guard<std::mutex> lockGuard(mPendingJsonMutex);
+                mPendingJsonRequests.erase(id);
+                result.errorMessage = "Failed to send IPC JSON request";
+                return result;
+            }
+
+            uint32_t safeTimeoutMs = timeoutMs == 0 ? 10000 : timeoutMs;
+            std::unique_lock<std::mutex> pendingLock(pending->mutex);
+            bool completed = pending->cv.wait_for(
+                pendingLock,
+                std::chrono::milliseconds(safeTimeoutMs),
+                [&pending]() { return pending->completed; }
+            );
+            if (!completed) {
+                pending->completed = true;
+            }
+            std::string responseJson = pending->responseJson;
+            pendingLock.unlock();
+
+            {
+                std::lock_guard<std::mutex> lockGuard(mPendingJsonMutex);
+                mPendingJsonRequests.erase(id);
+            }
+
+            if (!completed) {
+                result.timeout      = true;
+                result.errorMessage = "IPC JSON request timed out";
+                return result;
+            }
+
+            result.success      = !responseJson.empty();
+            result.responseJson = std::move(responseJson);
+            if (!result.success) {
+                result.errorMessage = "IPC JSON request was cancelled";
+            }
+            return result;
+        } catch (const std::exception& e) {
+            result.errorMessage = e.what();
+            return result;
+        } catch (...) {
+            result.errorMessage = "Unknown requestJsonRaw error";
+            return result;
+        }
+    }
+
+    void DebugIPCServer::clientReadLoop(void* socketPtr) {
+        if (!socketPtr) return;
+        int clientSock = socketFromPtr(socketPtr);
+
+        std::vector<uint8_t> buffer;
+        buffer.reserve(4096);
+        uint8_t temp[4096];
+
+        while (!mStopFlag.load()) {
+            ssize_t received = recv(clientSock, temp, sizeof(temp), 0);
+            if (received > 0) {
+                buffer.insert(buffer.end(), temp, temp + received);
+                while (buffer.size() >= IPC_HEADER_SIZE) {
+                    uint16_t typeID = 0;
+                    uint32_t length = 0;
+                    readU16BE(buffer.data(), typeID);
+                    readU32BE(buffer.data() + 2, length);
+
+                    if (length > IPC_MAX_PACKET_LENGTH) {
+                        eraseClient(socketPtr, true);
+                        return;
+                    }
+                    if (buffer.size() < IPC_HEADER_SIZE + static_cast<size_t>(length)) {
+                        break;
+                    }
+
+                    const uint8_t* payload = buffer.data() + IPC_HEADER_SIZE;
+                    if (typeID == IPC_JSON_RESPONSE_TYPE) {
+                        handleJsonResponsePacket(payload, length);
+                    }
+                    buffer.erase(buffer.begin(), buffer.begin() + IPC_HEADER_SIZE + static_cast<size_t>(length));
+                }
+                continue;
+            }
+
+            if (received == 0) {
+                break;
+            }
+
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            break;
+        }
+
+        eraseClient(socketPtr, true);
+    }
+
+    void DebugIPCServer::handleJsonResponsePacket(const uint8_t* data, size_t length) {
+        if (!data || length == 0) return;
+        auto response = nlohmann::json::parse(std::string(reinterpret_cast<const char*>(data), length), nullptr, false);
+        if (response.is_discarded() || !response.is_object() || !response.contains("id")) {
+            return;
+        }
+
+        uint64_t id = 0;
+        try {
+            id = response["id"].get<uint64_t>();
+        } catch (...) {
+            return;
+        }
+
+        std::shared_ptr<PendingJsonRequest> pending;
+        {
+            std::lock_guard<std::mutex> lockGuard(mPendingJsonMutex);
+            auto it = mPendingJsonRequests.find(id);
+            if (it == mPendingJsonRequests.end()) return;
+            pending = it->second;
+        }
+        if (!pending) return;
+
+        {
+            std::lock_guard<std::mutex> pendingLock(pending->mutex);
+            if (pending->completed) return;
+            pending->responseJson = std::string(reinterpret_cast<const char*>(data), length);
+            pending->completed    = true;
+        }
+        pending->cv.notify_all();
+    }
+
+    void DebugIPCServer::eraseClient(void* socketPtr, bool closeSocket) {
+        if (!socketPtr) return;
+        bool existed = false;
+        {
+            std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+            auto it = std::find(mClients.begin(), mClients.end(), socketPtr);
+            if (it != mClients.end()) {
+                mClients.erase(it);
+                existed = true;
+            }
+        }
+        if (existed && closeSocket) {
+            closeSocketFd(socketFromPtr(socketPtr));
         }
     }
 

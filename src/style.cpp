@@ -241,7 +241,11 @@ namespace MCDevTool::Style {
     }
 
 #else
-    bool applyStyleToMinecraftWindow(int pid, const StyleConfig& config) = delete;
+    bool applyStyleToMinecraftWindow(int pid, const StyleConfig& config) {
+        (void)pid;
+        (void)config;
+        return false;
+    }
 #endif
 
     MinecraftWindowStyler::MinecraftWindowStyler(int pid, const StyleConfig& config) : mPid(pid), mConfig(config) {}

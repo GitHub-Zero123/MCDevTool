@@ -52,13 +52,18 @@ def HAS_CLANG():
         shutil.which("clang")
     )
 
-if platform.system() == "Windows":
+system_name = platform.system()
+
+if system_name == "Windows":
     if HAS_MSVC():
         preset = "x64-msvc-release"
         cmd_prefix = MSVC_SETUP_CMD
     elif HAS_CLANG():
         preset = "x64-clang-release"
         cmd_prefix = ""
+elif system_name == "Darwin":
+    preset = "macos-release"
+    cmd_prefix = ""
 else:
     preset = "x64-clang-release"
     cmd_prefix = ""

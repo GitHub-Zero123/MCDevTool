@@ -16,6 +16,7 @@
 #include <chrono>
 #include <mutex>
 #include <atomic>
+#include <set>
 
 namespace MCDevTool::HotReload {
 
@@ -335,23 +336,131 @@ namespace MCDevTool::HotReload {
 
 #else // _WIN32
 
-    std::optional<std::thread> watchAndReloadPyFiles(
-        const std::vector<std::filesystem::path>&,
-        const std::function<void(const std::filesystem::path&)>&,
-        std::atomic<bool>* stopFlag = nullptr
-    ) = delete;
+    namespace fs = std::filesystem;
+
+    static constexpr int POLL_INTERVAL_MS = 300;
+    static constexpr int DEBOUNCE_MS      = 100;
+
+    using FileStampMap = std::unordered_map<fs::path, fs::file_time_type>;
+
+    static void snapshotPyFiles(const std::vector<fs::path>& modDirs, FileStampMap& outFiles) {
+        std::error_code ec;
+        for (const auto& dir : modDirs) {
+            if (!fs::is_directory(dir, ec)) {
+                continue;
+            }
+
+            fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+            fs::recursive_directory_iterator end;
+            while (!ec && it != end) {
+                const auto& entry = *it;
+                if (entry.is_regular_file(ec) && entry.path().extension() == ".py") {
+                    auto stamp = fs::last_write_time(entry.path(), ec);
+                    if (!ec) {
+                        outFiles[fs::absolute(entry.path(), ec)] = stamp;
+                    }
+                }
+                it.increment(ec);
+            }
+            ec.clear();
+        }
+    }
 
     std::optional<std::thread> watchAndReloadPyFiles(
-        const std::vector<std::string_view>&,
-        const std::function<void(const std::filesystem::path&)>&,
-        std::atomic<bool>* stopFlag = nullptr
-    ) = delete;
+        const std::vector<fs::path>&                modDirs,
+        const std::function<void(const fs::path&)>& onFileChanged,
+        std::atomic<bool>*                          stopFlag
+    ) {
+        if (modDirs.empty()) {
+            return std::nullopt;
+        }
+
+        std::vector<fs::path> validDirs;
+        validDirs.reserve(modDirs.size());
+        std::error_code ec;
+        for (const auto& dir : modDirs) {
+            if (fs::is_directory(dir, ec)) {
+                validDirs.push_back(fs::absolute(dir, ec));
+            }
+            ec.clear();
+        }
+
+        if (validDirs.empty()) {
+            return std::nullopt;
+        }
+
+        return std::thread([validDirs = std::move(validDirs), onFileChanged, stopFlag]() {
+            FileStampMap knownFiles;
+            snapshotPyFiles(validDirs, knownFiles);
+
+            std::unordered_map<fs::path, std::chrono::steady_clock::time_point> lastTriggerTime;
+
+            while (!stopFlag || !stopFlag->load()) {
+                FileStampMap currentFiles;
+                snapshotPyFiles(validDirs, currentFiles);
+                auto now = std::chrono::steady_clock::now();
+
+                for (const auto& [path, stamp] : currentFiles) {
+                    auto known = knownFiles.find(path);
+                    if (known != knownFiles.end() && known->second == stamp) {
+                        continue;
+                    }
+
+                    auto last = lastTriggerTime.find(path);
+                    if (last != lastTriggerTime.end()) {
+                        auto elapsed =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(now - last->second).count();
+                        if (elapsed < DEBOUNCE_MS) {
+                            continue;
+                        }
+                    }
+
+                    lastTriggerTime[path] = now;
+                    try {
+                        onFileChanged(path);
+                    } catch (const std::exception& e) {
+                        std::cerr << "Error in onFileChanged callback: " << e.what() << std::endl;
+                    }
+                }
+
+                knownFiles = std::move(currentFiles);
+                std::this_thread::sleep_for(std::chrono::milliseconds(POLL_INTERVAL_MS));
+            }
+        });
+    }
+
+    std::optional<std::thread> watchAndReloadPyFiles(
+        const std::vector<std::string_view>&        modDirs,
+        const std::function<void(const fs::path&)>& onFileChanged,
+        std::atomic<bool>*                          stopFlag
+    ) {
+        std::vector<fs::path> paths;
+        paths.reserve(modDirs.size());
+
+        for (auto sv : modDirs) {
+            paths.emplace_back(fs::path(std::string(sv)));
+        }
+
+        return watchAndReloadPyFiles(paths, onFileChanged, stopFlag);
+    }
 
     std::optional<std::thread> watchProcessForegroundWindow(
         uint32_t,
-        const std::function<void(bool isForeground)>&,
-        std::atomic<bool>* stopFlag = nullptr
-    ) = delete;
+        const std::function<void(bool isForeground)>& onFocusChanged,
+        std::atomic<bool>*                            stopFlag
+    ) {
+        return std::thread([onFocusChanged, stopFlag]() {
+            try {
+                onFocusChanged(true);
+            } catch (const std::exception& e) {
+                std::cerr << "Error in onFocusChanged callback: " << e.what() << std::endl;
+            }
+
+            while (!stopFlag || !stopFlag->load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+        });
+    }
 
 #endif
 

@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <utility> // std::move
 #include <iostream>
+#include <algorithm>
+#include <cstring>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -92,7 +94,27 @@ static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::file
 }
 
 #else
-static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::filesystem::path& link) = delete
+static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::filesystem::path& link) {
+    std::error_code ec;
+    std::filesystem::create_directories(link.parent_path(), ec);
+    if (ec) {
+        return false;
+    }
+
+    if (std::filesystem::exists(link, ec) || std::filesystem::is_symlink(link, ec)) {
+        std::filesystem::remove_all(link, ec);
+        if (ec) {
+            return false;
+        }
+    }
+
+    auto absoluteTarget = std::filesystem::absolute(target, ec);
+    if (ec) {
+        return false;
+    }
+    std::filesystem::create_directory_symlink(absoluteTarget, link, ec);
+    return !ec;
+}
 #endif
 
 static void normalizeUUIDString(std::string& uuidStr) {
@@ -105,10 +127,23 @@ namespace MCDevTool {
     // 获取应用数据目录路径
     std::filesystem::path getAppDataPath() {
         if (appDataCachePath.empty()) {
+#ifdef _WIN32
             const char* appData = std::getenv("APPDATA");
             if (appData) {
                 appDataCachePath = std::filesystem::path(appData);
             }
+#else
+            const char* xdgDataHome = std::getenv("XDG_DATA_HOME");
+            if (xdgDataHome && *xdgDataHome) {
+                appDataCachePath = std::filesystem::path(xdgDataHome);
+            } else if (const char* home = std::getenv("HOME")) {
+#ifdef __APPLE__
+                appDataCachePath = std::filesystem::path(home) / "Library/Application Support";
+#else
+                appDataCachePath = std::filesystem::path(home) / ".local/share";
+#endif
+            }
+#endif
         }
         return appDataCachePath;
     }
