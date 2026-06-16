@@ -25,6 +25,8 @@ add_library(zlib_internal STATIC ${ZLIB_SOURCES})
 target_include_directories(zlib_internal PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/zlib-1.3.1)
 if(MSVC)
     target_compile_definitions(zlib_internal PRIVATE _CRT_SECURE_NO_WARNINGS)
+elseif(UNIX)
+    target_compile_definitions(zlib_internal PRIVATE HAVE_UNISTD_H)
 endif()
 
 # binarystream library
