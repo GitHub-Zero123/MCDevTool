@@ -25,11 +25,6 @@ jobs:
             artifact: mcdk-windows-x64
             configure_extra: -A x64
             archive_ext: zip
-          - name: linux-x64
-            runner: ubuntu-latest
-            artifact: mcdk-linux-x64
-            configure_extra: ""
-            archive_ext: tar.gz
 
     steps:
       - name: Checkout
@@ -39,6 +34,9 @@ jobs:
 
       - name: Generate embedded resources
         shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
           if command -v python3 >/dev/null 2>&1; then
             python3 mods/generate.py
