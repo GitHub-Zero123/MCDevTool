@@ -30,17 +30,21 @@ jobs:
             artifact: mcdk-linux-x64
             configure_extra: ""
             archive_ext: tar.gz
-          - name: macos-arm64
-            runner: macos-15
-            artifact: mcdk-macos-arm64
-            configure_extra: -DCMAKE_OSX_ARCHITECTURES=arm64
-            archive_ext: tar.gz
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Generate embedded resources
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            python3 mods/generate.py
+          else
+            python mods/generate.py
+          fi
 
       - name: Configure
         shell: bash
@@ -94,7 +98,7 @@ jobs:
           Compress-Archive -Path package/* -DestinationPath "dist/${{ matrix.artifact }}.zip" -Force
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: dist/*.${{ matrix.archive_ext }}
