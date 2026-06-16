@@ -1,4 +1,4 @@
-name: Build Release Artifacts
+name: Build Test Artifacts
 
 on:
   workflow_dispatch:
@@ -7,9 +7,6 @@ on:
         description: "Branch, tag, or commit SHA to build"
         required: false
         default: "main"
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
