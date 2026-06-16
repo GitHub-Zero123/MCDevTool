@@ -4,7 +4,10 @@ option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" OFF)
 
 # add_subdirectory(libs/cpp-mcp)
 
-add_executable(mcdk main.cpp)
+add_executable(mcdk
+    main.cpp
+    platform/runtime.cpp
+)
 target_compile_features(mcdk PRIVATE cxx_std_23)
 target_link_libraries(mcdk PRIVATE mcdevtool)
 target_link_libraries(mcdk PRIVATE mcp)

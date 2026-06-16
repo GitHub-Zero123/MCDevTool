@@ -30,6 +30,7 @@
 #include "modules/utils.hpp"
 #include "modules/log_buffer.hpp"
 #include "modules/mcp_server.hpp"
+#include "platform/runtime.hpp"
 
 
 // mcdevtool api
@@ -42,356 +43,11 @@
 #include <nlohmann/json.hpp>
 
 
-// 默认使用"\n"而非std::endl输出日志，避免大量log的性能开销
-#define _MCDEV_LOG_OUTPUT_ENDL "\n"
-
-#ifdef MCDEV_LOG_FORCE_FLUSH_ENDL
-// 强制使用std::endl
-#undef _MCDEV_LOG_OUTPUT_ENDL
-#define _MCDEV_LOG_OUTPUT_ENDL std::endl
-#endif
-
-#ifdef _WIN32
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include <cerrno>
-#include <cstring>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
-
 using mcdk::ReloadWatcherTask;
 using mcdk::UserModDirConfig;
 using mcdk::UserStyleProcessor;
 using ConsoleColor = mcdk::ConsoleColor;
-
-static std::mutex g_consoleMutex;
-
-// 线程安全彩色输出
-static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
-    std::lock_guard<std::mutex> lk(g_consoleMutex);
-#ifdef _WIN32
-    HANDLE                      hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-
-    if (hConsole == INVALID_HANDLE_VALUE) {
-        std::cout << msg << _MCDEV_LOG_OUTPUT_ENDL;
-        return;
-    }
-
-    CONSOLE_SCREEN_BUFFER_INFO info;
-    if (!GetConsoleScreenBufferInfo(hConsole, &info)) {
-        std::cout << msg << _MCDEV_LOG_OUTPUT_ENDL;
-        return;
-    }
-
-    WORD attr = 0;
-
-    switch (color) {
-    case ConsoleColor::Green:
-        attr = FOREGROUND_GREEN | FOREGROUND_INTENSITY;
-        break;
-    case ConsoleColor::Red:
-        attr = FOREGROUND_RED | FOREGROUND_INTENSITY;
-        break;
-    case ConsoleColor::Blue:
-        attr = FOREGROUND_BLUE | FOREGROUND_INTENSITY;
-        break;
-    case ConsoleColor::Yellow:
-        attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
-        break;
-    case ConsoleColor::Cyan:
-        attr = FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
-        break;
-    case ConsoleColor::Magenta:
-        attr = FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
-        break;
-    case ConsoleColor::White:
-        attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
-        break;
-    case ConsoleColor::Black:
-        attr = 0;
-        break;
-    case ConsoleColor::Gray:
-        // 亮灰 = RGB，但不加高亮
-        attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
-        break;
-    case ConsoleColor::DarkGray:
-        // 深灰 = 只加高亮，不加 RGB
-        attr = FOREGROUND_INTENSITY;
-        break;
-    default:
-        break;
-    }
-
-    if (color != ConsoleColor::Default) {
-        SetConsoleTextAttribute(hConsole, attr);
-    }
-
-    std::cout << msg << _MCDEV_LOG_OUTPUT_ENDL;
-
-    if (color == ConsoleColor::Default) {
-        return;
-    }
-    // 恢复原色
-    SetConsoleTextAttribute(hConsole, info.wAttributes);
-#else
-    const char* ansiCode = "";
-    switch (color) {
-    case ConsoleColor::Green:
-        ansiCode = "\033[92m";
-        break;
-    case ConsoleColor::Red:
-        ansiCode = "\033[91m";
-        break;
-    case ConsoleColor::Blue:
-        ansiCode = "\033[94m";
-        break;
-    case ConsoleColor::Yellow:
-        ansiCode = "\033[93m";
-        break;
-    case ConsoleColor::Cyan:
-        ansiCode = "\033[96m";
-        break;
-    case ConsoleColor::Magenta:
-        ansiCode = "\033[95m";
-        break;
-    case ConsoleColor::White:
-        ansiCode = "\033[97m";
-        break;
-    case ConsoleColor::Black:
-        ansiCode = "\033[30m";
-        break;
-    case ConsoleColor::Gray:
-        ansiCode = "\033[37m";
-        break;
-    case ConsoleColor::DarkGray:
-        ansiCode = "\033[90m";
-        break;
-    case ConsoleColor::Default:
-    default:
-        break;
-    }
-
-    if (color == ConsoleColor::Default) {
-        std::cout << msg << _MCDEV_LOG_OUTPUT_ENDL;
-    } else {
-        std::cout << ansiCode << msg << "\033[0m" << _MCDEV_LOG_OUTPUT_ENDL;
-    }
-#endif
-}
-
-// 进程buffer行处理
-static void processBufferAppend(
-    std::string&                                   lineBuf,
-    const char*                                    buf,
-    size_t                                         len,
-    bool                                           filterPython,
-    const std::function<void(const std::string&)>& processLine
-) {
-    lineBuf.append(buf, len);
-
-    size_t pos = 0;
-    while ((pos = lineBuf.find('\n')) != std::string::npos) {
-        std::string line = lineBuf.substr(0, pos);
-        lineBuf.erase(0, pos + 1);
-
-        // 去除行尾可能存在的 '\r'
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-
-        // 过滤：若启用只保留 [Python] 则丢弃其它
-        if (filterPython && line.find("[Python] ") == std::string::npos) continue;
-
-        processLine(line);
-    }
-}
-
-#ifdef _WIN32
-
-// pipe线程处理函数
-static void
-readPipeThread(HANDLE hPipe, bool filterPython, const std::function<void(const std::string&)>& processLine) {
-    constexpr DWORD   BUFSZ = 4096;
-    std::string       lineBuf;
-    std::vector<char> buffer(BUFSZ);
-
-    while (true) {
-        DWORD bytesRead = 0;
-        BOOL  ok        = ReadFile(hPipe, buffer.data(), BUFSZ, &bytesRead, NULL);
-        if (!ok) {
-            DWORD err = GetLastError();
-            // ERROR_BROKEN_PIPE (109) 表示写端已关闭并读尽
-            if (err == ERROR_BROKEN_PIPE) {
-                // 处理残留并退出
-                if (!lineBuf.empty()) {
-                    // 没有换行但还有内容，作为最后一行处理
-                    std::string lastLine = lineBuf;
-                    if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
-                    if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) processLine(lastLine);
-                    lineBuf.clear();
-                }
-                break;
-            } else {
-                // 其它错误直接退出
-                break;
-            }
-        }
-
-        if (bytesRead == 0) {
-            // 管道关闭或无数据（通常与 ERROR_BROKEN_PIPE 一致）
-            // 处理残留并退出
-            if (!lineBuf.empty()) {
-                std::string lastLine = lineBuf;
-                if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
-                if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) processLine(lastLine);
-                lineBuf.clear();
-            }
-            break;
-        }
-
-        // 追加并按行处理（会把完整行交给 processLine，残留留在 lineBuf）
-        processBufferAppend(lineBuf, buffer.data(), bytesRead, filterPython, processLine);
-    }
-}
-
-// 尝试附加调试器到指定进程
-#else
-
-static void readPipeThread(int fd, bool filterPython, const std::function<void(const std::string&)>& processLine) {
-    constexpr size_t  BUFSZ = 4096;
-    std::string       lineBuf;
-    std::vector<char> buffer(BUFSZ);
-
-    while (true) {
-        ssize_t bytesRead = read(fd, buffer.data(), buffer.size());
-        if (bytesRead < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            break;
-        }
-
-        if (bytesRead == 0) {
-            if (!lineBuf.empty()) {
-                std::string lastLine = lineBuf;
-                if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
-                if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) processLine(lastLine);
-                lineBuf.clear();
-            }
-            break;
-        }
-
-        processBufferAppend(lineBuf, buffer.data(), static_cast<size_t>(bytesRead), filterPython, processLine);
-    }
-}
-
-#endif
-
-#ifdef _WIN32
-static void debuggerAttachToProcess(DWORD pid, int port) {
-    // 执行cmd调用mcdbg.exe附加（如果失败则输出错误信息）
-    std::string cmd;
-    cmd.reserve(48);
-
-    cmd.append("mcdbg.exe --pid ");
-    cmd.append(std::to_string(pid));
-    cmd.append(" --port ");
-    cmd.append(std::to_string(port));
-    STARTUPINFOA        si = {sizeof(si)};
-    PROCESS_INFORMATION pi = {};
-    if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        std::cerr << "警告：无法启动mcdbg.exe附加调试器，请确保其在环境变量路径中。" << _MCDEV_LOG_OUTPUT_ENDL;
-        return;
-    }
-    std::cout << "调试器已启动，正在附加到进程PID：" << pid << " 端口：" << port << " ..." << _MCDEV_LOG_OUTPUT_ENDL;
-}
-
-// 检查用户配置是否需要启用IPC调试功能
-#else
-static void debuggerAttachToProcess(pid_t pid, int port) {
-    (void)pid;
-    (void)port;
-    std::cerr << "Warning: mcdbg debugger attach is only available on Windows." << _MCDEV_LOG_OUTPUT_ENDL;
-}
-#endif
-
-static bool checkUserConfigEnableIPC(const nlohmann::json& userConfig) {
-    // 若启用了auto_hot_reload_mods则启用IPC
-    bool autoHotReload = userConfig.value("auto_hot_reload_mods", true);
-    if (autoHotReload) {
-        return true;
-    }
-    return false;
-}
-
-// 将utf8的string转换为utf16的wstring
-#ifdef _WIN32
-static std::wstring convertUtf8ToUtf16(const std::string& utf8Str) {
-    if (utf8Str.empty()) {
-        return std::wstring();
-    }
-    int wideCharLen = MultiByteToWideChar(CP_UTF8, 0, utf8Str.data(), static_cast<int>(utf8Str.size()), nullptr, 0);
-    if (wideCharLen == 0) {
-        throw std::runtime_error("Failed to convert UTF-8 to UTF-16.");
-    }
-    std::wstring utf16Str(wideCharLen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8Str.data(), static_cast<int>(utf8Str.size()), &utf16Str[0], wideCharLen);
-    return utf16Str;
-}
-
-// 生成新的环境变量w字符串（继承当前环境变量并添加新变量）
-static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const std::wstring& newValue) {
-    // 获取当前环境变量块
-    LPWCH envBlock = GetEnvironmentStringsW();
-    if (envBlock == nullptr) {
-        throw std::runtime_error("Failed to get current environment strings.");
-    }
-
-    std::wstring newEnvBlock;
-    // 复制现有环境变量
-    LPWCH current = envBlock;
-    while (*current) {
-        std::wstring varLine(current);
-        newEnvBlock += varLine + L'\0';
-        current     += varLine.size() + 1;
-    }
-
-    // 添加新的环境变量
-    newEnvBlock += newVar + L'=' + newValue + L'\0';
-
-    // 结束环境变量块
-    newEnvBlock += L'\0';
-
-    FreeEnvironmentStringsW(envBlock);
-    return newEnvBlock;
-}
-
-// 启动游戏可执行文件
-#else
-extern char** environ;
-#endif
-
-struct PlatformProcess {
-#ifdef _WIN32
-    PROCESS_INFORMATION pi{};
-    HANDLE              outRead  = NULL;
-    HANDLE              outWrite = NULL;
-    HANDLE              errRead  = NULL;
-    HANDLE              errWrite = NULL;
-    using PidType                = DWORD;
-#else
-    pid_t pid      = -1;
-    int   outRead  = -1;
-    int   outWrite = -1;
-    int   errRead  = -1;
-    int   errWrite = -1;
-    using PidType  = pid_t;
-#endif
-};
+using mcdk::platform::printColoredAtomic;
 
 static std::vector<std::string> buildGameArgs(
     const std::filesystem::path& exePath,
@@ -420,202 +76,6 @@ static std::vector<std::string> buildGameArgs(
     }
     return args;
 }
-
-static std::string quoteCommandArg(const std::string& arg) {
-    if (arg.find_first_of(" \t\"") == std::string::npos) {
-        return arg;
-    }
-
-    std::string quoted = "\"";
-    for (char ch : arg) {
-        if (ch == '"') {
-            quoted += "\\\"";
-        } else {
-            quoted += ch;
-        }
-    }
-    quoted += '"';
-    return quoted;
-}
-
-static std::string buildWindowsCommandLine(const std::vector<std::string>& args) {
-    std::string cmd;
-    for (size_t i = 0; i < args.size(); ++i) {
-        if (i != 0) {
-            cmd.push_back(' ');
-        }
-        cmd += quoteCommandArg(args[i]);
-    }
-    return cmd;
-}
-
-#ifdef _WIN32
-static bool startPlatformProcess(
-    PlatformProcess&   process,
-    const std::string& commandLine,
-    void*              environmentBlock,
-    std::string&       errorMessage
-) {
-    STARTUPINFOW si = {sizeof(si)};
-
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength              = sizeof(sa);
-    sa.bInheritHandle       = TRUE;
-    sa.lpSecurityDescriptor = nullptr;
-
-    if (!CreatePipe(&process.outRead, &process.outWrite, &sa, 0)) {
-        errorMessage = "CreatePipe(stdout) failed";
-        return false;
-    }
-    if (!SetHandleInformation(process.outRead, HANDLE_FLAG_INHERIT, 0)) {
-        errorMessage = "SetHandleInformation(stdout) failed";
-        return false;
-    }
-    if (!CreatePipe(&process.errRead, &process.errWrite, &sa, 0)) {
-        errorMessage = "CreatePipe(stderr) failed";
-        return false;
-    }
-    if (!SetHandleInformation(process.errRead, HANDLE_FLAG_INHERIT, 0)) {
-        errorMessage = "SetHandleInformation(stderr) failed";
-        return false;
-    }
-
-    si.dwFlags    |= STARTF_USESTDHANDLES;
-    si.hStdOutput  = process.outWrite;
-    si.hStdError   = process.errWrite;
-    si.hStdInput   = GetStdHandle(STD_INPUT_HANDLE);
-
-    auto mutableCommand = convertUtf8ToUtf16(commandLine);
-    if (!CreateProcessW(
-            nullptr,
-            mutableCommand.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            (environmentBlock != nullptr ? CREATE_UNICODE_ENVIRONMENT : 0),
-            environmentBlock,
-            nullptr,
-            &si,
-            &process.pi
-        )) {
-        errorMessage = "CreateProcessW failed";
-        return false;
-    }
-
-    CloseHandle(process.outWrite);
-    CloseHandle(process.errWrite);
-    process.outWrite = NULL;
-    process.errWrite = NULL;
-    return true;
-}
-
-static void waitPlatformProcess(PlatformProcess& process) { WaitForSingleObject(process.pi.hProcess, INFINITE); }
-
-static void closePlatformProcess(PlatformProcess& process) {
-    if (process.outRead) CloseHandle(process.outRead);
-    if (process.errRead) CloseHandle(process.errRead);
-    if (process.outWrite) CloseHandle(process.outWrite);
-    if (process.errWrite) CloseHandle(process.errWrite);
-    if (process.pi.hProcess) CloseHandle(process.pi.hProcess);
-    if (process.pi.hThread) CloseHandle(process.pi.hThread);
-}
-
-#else
-
-static std::vector<std::string> buildEnvironmentWithOverride(const std::string& key, const std::string& value) {
-    std::vector<std::string> env;
-    std::string              prefix = key + "=";
-    for (char** current = environ; current && *current; ++current) {
-        std::string entry(*current);
-        if (entry.rfind(prefix, 0) != 0) {
-            env.push_back(std::move(entry));
-        }
-    }
-    env.push_back(prefix + value);
-    return env;
-}
-
-static bool startPlatformProcess(
-    PlatformProcess&               process,
-    const std::vector<std::string>& args,
-    const std::vector<std::string>* extraEnvironment,
-    std::string&                    errorMessage
-) {
-    int outPipe[2] = {-1, -1};
-    int errPipe[2] = {-1, -1};
-    if (pipe(outPipe) != 0) {
-        errorMessage = "pipe(stdout) failed: " + std::string(strerror(errno));
-        return false;
-    }
-    if (pipe(errPipe) != 0) {
-        close(outPipe[0]);
-        close(outPipe[1]);
-        errorMessage = "pipe(stderr) failed: " + std::string(strerror(errno));
-        return false;
-    }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(outPipe[0]);
-        close(outPipe[1]);
-        close(errPipe[0]);
-        close(errPipe[1]);
-        errorMessage = "fork failed: " + std::string(strerror(errno));
-        return false;
-    }
-
-    if (pid == 0) {
-        dup2(outPipe[1], STDOUT_FILENO);
-        dup2(errPipe[1], STDERR_FILENO);
-        close(outPipe[0]);
-        close(outPipe[1]);
-        close(errPipe[0]);
-        close(errPipe[1]);
-
-        std::vector<char*> argv;
-        argv.reserve(args.size() + 1);
-        for (const auto& arg : args) {
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        argv.push_back(nullptr);
-
-        if (extraEnvironment) {
-            std::vector<char*> envp;
-            envp.reserve(extraEnvironment->size() + 1);
-            for (const auto& entry : *extraEnvironment) {
-                envp.push_back(const_cast<char*>(entry.c_str()));
-            }
-            envp.push_back(nullptr);
-            execve(argv[0], argv.data(), envp.data());
-        } else {
-            execv(argv[0], argv.data());
-        }
-        _exit(127);
-    }
-
-    close(outPipe[1]);
-    close(errPipe[1]);
-    process.pid     = pid;
-    process.outRead = outPipe[0];
-    process.errRead = errPipe[0];
-    return true;
-}
-
-static void waitPlatformProcess(PlatformProcess& process) {
-    if (process.pid > 0) {
-        int status = 0;
-        while (waitpid(process.pid, &status, 0) < 0 && errno == EINTR) {}
-    }
-}
-
-static void closePlatformProcess(PlatformProcess& process) {
-    if (process.outRead >= 0) close(process.outRead);
-    if (process.errRead >= 0) close(process.errRead);
-    if (process.outWrite >= 0) close(process.outWrite);
-    if (process.errWrite >= 0) close(process.errWrite);
-}
-
-#endif
 
 static void launchGameExe(
     const std::filesystem::path&         exePath,
@@ -768,47 +228,25 @@ static void launchGameExe(
     reloadTask.setOutputCallback(printColoredAtomic);
     styleProcessor.setOutputCallback(printColoredAtomic);
 
-    PlatformProcess process;
-#ifdef _WIN32
-    std::wstring newEnv;
-    void*        environmentBlock = nullptr;
-#else
-    std::vector<std::string> newEnv;
-    const std::vector<std::string>* environmentBlock = nullptr;
-#endif
+    mcdk::platform::Process             process;
+    mcdk::platform::ProcessEnvironment  newEnv;
+    const mcdk::platform::ProcessEnvironment* environmentBlock = nullptr;
     if (enableIPC) {
         ipcServer->start();
         int port = ipcServer->getPort();
         printColoredAtomic("[MCDK] IPC debug server started on port: " + std::to_string(port), ConsoleColor::Green);
-#ifdef _WIN32
-        newEnv           = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
-        environmentBlock = (void*)newEnv.data();
-#else
-        newEnv           = buildEnvironmentWithOverride("MCDEV_DEBUG_IPC_PORT", std::to_string(port));
+        newEnv           = mcdk::platform::buildEnvironmentWithOverride("MCDEV_DEBUG_IPC_PORT", std::to_string(port));
         environmentBlock = &newEnv;
-#endif
     }
 
     auto gameArgs = buildGameArgs(exePath, config, userConfig);
     std::string launchError;
-#ifdef _WIN32
-    auto commandLine = buildWindowsCommandLine(gameArgs);
-    if (!startPlatformProcess(process, commandLine, environmentBlock, launchError)) {
-        closePlatformProcess(process);
+    if (!mcdk::platform::startProcess(process, gameArgs, environmentBlock, launchError)) {
+        mcdk::platform::closeProcess(process);
         throw std::runtime_error(launchError);
     }
-#else
-    if (!startPlatformProcess(process, gameArgs, environmentBlock, launchError)) {
-        closePlatformProcess(process);
-        throw std::runtime_error(launchError);
-    }
-#endif
 
-#ifdef _WIN32
-    PlatformProcess::PidType pid = process.pi.dwProcessId;
-#else
-    PlatformProcess::PidType pid = process.pid;
-#endif
+    int pid = mcdk::platform::getProcessId(process);
 
     styleProcessor.setPid(static_cast<int>(pid));
     mcpServer.setMinecraftProcessId(static_cast<int>(pid));
@@ -897,13 +335,23 @@ static void launchGameExe(
     }
 
     // 启动两个线程并行读取（避免任何死锁）
-    std::thread tOut(readPipeThread, process.outRead, filterPython, std::function<void(const std::string&)>(processStdout));
+    std::thread tOut = mcdk::platform::startPipeReader(
+        process,
+        mcdk::platform::PipeKind::Stdout,
+        filterPython,
+        std::function<void(const std::string&)>(processStdout)
+    );
 
-    std::thread tErr(readPipeThread, process.errRead, filterPython, std::function<void(const std::string&)>(processStderr));
+    std::thread tErr = mcdk::platform::startPipeReader(
+        process,
+        mcdk::platform::PipeKind::Stderr,
+        filterPython,
+        std::function<void(const std::string&)>(processStderr)
+    );
 
     if (debuggerPort > 0) {
         // 尝试启动mcdbg调试器附加（在官方调试器之前的历史产物）
-        debuggerAttachToProcess(pid, debuggerPort);
+        mcdk::platform::attachDebuggerToProcess(pid, debuggerPort);
     }
 
     if (autoHotReload && modDirList != nullptr) {
@@ -923,7 +371,7 @@ static void launchGameExe(
 
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
     // ERROR_BROKEN_PIPE）
-    waitPlatformProcess(process);
+    mcdk::platform::waitProcess(process);
 
     // 停止热更新任务
     reloadTask.safeExit();
@@ -938,7 +386,7 @@ static void launchGameExe(
     tOut.join();
     tErr.join();
 
-    closePlatformProcess(process);
+    mcdk::platform::closeProcess(process);
 }
 
 // ===================== 启动游戏逻辑 =====================
@@ -1112,11 +560,10 @@ int MCDK_CLI_PARSE(int argc, char* argv[]);
 
 #ifdef _WIN32
 int wmain(int argc, wchar_t* argv[]) {
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
 #else
 int main(int argc, char* argv[]) {
 #endif
+    mcdk::platform::setupConsole();
 
     if (mcdk::getEnvOutputMode() == 1) {
         setvbuf(stdout, nullptr, _IONBF, 0);

@@ -24,6 +24,7 @@ add_subdirectory(libs/cpp-mcp)
 
 add_library(mcdevtool OBJECT
     src/env.cpp
+    src/platform/env.cpp
     src/level.cpp
     src/addon.cpp
     src/utils.cpp
