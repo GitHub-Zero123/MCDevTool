@@ -1,0 +1,66 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: macOS ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: arm64
+            runner: macos-15
+            arch: arm64
+          - name: x86_64
+            runner: macos-15-intel
+            arch: x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DMC_DEV_TOOL_BUILD_TEST=OFF \
+            -DMC_DEV_TOOL_BUILD_MCDK=ON \
+            -DMC_DEV_TOOL_BUILD_MCDK_STDIO_BRIDGE=ON \
+            -DMC_DEV_TOOL_MCDK_ENABLE_CLI=OFF
+
+      - name: Build
+        run: |
+          cmake --build build --config Release --target mcdk mcdk_stdio_bridge --parallel
+
+      - name: Package
+        run: |
+          mkdir -p package dist
+
+          MCDK="$(find build -type f -name mcdk -print -quit)"
+          BRIDGE="$(find build -type f -name mcdk_stdio_bridge -print -quit)"
+
+          test -n "$MCDK"
+          test -n "$BRIDGE"
+
+          cp "$MCDK" package/mcdk
+          cp "$BRIDGE" package/mcdk_stdio_bridge
+          chmod +x package/mcdk package/mcdk_stdio_bridge
+
+          tar -czf "dist/mcdk-macos-${{ matrix.name }}.tar.gz" -C package mcdk mcdk_stdio_bridge
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcdk-macos-${{ matrix.name }}
+          path: dist/*.tar.gz
