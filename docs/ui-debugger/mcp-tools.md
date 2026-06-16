@@ -43,8 +43,8 @@ Analyze native Minecraft JSON UI runtime state. Use jsonui_debugger("/help") to 
 | `/children <screen> <path> [--detail] [--limit=50]` | 返回直接子节点 |
 | `/node <screen> <path> [--fields=basic,layout,text,container]` | 返回单节点布局和内容信息 |
 | `/tree <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]` | 安全浅层树 |
-| `/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]` | 返回 HTML 伪表达 |
-| `/find <screen> <path> <query> [--type=Button] [--depth=5] [--limit=30]` | 按名称/路径/类型搜索 |
+| `/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]` | 返回由 MC 实时布局数据派生的 HTML 伪表达，仅用于参考布局 |
+| `/find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]` | 按名称/路径/类型搜索，默认只匹配节点名 |
 
 ## 返回格式
 
@@ -175,6 +175,16 @@ jsonui_debugger("/html hud.hud_screen /.../root_panel --depth=2 --max-nodes=80")
 ```
 
 返回给 AI 阅读的 HTML 伪表达。实现上仍由 Py 侧读取结构化树数据，C++ MCP 层在解析 JSON 后追加 `data.html`，避免把表达转换逻辑放进游戏执行环境。
+
+注意：`data.html` 是由 Minecraft 当前运行时渲染/布局数据转换来的参考表达，只用于快速理解节点层级、类型、锚点、尺寸和位置。它不是 JSON UI 源码还原，也不是浏览器可精确渲染的 HTML/CSS。
+
+### `/find`
+
+```text
+jsonui_debugger("/find hud.hud_screen /.../root_panel reset --match=name --type=Button --limit=5")
+```
+
+默认 `--match=name` 只匹配节点名，避免父路径中包含 `button`、`panel` 等词时污染搜索结果。需要路径搜索时可显式使用 `--match=path` 或 `--match=both`。
 
 ## IPC 脏数据处理
 

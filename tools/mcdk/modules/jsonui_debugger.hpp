@@ -18,7 +18,8 @@ namespace mcdk::jsonui_debugger {
     inline constexpr const char* ToolDescription =
         "Analyze native Minecraft JSON UI runtime state through a command string. "
         "Pass the command in the cmd argument; use cmd=\"/help\" to list available commands and usage. "
-        "Supports screen listing, node lookup, shallow tree inspection, layout snapshots, and HTML-like pseudo output. "
+        "Supports screen listing, node lookup, shallow tree inspection, layout snapshots, and HTML-like pseudo output "
+        "derived from Minecraft runtime layout/render data for layout reference only. "
         "Read-only by default with depth/node limits to avoid large UI dumps.";
 
     inline std::string trimCopy(std::string_view value) {
@@ -85,14 +86,15 @@ Safety:
             return R"(/html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]
 Return the same bounded tree plus HTML-like pseudo output for AI layout reading.
 
-This is not real HTML. It preserves JSON UI type/path/layout hints through data-* attributes and inline pseudo styles.)";
+The HTML-like output is derived from Minecraft runtime layout/render data. It is only a layout reference, not a source JSON UI reconstruction and not browser-accurate HTML.)";
         }
         if (command == "find" || command == "/find") {
-            return R"(/find <screen> <path> <query> [--type=Button] [--depth=5] [--limit=30]
-Search by node name or path under a bounded root.
+            return R"(/find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]
+Search under a bounded root. Defaults to node-name matching to avoid parent path noise.
 
 Options:
 - --type=Button filters exact native control type name.
+- --match=name|path|both controls where query is matched, default name.
 - --depth=N bounds traversal depth.
 - --limit=N bounds returned matches.
 - --max-nodes=N bounds total visited nodes.)";
@@ -106,11 +108,12 @@ Options:
 /node <screen> <path> [--fields=basic,layout,text,container]
 /tree <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]
 /html <screen> <path> [--depth=2] [--max-nodes=80] [--visible-only]
-/find <screen> <path> <query> [--type=Button] [--depth=5] [--limit=30]
+/find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]
 
 Safety:
 - Tree commands expand level by level.
 - Default /tree limits: depth=2, max-nodes=80.
+- /html is a runtime layout reference, not source JSON UI reconstruction.
 - Avoid raw recursive JSON UI APIs on large roots.)";
     }
 
@@ -244,6 +247,15 @@ def _int_option(args, name, default, min_value=None, max_value=None):
         value = min(max_value, value)
     return value
 
+def _string_option(args, name, default, allowed=None):
+    value = _option(args, name, default)
+    if value is True or value is None:
+        value = default
+    value = str(value)
+    if allowed and value not in allowed:
+        value = default
+    return value
+
 def _node_basic(screen, path):
     t = gui.get_control_def_type(screen, path)
     data = {
@@ -313,14 +325,19 @@ def _children(screen, path, limit, detail):
     }
 
 def _tree(screen, root, max_depth, max_nodes, visible_only, include_text=False):
-    counters = {'visited': 0, 'returned': 0, 'truncated': False, 'reason': None}
+    scan_limit = max(max_nodes * 5, max_nodes + 50)
+    counters = {'scanned': 0, 'returned': 0, 'truncated': False, 'reason': None}
 
     def walk_py2(path, depth):
-        if counters['visited'] >= max_nodes:
+        if counters['returned'] >= max_nodes:
             counters['truncated'] = True
             counters['reason'] = 'max_nodes'
             return None
-        counters['visited'] += 1
+        if counters['scanned'] >= scan_limit:
+            counters['truncated'] = True
+            counters['reason'] = 'scan_limit'
+            return None
+        counters['scanned'] += 1
         try:
             node = _node_basic(screen, path)
             node['layout'] = _node_layout(screen, path)
@@ -331,6 +348,23 @@ def _tree(screen, root, max_depth, max_nodes, visible_only, include_text=False):
         except Exception as exc:
             return {'path': path, 'error': repr(exc), 'children': []}
         if visible_only and not node.get('visible', False):
+            if depth >= max_depth:
+                return None
+            try:
+                names = gui.get_children_name_from_parent(screen, path)
+            except Exception:
+                names = []
+            visible_children = []
+            for name in names:
+                child = walk_py2(path.rstrip('/') + '/' + name, depth + 1)
+                if child is not None:
+                    visible_children.append(child)
+                if counters['returned'] >= max_nodes or counters['scanned'] >= scan_limit:
+                    counters['truncated'] = True
+                    counters['reason'] = 'max_nodes' if counters['returned'] >= max_nodes else 'scan_limit'
+                    break
+            if visible_children:
+                return {'path': path, 'filtered_hidden': True, 'children': visible_children}
             return None
         counters['returned'] += 1
         node['depth'] = depth
@@ -351,10 +385,13 @@ def _tree(screen, root, max_depth, max_nodes, visible_only, include_text=False):
             child_path = path.rstrip('/') + '/' + name
             child = walk_py2(child_path, depth + 1)
             if child is not None:
-                node['children'].append(child)
-            if counters['visited'] >= max_nodes:
+                if child.get('filtered_hidden'):
+                    node['children'].extend(child.get('children', []))
+                else:
+                    node['children'].append(child)
+            if counters['returned'] >= max_nodes or counters['scanned'] >= scan_limit:
                 counters['truncated'] = True
-                counters['reason'] = 'max_nodes'
+                counters['reason'] = 'max_nodes' if counters['returned'] >= max_nodes else 'scan_limit'
                 break
         return node
 
@@ -365,19 +402,27 @@ def _tree(screen, root, max_depth, max_nodes, visible_only, include_text=False):
         'tree': tree,
         'truncated': counters['truncated'],
         'truncated_reason': counters['reason'],
-        'visited_nodes': counters['visited'],
+        'visited_nodes': counters['scanned'],
+        'scanned_nodes': counters['scanned'],
         'returned_nodes': counters['returned'],
         'max_depth': max_depth,
-        'max_nodes': max_nodes
+        'max_nodes': max_nodes,
+        'scan_limit': scan_limit
     }
 
-def _match_node(node, query, type_filter):
+def _match_node(node, query, type_filter, match_mode):
     q = query.lower()
     if type_filter and node.get('type') != type_filter:
         return False
-    return q in node.get('name', '').lower() or q in node.get('path', '').lower()
+    in_name = q in node.get('name', '').lower()
+    in_path = q in node.get('path', '').lower()
+    if match_mode == 'path':
+        return in_path
+    if match_mode == 'both':
+        return in_name or in_path
+    return in_name
 
-def _find(screen, root, query, type_filter, max_depth, max_nodes, limit, visible_only):
+def _find(screen, root, query, type_filter, match_mode, max_depth, max_nodes, limit, visible_only):
     counters = {'visited': 0, 'truncated': False, 'reason': None}
     matches = []
 
@@ -391,7 +436,7 @@ def _find(screen, root, query, type_filter, max_depth, max_nodes, limit, visible
             node = _node_basic(screen, path)
         except Exception:
             return
-        if (not visible_only or node.get('visible', False)) and _match_node(node, query, type_filter):
+        if (not visible_only or node.get('visible', False)) and _match_node(node, query, type_filter, match_mode):
             matches.append(node)
             if len(matches) >= limit:
                 counters['truncated'] = True
@@ -414,6 +459,7 @@ def _find(screen, root, query, type_filter, max_depth, max_nodes, limit, visible
         'root': root,
         'query': query,
         'type_filter': type_filter,
+        'match': match_mode,
         'matches': matches,
         'visited_nodes': counters['visited'],
         'returned_nodes': len(matches),
@@ -479,13 +525,14 @@ def _run(cmd):
         return _ok(name, data)
     if name == '/find':
         if len(args) < 4:
-            return _err(name, 'usage: /find <screen> <path> <query> [--type=Button] [--depth=5] [--limit=30]', 'USAGE')
+            return _err(name, 'usage: /find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]', 'USAGE')
         depth = _int_option(args[4:], 'depth', 5, 0, 8)
         max_nodes = _int_option(args[4:], 'max-nodes', 300, 1, 1000)
         limit = _int_option(args[4:], 'limit', 30, 1, 100)
         type_filter = _option(args[4:], 'type', None)
+        match_mode = _string_option(args[4:], 'match', 'name', ('name', 'path', 'both'))
         visible_only = bool(_option(args[4:], 'visible-only', False))
-        return _ok(name, _find(args[1], args[2], args[3], type_filter, depth, max_nodes, limit, visible_only))
+        return _ok(name, _find(args[1], args[2], args[3], type_filter, match_mode, depth, max_nodes, limit, visible_only))
     return _err(name, 'unknown command: ' + name, 'UNKNOWN_COMMAND')
 
 try:
@@ -884,6 +931,9 @@ except Exception as exc:
             return;
         }
         data["html"] = treeToHtmlPseudo(data["tree"]);
+        data["html_note"] =
+            "HTML-like pseudo output derived from Minecraft runtime layout/render data. Use it as a layout reference "
+            "only; it is not source JSON UI reconstruction and not browser-accurate HTML.";
     }
 
 } // namespace mcdk::jsonui_debugger
