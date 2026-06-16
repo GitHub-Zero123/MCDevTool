@@ -2,6 +2,11 @@ name: Build macOS
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to build"
+        required: false
+        default: "feature/macos-test"
   push:
     tags:
       - "v*"
@@ -27,9 +32,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Generate embedded resources
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            python3 mods/generate.py
+          else
+            python mods/generate.py
+          fi
 
       - name: Configure
+        shell: bash
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
@@ -40,10 +60,12 @@ jobs:
             -DMC_DEV_TOOL_MCDK_ENABLE_CLI=OFF
 
       - name: Build
+        shell: bash
         run: |
-          cmake --build build --config Release --target mcdk mcdk_stdio_bridge --parallel
+          cmake --build build --config Release --target mcdk mcdk_stdio_bridge --parallel --verbose
 
       - name: Package
+        shell: bash
         run: |
           mkdir -p package dist
 
@@ -60,7 +82,7 @@ jobs:
           tar -czf "dist/mcdk-macos-${{ matrix.name }}.tar.gz" -C package mcdk mcdk_stdio_bridge
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mcdk-macos-${{ matrix.name }}
           path: dist/*.tar.gz

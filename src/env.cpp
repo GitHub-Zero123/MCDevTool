@@ -197,14 +197,22 @@ namespace MCDevTool {
         _hasNoGamePath = true;
         return std::nullopt;
     }
+#elif defined(__APPLE__)
+    // macOS 不做自动扫盘匹配，必须由用户显式配置游戏可执行文件路径。
+    std::optional<std::filesystem::path> autoSearchMCStudioDownloadGamePath() { return std::nullopt; }
 #else
-    // 自动搜索MCStudioDownload游戏路径（如果存在）
     std::optional<std::filesystem::path> autoSearchMCStudioDownloadGamePath() { return std::nullopt; }
 #endif
+#ifndef __APPLE__
     static std::optional<std::filesystem::path> _cacheLastestGamePath;
+#endif
 
     // 自动匹配最新版本游戏可执行文件路径（如果存在）
     std::optional<std::filesystem::path> autoMatchLatestGameExePath() {
+#ifdef __APPLE__
+        // macOS 没有可靠的 MCStudioDownload 特征目录，禁止自动猜测路径。
+        return std::nullopt;
+#else
         if (_cacheLastestGamePath) {
             return _cacheLastestGamePath;
         }
@@ -239,6 +247,7 @@ namespace MCDevTool {
             _cacheLastestGamePath = latestExePath;
         }
         return latestExePath;
+#endif
     }
 
     // 清理运行时行为包目录

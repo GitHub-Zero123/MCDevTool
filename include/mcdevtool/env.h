@@ -19,9 +19,9 @@ namespace MCDevTool {
     std::filesystem::path getResourcePacksPath();
     // 获取依赖包目录
     std::filesystem::path getDependenciesPacksPath();
-    // 自动搜索MCStudioDownload游戏路径（如果存在）
+    // 自动搜索MCStudioDownload游戏路径（如果存在，macOS固定返回空）
     std::optional<std::filesystem::path> autoSearchMCStudioDownloadGamePath();
-    // 自动匹配最新版本游戏可执行文件路径（如果存在）
+    // 自动匹配最新版本游戏可执行文件路径（如果存在，macOS固定返回空）
     std::optional<std::filesystem::path> autoMatchLatestGameExePath();
     // 清理运行时行为包目录
     void cleanRuntimeBehaviorPacks();
