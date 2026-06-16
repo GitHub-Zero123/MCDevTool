@@ -1,0 +1,107 @@
+name: Build Test Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to build"
+        required: false
+        default: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            runner: windows-latest
+            artifact: mcdk-windows-x64
+            configure_extra: -A x64
+            archive_ext: zip
+          - name: macos-arm64
+            runner: macos-15
+            artifact: mcdk-macos-arm64
+            configure_extra: -DCMAKE_OSX_ARCHITECTURES=arm64
+            archive_ext: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Generate embedded resources
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            python3 mods/generate.py
+          else
+            python mods/generate.py
+          fi
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMC_DEV_TOOL_BUILD_TEST=OFF \
+            -DMC_DEV_TOOL_BUILD_MCDK=ON \
+            -DMC_DEV_TOOL_BUILD_MCDK_STDIO_BRIDGE=ON \
+            -DMC_DEV_TOOL_MCDK_ENABLE_CLI=OFF \
+            ${{ matrix.configure_extra }}
+
+      - name: Build
+        shell: bash
+        run: |
+          cmake --build build --config Release --target mcdk mcdk_stdio_bridge --parallel
+
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p package dist
+
+          MCDK="$(find build -type f -name mcdk -print -quit)"
+          BRIDGE="$(find build -type f -name mcdk_stdio_bridge -print -quit)"
+
+          test -n "$MCDK"
+          test -n "$BRIDGE"
+
+          cp "$MCDK" package/mcdk
+          cp "$BRIDGE" package/mcdk_stdio_bridge
+          chmod +x package/mcdk package/mcdk_stdio_bridge
+
+          tar -czf "dist/${{ matrix.artifact }}.tar.gz" -C package mcdk mcdk_stdio_bridge
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package, dist | Out-Null
+
+          $mcdk = Get-ChildItem -Path build -Recurse -Filter mcdk.exe | Select-Object -First 1
+          $bridge = Get-ChildItem -Path build -Recurse -Filter mcdk_stdio_bridge.exe | Select-Object -First 1
+
+          if (-not $mcdk) { throw "mcdk.exe not found" }
+          if (-not $bridge) { throw "mcdk_stdio_bridge.exe not found" }
+
+          Copy-Item $mcdk.FullName package/mcdk.exe
+          Copy-Item $bridge.FullName package/mcdk_stdio_bridge.exe
+
+          Compress-Archive -Path package/* -DestinationPath "dist/${{ matrix.artifact }}.zip" -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*.${{ matrix.archive_ext }}
