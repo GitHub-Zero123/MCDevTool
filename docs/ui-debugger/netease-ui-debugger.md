@@ -25,6 +25,9 @@
 
 - `gui.nud_get_control_tree("/")` 不通过函数返回值返回树，而是触发 `UIDebuggerNotifyEvent`，事件参数的 `data` 字段是 JSON 字符串。
 - 该 JSON 的典型结构是 `{"success": true, "data": {"path": "/", "data": {"type": "screen", "name": "...", "controls": [...]}}}`。
+- `nud_*` 查询路径是官方调试器全局路径，会把 screen 根节点也包含在路径中。例如 runtime API 里 `screen_name="hud.hud_screen"`、`component_path="/variables_button_mappings_and_controls/main/KID_ULTRAX_HUD_main"`，对应的 NUD 路径是 `/hud_screen/variables_button_mappings_and_controls/main/KID_ULTRAX_HUD_main`。
+- `gui.nud_get_control_tree("/")` 可以看到 HUD 下挂载的 ModSDK 自定义 UI；若要单独查询某个 Mod UI 子树，必须传入包含 screen 根的 NUD 路径。直接把 runtime `component_path` 传给 NUD 可能返回空结果。
+- 这只说明 NUD 查询 API 能读到对应子树，不等同于游戏内编辑/选择模式的鼠标点击命中一定能选中该控件。点击选择还受输入模式、HUD 注入层级、控件是否吞输入、当前 top screen 等因素影响。
 - 对没有继承常规基类画布的 Mod UI，`controls` 中可能直接出现裸根节点，例如 `/panel`。普通 `gui.get_children_name_from_parent(screen, "/")` 仍可能返回 `None`，不能替代官方调试器树。
 - 拿到候选根后，应再用普通 runtime API 验证该路径可枚举、可见、有布局数据；后续 `/tree`、`/html`、`/find` 继续走普通 runtime API。
 - 不应通过 `ScreenNode`、`GetTopUINode()`、`component_path`、回调字段或缓存字段兜底推断根节点。这些属于 Python 业务侧面向对象封装，用户态可以改写或伪造，不能代表 C++ 底层 UI 树语义。

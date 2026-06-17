@@ -75,6 +75,8 @@ Output data:
 - ui_bind: entity/world-position bound UIs.
 - pushed_screens: lazily wrapped PushScreen/native pushed screens.
 - registered_ui: optional RegisterUI definitions when --include-registered is passed.
+- native_component_path: runtime component_path for normal jsonui_debugger commands.
+- netease_debugger_path: path for official NetEase UI Debugger gui.nud_* APIs only. Do not feed this into /tree, /html, /find, /node, or /children.
 
 Useful next step:
 - After a custom UI is identified here, use its screen_name and component_path with native commands such as /tree, /html, /render, or /find.)";
@@ -906,6 +908,26 @@ def _safe_call(obj, name, default=None):
     except Exception as exc:
         return default
 
+def _netease_debugger_root_name(screen_name):
+    try:
+        if not screen_name:
+            return ''
+        if '.' in screen_name:
+            return screen_name.split('.')[-1]
+        return screen_name
+    except Exception:
+        return ''
+
+def _netease_debugger_path(screen_name, native_path):
+    # NetEase UI Debugger paths include the debugger screen root:
+    # hud.hud_screen + /variables... => /hud_screen/variables...
+    root = _netease_debugger_root_name(screen_name)
+    if not root or not native_path:
+        return None
+    if not native_path.startswith('/'):
+        native_path = '/' + native_path
+    return '/' + root + native_path
+
 def _modsdk_node_info(node, children_depth=0, limit=80):
     cls = node.__class__
     data = {
@@ -937,6 +959,12 @@ def _modsdk_node_info(node, children_depth=0, limit=80):
         if native_path and not native_path.startswith('/'):
             native_path = '/' + native_path
         data['native_component_path'] = native_path
+        data['netease_debugger_path'] = _netease_debugger_path(data['screen_name'], native_path)
+        data['path_semantics'] = {
+            'native_component_path': 'Use with jsonui_debugger runtime commands: /tree, /html, /find, /node, /children, /probe.',
+            'netease_debugger_path': 'Use only with official NetEase UI Debugger gui.nud_* APIs. It includes the debugger screen root.',
+            'do_not_mix_paths': True
+        }
         data['next_commands'] = [
             '/tree %s %s --depth=4 --max-nodes=300 --visible-only' % (data['screen_name'], native_path),
             '/html %s %s --depth=4 --max-nodes=300 --visible-only --html-only' % (data['screen_name'], native_path),
