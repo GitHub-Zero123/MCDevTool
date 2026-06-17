@@ -125,6 +125,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "include_debug_mod": true,
     // 是否自动热更新MOD
     "auto_hot_reload_mods": true,
+    // 是否自动热更新 JSON UI，默认关闭。开启后，资源包 ui 目录下的 json 修改会在回到游戏前台时触发 Ctrl+R UI 热重载
+    "auto_hot_reload_ui": false,
     // 生成的世界类型(0.旧版有限世界 1.无限世界 2.超平坦) (int)
     "world_type": 1,
     // 游戏模式(0.生存 1.创造 2.冒险) (int)

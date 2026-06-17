@@ -1,25 +1,46 @@
 #pragma once
-#include <string>
-#include <vector>
+
 #include <filesystem>
-#include <unordered_set>
-#include <mutex>
-#include <memory>
 #include <functional>
-#include <nlohmann/json.hpp>
+#include <mutex>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
 #include <mcdevtool/debug.h>
 #include <mcdevtool/utils.h>
+#include <nlohmann/json.hpp>
+
 #include "console.hpp"
 
 namespace mcdk {
-    // 热更新监视任务类
-    class ReloadWatcherTask : public MCDevTool::Debug::HotReloadWatcherTask {
+
+    class ConsoleWatcherTask : public MCDevTool::Debug::HotReloadWatcherTask {
     public:
-        using HotReloadAction = std::function<void(const nlohmann::json&)>;
         using MCDevTool::Debug::HotReloadWatcherTask::HotReloadWatcherTask;
 
-        // 设置控制台输出回调
         void setOutputCallback(ConsoleOutputCallback callback) { mOutputCallback = std::move(callback); }
+
+    protected:
+        void output(ConsoleColor color, const std::string& message) const {
+            if (mOutputCallback) {
+                mOutputCallback(message, color);
+            }
+        }
+
+        void outputChangedPath(const std::filesystem::path& filePath) const {
+            auto u8Path = filePath.generic_u8string();
+            output(ConsoleColor::Yellow, "[HotReload] Detected change in: " + std::string(u8Path.begin(), u8Path.end()));
+        }
+
+    private:
+        ConsoleOutputCallback mOutputCallback;
+    };
+
+    class PyReloadWatcherTask : public ConsoleWatcherTask {
+    public:
+        using HotReloadAction = std::function<void(const nlohmann::json&)>;
+        using ConsoleWatcherTask::ConsoleWatcherTask;
 
         void setHotReloadAction(HotReloadAction action) { mHotReloadAction = std::move(action); }
 
@@ -31,12 +52,43 @@ namespace mcdk {
             MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(modDirs));
         }
 
-        // 从文件路径计算Python模块名
+        bool shouldWatchFile(const std::filesystem::path& filePath) const override {
+            return filePath.extension().string() == ".py";
+        }
+
+        void onFileChanged(const std::filesystem::path& filePath) override {
+            outputChangedPath(filePath);
+            std::lock_guard<std::mutex> lock(mMutex);
+            mCachedPyModulePaths.insert(filePath);
+        }
+
+        void onHotReloadTriggered() override {
+            nlohmann::json targetPaths = nlohmann::json::array();
+            {
+                std::lock_guard<std::mutex> lock(mMutex);
+                for (const auto& modulePath : mCachedPyModulePaths) {
+                    std::string moduleName;
+                    pyPathToModuleName(modulePath, moduleName);
+                    if (!moduleName.empty()) {
+                        targetPaths.push_back(std::move(moduleName));
+                    }
+                }
+                mCachedPyModulePaths.clear();
+            }
+            if (targetPaths.empty()) {
+                return;
+            }
+            output(ConsoleColor::Yellow, "[HotReload] 检测到修改，已触发热更新。");
+            if (mHotReloadAction) {
+                mHotReloadAction(targetPaths);
+            }
+        }
+
+    private:
         void pyPathToModuleName(const std::filesystem::path& filePath, std::string& outModuleName) {
             std::filesystem::path cur = filePath;
             std::filesystem::path manifestDir;
 
-            // 向上查找 manifest.json
             while (true) {
                 if (std::filesystem::exists(cur / "manifest.json")) {
                     manifestDir = cur;
@@ -45,16 +97,14 @@ namespace mcdk {
 
                 auto parent = cur.parent_path();
                 if (parent == cur) {
-                    return; // 没找到 manifest
+                    return;
                 }
                 cur = parent;
-                if (modRootDirPaths.size() > 0 && modRootDirPaths.find(cur) != modRootDirPaths.end()) {
-                    // 达到用户指定的mod目录上限
+                if (!modRootDirPaths.empty() && modRootDirPaths.find(cur) != modRootDirPaths.end()) {
                     return;
                 }
             }
 
-            // 计算 filePath 相对于 manifestDir 的路径
             std::filesystem::path rel = std::filesystem::relative(filePath, manifestDir);
             if (rel.empty()) {
                 return;
@@ -64,7 +114,6 @@ namespace mcdk {
             for (const auto& p : rel) {
                 parts.push_back(MCDevTool::Utils::pathToUtf8(p));
             }
-
             if (parts.empty()) {
                 return;
             }
@@ -74,7 +123,6 @@ namespace mcdk {
                 last.resize(last.size() - 3);
             }
 
-            // 拼接模块名
             std::string moduleName;
             for (size_t i = 0; i < parts.size(); ++i) {
                 moduleName += parts[i];
@@ -85,54 +133,89 @@ namespace mcdk {
             outModuleName = std::move(moduleName);
         }
 
-        void onHotReloadTriggered() override {
-            nlohmann::json targetPaths = nlohmann::json::array();
-            {
-                std::lock_guard<std::mutex> lock(gMutex);
-                for (const auto& modulePath : mCachedPyModulePaths) {
-                    std::string moduleName;
-                    pyPathToModuleName(modulePath, moduleName);
-                    if (moduleName.empty()) {
-                        continue;
-                    }
-                    targetPaths.push_back(std::move(moduleName));
-                }
-                mCachedPyModulePaths.clear();
-            }
-            if (targetPaths.empty()) {
-                return;
-            }
-            if (mOutputCallback) {
-                mOutputCallback("[HotReload] 检测到修改，已触发热更新。", mcdk::ConsoleColor::Yellow);
-            }
-            // mIpcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
-            mHotReloadAction(targetPaths);
-        }
-
-        void onFileChanged(const std::filesystem::path& filePath) override {
-            // 输出变更文件路径
-            auto u8Path = filePath.generic_u8string();
-            if (mOutputCallback) {
-                mOutputCallback(
-                    "[HotReload] Detected change in: " + std::string(u8Path.begin(), u8Path.end()),
-                    mcdk::ConsoleColor::Yellow
-                );
-            }
-            std::lock_guard<std::mutex> lock(gMutex);
-            mCachedPyModulePaths.insert(filePath);
-        }
-
-        // void bindServer(const std::shared_ptr<MCDevTool::Debug::DebugIPCServer>& server) {
-        //     mIpcServer = server;
-        // }
-
-    private:
-        // std::shared_ptr<MCDevTool::Debug::DebugIPCServer> mIpcServer;
         HotReloadAction                           mHotReloadAction;
         std::unordered_set<std::filesystem::path> mCachedPyModulePaths;
         std::unordered_set<std::filesystem::path> modRootDirPaths;
-        std::mutex                                gMutex;
-        ConsoleOutputCallback                     mOutputCallback;
+        std::mutex                                mMutex;
+    };
+
+    class UiReloadWatcherTask : public ConsoleWatcherTask {
+    public:
+        using UiHotReloadAction = std::function<void()>;
+        using ConsoleWatcherTask::ConsoleWatcherTask;
+
+        void setUiHotReloadAction(UiHotReloadAction action) { mUiHotReloadAction = std::move(action); }
+
+        void setUiHotReloadDirs(std::vector<std::filesystem::path> dirs) {
+            std::lock_guard<std::mutex> lock(mMutex);
+            mUiHotReloadDirs.clear();
+            for (auto& dir : dirs) {
+                if (std::filesystem::is_directory(dir)) {
+                    mUiHotReloadDirs.insert(std::filesystem::absolute(dir).lexically_normal());
+                }
+            }
+        }
+
+        void setModDirs(std::vector<std::filesystem::path>&& modDirs) {
+            MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(modDirs));
+        }
+
+        bool shouldWatchFile(const std::filesystem::path& filePath) const override {
+            return isUiJsonPath(filePath);
+        }
+
+        void onFileChanged(const std::filesystem::path& filePath) override {
+            outputChangedPath(filePath);
+            std::lock_guard<std::mutex> lock(mMutex);
+            mDirty = true;
+        }
+
+        void onHotReloadTriggered() override {
+            {
+                std::lock_guard<std::mutex> lock(mMutex);
+                if (!mDirty) {
+                    return;
+                }
+                mDirty = false;
+            }
+            output(ConsoleColor::Yellow, "[HotReload] Detected JSON UI changes; triggering UI hot reload.");
+            if (mUiHotReloadAction) {
+                mUiHotReloadAction();
+            }
+        }
+
+    private:
+        static bool isPathInsideDir(const std::filesystem::path& path, const std::filesystem::path& dir) {
+            auto pathIt = path.begin();
+            auto dirIt  = dir.begin();
+            for (; dirIt != dir.end(); ++dirIt, ++pathIt) {
+                if (pathIt == path.end() || *pathIt != *dirIt) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool isUiJsonPath(const std::filesystem::path& filePath) const {
+            if (filePath.extension().string() != ".json") {
+                return false;
+            }
+            if (mUiHotReloadDirs.empty()) {
+                return false;
+            }
+            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
+            for (const auto& uiDir : mUiHotReloadDirs) {
+                if (isPathInsideDir(absPath, uiDir)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        UiHotReloadAction                         mUiHotReloadAction;
+        std::unordered_set<std::filesystem::path> mUiHotReloadDirs;
+        mutable std::mutex                        mMutex;
+        bool                                      mDirty = false;
     };
 
 } // namespace mcdk

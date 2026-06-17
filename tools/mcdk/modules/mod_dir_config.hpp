@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
+#include <mcdevtool/addon.h>
 
 namespace mcdk {
 
@@ -99,6 +100,36 @@ namespace mcdk {
             for (const auto& config : configs) {
                 if (config.hotReload) {
                     paths.push_back(config.getAbsolutePath());
+                }
+            }
+            return paths;
+        }
+
+        static std::vector<std::filesystem::path> toResourcePackUiPathList(const std::vector<UserModDirConfig>& configs) {
+            std::vector<std::filesystem::path> paths;
+            auto addResourcePackUiPath = [&paths](const std::filesystem::path& packPath) {
+                auto info = MCDevTool::Addon::parsePackInfo(packPath);
+                if (!info || info.type != MCDevTool::Addon::PackType::RESOURCE) {
+                    return;
+                }
+                auto uiPath = packPath / "ui";
+                if (std::filesystem::is_directory(uiPath)) {
+                    paths.push_back(std::filesystem::absolute(uiPath).lexically_normal());
+                }
+            };
+
+            for (const auto& config : configs) {
+                if (!config.hotReload) {
+                    continue;
+                }
+                const auto root = config.getAbsolutePath();
+                addResourcePackUiPath(root);
+                if (std::filesystem::is_directory(root)) {
+                    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+                        if (entry.is_directory()) {
+                            addResourcePackUiPath(entry.path());
+                        }
+                    }
                 }
             }
             return paths;

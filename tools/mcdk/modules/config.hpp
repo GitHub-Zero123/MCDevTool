@@ -45,6 +45,7 @@ namespace mcdk {
             {   "include_debug_mod",                          true},
             // 是否启用自动热更新mod功能
             {"auto_hot_reload_mods",                          true},
+            {  "auto_hot_reload_ui",                         false},
             // 世界类型 0-旧版 1-无限 2-平坦
             {          "world_type",                             1},
             // 游戏模式 0-生存 1-创造 2-冒险

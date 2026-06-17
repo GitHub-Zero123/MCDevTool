@@ -542,7 +542,7 @@ namespace MCDevTool::Debug {
         mStopFlag          = false;
         bool mNeedUpdate   = false;
         bool mIsForeground = false;
-        fileWatcherThread  = MCDevTool::HotReload::watchAndReloadPyFiles(
+        fileWatcherThread  = MCDevTool::HotReload::watchAndReloadFiles(
             mModDirs,
             [this](const std::filesystem::path& path) {
                 this->mNeedUpdate = true;
@@ -551,6 +551,9 @@ namespace MCDevTool::Debug {
                     this->mNeedUpdate = false;
                     this->onHotReloadTriggered();
                 }
+            },
+            [this](const std::filesystem::path& path) {
+                return this->shouldWatchFile(path);
             },
             &mStopFlag
         );
@@ -606,4 +609,8 @@ namespace MCDevTool::Debug {
     void HotReloadWatcherTask::onHotReloadTriggered() {}
 
     void HotReloadWatcherTask::onFileChanged(const std::filesystem::path& filePath) {}
+
+    bool HotReloadWatcherTask::shouldWatchFile(const std::filesystem::path& filePath) const {
+        return filePath.extension().string() == ".py";
+    }
 } // namespace MCDevTool::Debug

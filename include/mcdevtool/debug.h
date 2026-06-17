@@ -114,6 +114,8 @@ namespace MCDevTool::Debug {
         virtual void onFileChanged(const std::filesystem::path& filePath);
 
     protected:
+        virtual bool shouldWatchFile(const std::filesystem::path& filePath) const;
+
         bool mNeedUpdate   = false;
         bool mIsForeground = false;
 

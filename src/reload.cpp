@@ -82,9 +82,10 @@ namespace MCDevTool::HotReload {
 
     // ------------------------------------------------------------
 
-    std::optional<std::thread> watchAndReloadPyFiles(
+    std::optional<std::thread> watchAndReloadFiles(
         const std::vector<fs::path>&                modDirs,
         const std::function<void(const fs::path&)>& onFileChanged,
+        FileWatchPredicate                          shouldWatchFile,
         std::atomic<bool>*                          stopFlag
     ) {
         if (modDirs.empty()) {
@@ -135,7 +136,7 @@ namespace MCDevTool::HotReload {
         }
 
         // 后台监听线程
-        return std::thread([items = std::move(items), onFileChanged, stopFlag]() mutable {
+        return std::thread([items = std::move(items), onFileChanged, shouldWatchFile = std::move(shouldWatchFile), stopFlag]() mutable {
             std::vector<HANDLE> waitHandles;
             waitHandles.reserve(items.size() + 1);
 
@@ -219,7 +220,7 @@ namespace MCDevTool::HotReload {
 
                     // 仅处理文件修改事件 (FILE_ACTION_MODIFIED)
                     // 当监听 FILE_NOTIFY_CHANGE_LAST_WRITE 时，Action 仍然是 FILE_ACTION_MODIFIED
-                    if (fni->Action == FILE_ACTION_MODIFIED && fullPath.extension() == L".py") {
+                    if (fni->Action == FILE_ACTION_MODIFIED && (!shouldWatchFile || shouldWatchFile(fullPath))) {
                         std::wstring pathKey       = fullPath.wstring();
                         bool         shouldTrigger = false;
 
@@ -285,9 +286,10 @@ namespace MCDevTool::HotReload {
 
     // ------------------------------------------------------------
 
-    std::optional<std::thread> watchAndReloadPyFiles(
+    std::optional<std::thread> watchAndReloadFiles(
         const std::vector<std::string_view>&        modDirs,
         const std::function<void(const fs::path&)>& onFileChanged,
+        FileWatchPredicate                          shouldWatchFile,
         std::atomic<bool>*                          stopFlag
     ) {
         std::vector<fs::path> paths;
@@ -297,7 +299,37 @@ namespace MCDevTool::HotReload {
             paths.emplace_back(fs::path(std::string(sv)));
         }
 
-        return watchAndReloadPyFiles(paths, onFileChanged, stopFlag);
+        return watchAndReloadFiles(paths, onFileChanged, std::move(shouldWatchFile), stopFlag);
+    }
+
+    std::optional<std::thread> watchAndReloadPyFiles(
+        const std::vector<fs::path>&                modDirs,
+        const std::function<void(const fs::path&)>& onFileChanged,
+        std::atomic<bool>*                          stopFlag
+    ) {
+        return watchAndReloadFiles(
+            modDirs,
+            onFileChanged,
+            [](const fs::path& path) {
+                return path.extension() == L".py";
+            },
+            stopFlag
+        );
+    }
+
+    std::optional<std::thread> watchAndReloadPyFiles(
+        const std::vector<std::string_view>&        modDirs,
+        const std::function<void(const fs::path&)>& onFileChanged,
+        std::atomic<bool>*                          stopFlag
+    ) {
+        return watchAndReloadFiles(
+            modDirs,
+            onFileChanged,
+            [](const fs::path& path) {
+                return path.extension() == L".py";
+            },
+            stopFlag
+        );
     }
 
     // 监听目标pid进程是否回到前台焦点
@@ -335,22 +367,36 @@ namespace MCDevTool::HotReload {
 
 #else // _WIN32
 
+    std::optional<std::thread> watchAndReloadFiles(
+        const std::vector<std::filesystem::path>&,
+        const std::function<void(const std::filesystem::path&)>&,
+        FileWatchPredicate,
+        std::atomic<bool>*
+    ) = delete;
+
+    std::optional<std::thread> watchAndReloadFiles(
+        const std::vector<std::string_view>&,
+        const std::function<void(const std::filesystem::path&)>&,
+        FileWatchPredicate,
+        std::atomic<bool>*
+    ) = delete;
+
     std::optional<std::thread> watchAndReloadPyFiles(
         const std::vector<std::filesystem::path>&,
         const std::function<void(const std::filesystem::path&)>&,
-        std::atomic<bool>* stopFlag = nullptr
+        std::atomic<bool>*
     ) = delete;
 
     std::optional<std::thread> watchAndReloadPyFiles(
         const std::vector<std::string_view>&,
         const std::function<void(const std::filesystem::path&)>&,
-        std::atomic<bool>* stopFlag = nullptr
+        std::atomic<bool>*
     ) = delete;
 
     std::optional<std::thread> watchProcessForegroundWindow(
         uint32_t,
         const std::function<void(bool isForeground)>&,
-        std::atomic<bool>* stopFlag = nullptr
+        std::atomic<bool>*
     ) = delete;
 
 #endif

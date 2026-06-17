@@ -30,6 +30,8 @@
 #include "modules/utils.hpp"
 #include "modules/log_buffer.hpp"
 #include "modules/mcp_server.hpp"
+#include "modules/jsonui_reload_support.hpp"
+#include "modules/ipc_code_execution.hpp"
 
 
 // mcdevtool api
@@ -57,7 +59,6 @@
 #include <windows.h>
 #endif
 
-using mcdk::ReloadWatcherTask;
 using mcdk::UserModDirConfig;
 using mcdk::UserStyleProcessor;
 using ConsoleColor = mcdk::ConsoleColor;
@@ -230,7 +231,8 @@ static void debuggerAttachToProcess(DWORD pid, int port) {
 static bool checkUserConfigEnableIPC(const nlohmann::json& userConfig) {
     // 若启用了auto_hot_reload_mods则启用IPC
     bool autoHotReload = userConfig.value("auto_hot_reload_mods", true);
-    if (autoHotReload) {
+    bool autoHotReloadUi = userConfig.value("auto_hot_reload_ui", false);
+    if (autoHotReload || autoHotReloadUi) {
         return true;
     }
     return false;
@@ -284,8 +286,9 @@ static void launchGameExe(
     const nlohmann::json&                userConfig = nlohmann::json::object(),
     const std::vector<UserModDirConfig>* modDirList = nullptr
 ) {
-    bool  autoHotReload = userConfig.value("auto_hot_reload_mods", true);
-    bool  enableIPC     = autoHotReload;
+    bool  autoHotReload   = userConfig.value("auto_hot_reload_mods", true);
+    bool  autoHotReloadUi = userConfig.value("auto_hot_reload_ui", false);
+    bool  enableIPC       = autoHotReload || autoHotReloadUi;
     bool  needLogBuffer = false;
     void* lpEnvironment = nullptr;
 
@@ -430,13 +433,60 @@ static void launchGameExe(
             return ipcServer->sendMessage(7, fileName); // ONCE SHADER RELOAD
         });
     }
-    mcdk::ReloadWatcherTask  reloadTask;
-    mcdk::UserStyleProcessor styleProcessor(0, userConfig);
-    reloadTask.setHotReloadAction([ipcServer](const nlohmann::json& targetPaths) {
+    mcdk::PyReloadWatcherTask pyReloadTask;
+    mcdk::UiReloadWatcherTask uiReloadTask;
+    mcdk::UserStyleProcessor  styleProcessor(0, userConfig);
+    pyReloadTask.setHotReloadAction([ipcServer](const nlohmann::json& targetPaths) {
         ipcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
     });
-    // reloadTask.bindServer(ipcServer);
-    reloadTask.setOutputCallback(printColoredAtomic);
+    uiReloadTask.setUiHotReloadAction([ipcServer, &mcpServer]() {
+        if (ipcServer->getClientCount() == 0) {
+            printColoredAtomic(
+                "[HotReload] UI hot reload skipped: IPC is not connected. The player may not be in game.",
+                ConsoleColor::Yellow
+            );
+            return;
+        }
+
+        const int pid = mcpServer.getMinecraftProcessId();
+        if (pid <= 0) {
+            printColoredAtomic("[HotReload] UI hot reload skipped: Minecraft process id is unavailable.", ConsoleColor::Red);
+            return;
+        }
+
+        auto prepare = mcdk::ipc_code_execution::requestClientCodeReturnValueJson(
+            ipcServer,
+            mcdk::jsonui_reload_support::buildPreparePreserveModUiPythonCode(),
+            10000
+        );
+        if (!prepare.is_object() || !prepare.value("ok", false)) {
+            printColoredAtomic(
+                "[HotReload] UI hot reload skipped: failed to freeze ModSDK UI snapshot. " + prepare.dump(),
+                ConsoleColor::Red
+            );
+            return;
+        }
+
+        if (MCDevTool::Style::triggerMinecraftUiReloadShortcut(pid)) {
+            printColoredAtomic(
+                "[HotReload] UI hot reload triggered for resource-pack ui json changes.",
+                ConsoleColor::Green
+            );
+            return;
+        }
+
+        auto restore = mcdk::ipc_code_execution::requestClientCodeReturnValueJson(
+            ipcServer,
+            mcdk::jsonui_reload_support::buildRestorePreservedModUiPythonCode(),
+            10000
+        );
+        printColoredAtomic(
+            "[HotReload] UI hot reload failed to trigger Ctrl+R; rollback restore result: " + restore.dump(),
+            ConsoleColor::Red
+        );
+    });
+    pyReloadTask.setOutputCallback(printColoredAtomic);
+    uiReloadTask.setOutputCallback(printColoredAtomic);
     styleProcessor.setOutputCallback(printColoredAtomic);
 
     std::wstring newEnv;
@@ -629,9 +679,8 @@ static void launchGameExe(
         debuggerAttachToProcess(pid, debuggerPort);
     }
 
-    if (autoHotReload && modDirList != nullptr) {
-        // 启动热更新追踪任务
-        reloadTask.setProcessId(pid);
+    if ((autoHotReload || autoHotReloadUi) && modDirList != nullptr) {
+        auto hotReloadDirs = UserModDirConfig::toPathList(*modDirList);
         // 输出追踪目录列表
         std::cout << "[HotReload] 追踪目录列表：\n";
         for (const auto& modDirConfig : *modDirList) {
@@ -639,8 +688,24 @@ static void launchGameExe(
                 std::cout << "  └── " << modDirConfig.getAbsoluteU8String() << "\n";
             }
         }
-        reloadTask.setModDirs(UserModDirConfig::toPathList(*modDirList));
-        reloadTask.start();
+
+        if (autoHotReload) {
+            pyReloadTask.setProcessId(pid);
+            pyReloadTask.setModDirs(std::vector<std::filesystem::path>(hotReloadDirs));
+            pyReloadTask.start();
+        }
+
+        if (autoHotReloadUi) {
+            auto uiHotReloadDirs = UserModDirConfig::toResourcePackUiPathList(*modDirList);
+            std::cout << "[HotReload] UI hot reload source ui dirs:\n";
+            for (const auto& uiDir : uiHotReloadDirs) {
+                std::cout << "  - " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
+            }
+            uiReloadTask.setProcessId(pid);
+            uiReloadTask.setModDirs(std::move(hotReloadDirs));
+            uiReloadTask.setUiHotReloadDirs(std::move(uiHotReloadDirs));
+            uiReloadTask.start();
+        }
     }
     styleProcessor.start();
 
@@ -649,7 +714,8 @@ static void launchGameExe(
     WaitForSingleObject(pi.hProcess, INFINITE);
 
     // 停止热更新任务
-    reloadTask.safeExit();
+    pyReloadTask.safeExit();
+    uiReloadTask.safeExit();
     // 停止IPC服务器 如果已启用
     ipcServer->safeExit();
     // 停止样式处理器
