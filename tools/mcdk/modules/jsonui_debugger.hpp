@@ -47,6 +47,7 @@ Output data:
 - top_screen: current top screen short name.
 - screens: full screen names such as hud.hud_screen.
 - ui_size: JSON UI logical size.
+- HUD overlays are usually exposed as hud.hud_screen and mounted under vanilla HUD parents, not under /.
 - window_size: client window size.)";
         }
         if (command == "overview" || command == "/overview") {
@@ -56,7 +57,27 @@ Return a compact starting point for AI UI inspection.
 It lists current screens, probes common native JSON UI root candidates, returns direct child summaries, and suggests next commands. Use this before /tree or /html when you do not know the component path.
 
 Options:
+- HUD overlays are normally under hud.hud_screen with a long vanilla parent path; use /overview --screen=hud.hud_screen to get suggested_root.
 - --nud: allow a short NetEase UI Debugger tree probe for the current top screen when normal native root candidates fail. This uses the official debugger event path, not Python ScreenNode state.)";
+        }
+        if (command == "mod-ui" || command == "/mod-ui") {
+            return R"(/mod-ui [--include-registered] [--children-depth=1] [--limit=80]
+List only loaded ModSDK custom UI ScreenNode entries from client.ui.uiManager.
+
+This command is only an inventory of ModSDK-side custom UI loading state. It does not return native JSON UI controls, native layout data, runtime geometry, or the C++ UI tree.
+
+Use /overview, /tree, /html, /render, /find, /node, or /children for native JSON UI analysis. Do not use /mod-ui as a fallback for native UI tree discovery.
+
+Output data:
+- native_screens: current native screen stack from gui.get_all_screen_fullnames().
+- ui_screen_stack: ModSDK ScreenNode stack, including the hud.hud_screen root.
+- ui_stack: loaded CreateUI custom UIs, commonly HUD overlays.
+- ui_bind: entity/world-position bound UIs.
+- pushed_screens: lazily wrapped PushScreen/native pushed screens.
+- registered_ui: optional RegisterUI definitions when --include-registered is passed.
+
+Useful next step:
+- After a custom UI is identified here, use its screen_name and component_path with native commands such as /tree, /html, /render, or /find.)";
         }
         if (command == "probe" || command == "/probe") {
             return R"(/probe <screen> <path>
@@ -89,6 +110,8 @@ Read a bounded native JSON UI tree.
 Safety:
 - Expands with get_children_name_from_parent level by level.
 - Default depth is 2 and max nodes is 80.
+- Complex mod screens can pass larger --depth and --max-nodes explicitly.
+- For HUD overlays, start from the /overview suggested_root for hud.hud_screen; / is not an enumerable native HUD parent.
 - --visible-only filters hidden nodes.)";
         }
         if (command == "html" || command == "/html") {
@@ -98,6 +121,8 @@ Return the same bounded tree plus HTML-like pseudo output for AI layout reading.
 The HTML-like output is derived from Minecraft runtime layout/render data. It is only a layout reference, not a source JSON UI reconstruction and not browser-accurate HTML.
 
 Options:
+- Complex mod screens can pass larger --depth and --max-nodes explicitly.
+- For HUD overlays, start from the /overview suggested_root for hud.hud_screen; / is not an enumerable native HUD parent.
 - --html-only omits the full tree and returns html plus a compact summary.)";
         }
         if (command == "render" || command == "/render") {
@@ -110,6 +135,8 @@ Options:
 - --label=name|type|path-tail|none controls rectangle labels, default name.
 - --legend=false hides the color legend.
 - --visible-only filters hidden nodes.
+- Complex mod screens can pass larger --depth and --max-nodes explicitly.
+- For HUD overlays, start from the /overview suggested_root for hud.hud_screen; / is not an enumerable native HUD parent.
 - --image keeps a compact text fallback only. Direct SVG image content is disabled by default because some clients mix tool images into later model context and break subsequent chats.
 - --out=<absolute.svg> writes the generated SVG to an absolute file path, creates parent directories, and returns only compact text plus svg_path.
 - --unsafe-svg-image is accepted for backward compatibility but direct MCP image/svg+xml content is disabled by this server; use --out for user visual inspection.
@@ -131,6 +158,7 @@ Options:
 /help <command>
 /screens
 /overview [--screen=top|all|<screen>] [--child-limit=12] [--nud]
+/mod-ui [--include-registered] [--children-depth=1] [--limit=80]
 /probe <screen> <path>
 /children <screen> <path> [--detail] [--limit=50]
 /node <screen> <path> [--fields=basic,layout,text,container]
@@ -141,8 +169,11 @@ Options:
 
 Safety:
 - Start with /overview when component paths are unknown.
+- Use /mod-ui only to list ModSDK ScreenNode custom UI loading state, especially HUD overlays created by CreateUI. It must not be used as native JSON UI analysis or C++ UI tree fallback.
+- For HUD overlays, use /overview --screen=hud.hud_screen; HUD controls are mounted under vanilla HUD parents and / is not enumerable.
 - Tree commands expand level by level.
 - Default /tree limits: depth=2, max-nodes=80.
+- Complex mod screens can pass larger --depth and --max-nodes explicitly.
 - /html is a runtime layout reference, not source JSON UI reconstruction.
 - /render is mainly for human visual inspection. Use --out=<absolute.svg> to write a viewable SVG file. --image and --unsafe-svg-image both return compact text only.
 - Avoid raw recursive JSON UI APIs on large roots.)";
@@ -848,6 +879,9 @@ def _find(screen, root, query, type_filter, match_mode, max_depth, max_nodes, li
         'limit': limit
     }
 
+)PY";
+        py << R"PY(
+
 def _screens():
     screens = gui.get_all_screen_fullnames()
     top_short = gui.get_top_screen()
@@ -859,10 +893,138 @@ def _screens():
         'window_size': _as_list(gui.get_client_screen_size())
     }
 
+def _safe_attr(obj, name, default=None):
+    try:
+        return getattr(obj, name, default)
+    except Exception as exc:
+        return {'error': repr(exc)}
+
+def _safe_call(obj, name, default=None):
+    try:
+        func = getattr(obj, name)
+        return func()
+    except Exception as exc:
+        return default
+
+def _modsdk_node_info(node, children_depth=0, limit=80):
+    cls = node.__class__
+    data = {
+        'class': getattr(cls, '__name__', ''),
+        'module': getattr(cls, '__module__', _safe_attr(node, '__module__', '')),
+        'namespace': _safe_attr(node, 'namespace', None),
+        'name': _safe_attr(node, 'name', None),
+        'full_name': _safe_attr(node, 'full_name', None),
+        'screen_name': _safe_attr(node, 'screen_name', None),
+        'component_path': _safe_attr(node, 'component_path', None),
+        'def_key': _safe_attr(node, 'def_key', None),
+        'org_key': _safe_attr(node, 'org_key', None),
+        'input_mode': _safe_attr(node, 'input_mode', None),
+        'is_push_screen': _safe_attr(node, 'is_push_screen', None),
+        'visible': _safe_attr(node, 'visible', None),
+        'enable': _safe_attr(node, 'enable', None),
+        'removed': _safe_attr(node, 'removed', None),
+        'ui_id': _safe_call(node, 'GetUiId', None),
+        'bind_entity': _safe_call(node, 'GetBindEntityId', None),
+        'bind_position': _safe_call(node, 'GetBindWorldPosition', None),
+    }
+    children = _safe_attr(node, 'children', []) or []
+    try:
+        data['children_count'] = len(children)
+    except Exception:
+        data['children_count'] = None
+    if data.get('screen_name') and data.get('component_path'):
+        native_path = data['component_path']
+        if native_path and not native_path.startswith('/'):
+            native_path = '/' + native_path
+        data['native_component_path'] = native_path
+        data['next_commands'] = [
+            '/tree %s %s --depth=4 --max-nodes=300 --visible-only' % (data['screen_name'], native_path),
+            '/html %s %s --depth=4 --max-nodes=300 --visible-only --html-only' % (data['screen_name'], native_path),
+            '/find %s %s <query> --depth=6 --limit=30' % (data['screen_name'], native_path),
+        ]
+    if children_depth > 0:
+        child_items = []
+        for child in children[:limit]:
+            child_items.append(_modsdk_node_info(child, children_depth - 1, limit))
+        data['children'] = child_items
+        data['children_truncated'] = len(children) > limit
+    return data
+
+def _modsdk_ui_inventory(include_registered=False, children_depth=1, limit=80):
+    try:
+        import client.ui.uiManager as uiManager
+    except Exception as exc:
+        return {
+            'available': False,
+            'error': repr(exc),
+            'note': 'client.ui.uiManager is unavailable in this runtime.'
+        }
+    mgr = uiManager.instance()
+    native_screens = []
+    top_screen = None
+    try:
+        native_screens = gui.get_all_screen_fullnames()
+        top_screen = gui.get_top_screen()
+    except Exception:
+        pass
+    screen_def = _safe_attr(mgr, 'screen_def', {}) or {}
+    ui_screen_stack = _safe_attr(mgr, '_ui_screen_stack', []) or []
+    ui_stack = _safe_attr(mgr, '_ui_stack', []) or []
+    ui_bind = _safe_attr(mgr, '_ui_bind', {}) or {}
+    pushed_screens = _safe_attr(mgr, '_pushed_screens', {}) or {}
+    data = {
+        'available': True,
+        'source': 'client.ui.uiManager.instance()',
+        'semantic': 'Only ModSDK Python ScreenNode custom UI loading inventory. Not native JSON UI controls, not runtime layout data, and not authoritative C++ UI tree semantics.',
+        'native_analysis_note': 'For native UI analysis use /overview, /tree, /html, /render, /find, /node, or /children with screen_name and component_path.',
+        'top_screen': top_screen,
+        'native_screens': native_screens,
+        'manager': {
+            'class': mgr.__class__.__name__,
+            'module': getattr(mgr.__class__, '__module__', ''),
+            'mIsInit': _safe_attr(mgr, 'mIsInit', None),
+            'mInputMode': _safe_attr(mgr, 'mInputMode', None),
+            'screen_def_count': len(screen_def),
+        },
+        'ui_screen_stack': [_modsdk_node_info(n, children_depth, limit) for n in ui_screen_stack[:limit]],
+        'ui_screen_stack_truncated': len(ui_screen_stack) > limit,
+        'ui_stack': [_modsdk_node_info(n, children_depth, limit) for n in ui_stack[:limit]],
+        'ui_stack_truncated': len(ui_stack) > limit,
+        'ui_bind': [{'key': repr(k), 'node': _modsdk_node_info(v, children_depth, limit)} for k, v in list(ui_bind.items())[:limit]],
+        'ui_bind_truncated': len(ui_bind) > limit,
+        'pushed_screens': [{'key': repr(k), 'node': _modsdk_node_info(v, children_depth, limit)} for k, v in list(pushed_screens.items())[:limit]],
+        'pushed_screens_truncated': len(pushed_screens) > limit,
+    }
+    if include_registered:
+        registered = []
+        for key in sorted(screen_def.keys())[:limit]:
+            value = screen_def.get(key)
+            item = {'key': key}
+            try:
+                item.update({
+                    'class_path': value[0] if len(value) > 0 else None,
+                    'screen_full_name': value[1] if len(value) > 1 else None,
+                    'def_key': value[2] if len(value) > 2 else None,
+                    'org_key': value[3] if len(value) > 3 else None,
+                })
+            except Exception:
+                item['value_repr'] = repr(value)
+            registered.append(item)
+        data['registered_ui'] = registered
+        data['registered_ui_truncated'] = len(screen_def) > limit
+    return data
+
+)PY";
+        py << R"PY(
+
+MAX_TRAVERSAL_DEPTH = 64
+MAX_TREE_NODES = 5000
+MAX_FIND_NODES = 5000
+
 def _run(cmd):
     args = _split_args(cmd)
     if not args or args[0] == '/help':
-        return _ok('/help', {'text': 'Commands: /help, /screens, /overview, /probe, /children, /node, /tree, /html, /find'})
+        return _ok('/help', {'text': 'Commands: /help, /screens, /overview, /mod-ui, /probe, /children, /node, /tree, /html, /find'})
     name = args[0]
     if name == '/screens':
         return _ok(name, _screens())
@@ -871,6 +1033,11 @@ def _run(cmd):
         child_limit = _int_option(args[1:], 'child-limit', 12, 1, 50)
         allow_nud = bool(_option(args[1:], 'nud', False))
         return _ok(name, _overview(screen_arg, child_limit, allow_nud))
+    if name == '/mod-ui':
+        include_registered = bool(_option(args[1:], 'include-registered', False))
+        children_depth = _int_option(args[1:], 'children-depth', 1, 0, 4)
+        limit = _int_option(args[1:], 'limit', 80, 1, 500)
+        return _ok(name, _modsdk_ui_inventory(include_registered, children_depth, limit))
     if name == '/probe':
         if len(args) < 3:
             return _err(name, 'usage: /probe <screen> <path>', 'USAGE')
@@ -897,23 +1064,23 @@ def _run(cmd):
     if name == '/tree':
         if len(args) < 3:
             return _err(name, 'usage: /tree <screen> <path> [--depth=2] [--max-nodes=80]', 'USAGE')
-        depth = _int_option(args[3:], 'depth', 2, 0, 8)
-        max_nodes = _int_option(args[3:], 'max-nodes', 80, 1, 500)
+        depth = _int_option(args[3:], 'depth', 2, 0, MAX_TRAVERSAL_DEPTH)
+        max_nodes = _int_option(args[3:], 'max-nodes', 80, 1, MAX_TREE_NODES)
         visible_only = bool(_option(args[3:], 'visible-only', False))
         return _ok(name, _tree(args[1], args[2], depth, max_nodes, visible_only))
     if name == '/html':
         if len(args) < 3:
             return _err(name, 'usage: /html <screen> <path> [--depth=2] [--max-nodes=80]', 'USAGE')
-        depth = _int_option(args[3:], 'depth', 2, 0, 6)
-        max_nodes = _int_option(args[3:], 'max-nodes', 80, 1, 300)
+        depth = _int_option(args[3:], 'depth', 2, 0, MAX_TRAVERSAL_DEPTH)
+        max_nodes = _int_option(args[3:], 'max-nodes', 80, 1, MAX_TREE_NODES)
         visible_only = bool(_option(args[3:], 'visible-only', False))
         data = _tree(args[1], args[2], depth, max_nodes, visible_only, True)
         return _ok(name, data)
     if name == '/render':
         if len(args) < 3:
             return _err(name, 'usage: /render <screen> <path> [--depth=2] [--max-nodes=80]', 'USAGE')
-        depth = _int_option(args[3:], 'depth', 2, 0, 6)
-        max_nodes = _int_option(args[3:], 'max-nodes', 80, 1, 300)
+        depth = _int_option(args[3:], 'depth', 2, 0, MAX_TRAVERSAL_DEPTH)
+        max_nodes = _int_option(args[3:], 'max-nodes', 80, 1, MAX_TREE_NODES)
         visible_only = bool(_option(args[3:], 'visible-only', False))
         data = _tree(args[1], args[2], depth, max_nodes, visible_only, True)
         data['render_label'] = _string_option(args[3:], 'label', 'name', ('name', 'type', 'path-tail', 'none'))
@@ -922,8 +1089,8 @@ def _run(cmd):
     if name == '/find':
         if len(args) < 4:
             return _err(name, 'usage: /find <screen> <path> <query> [--type=Button] [--match=name] [--depth=5] [--limit=30]', 'USAGE')
-        depth = _int_option(args[4:], 'depth', 5, 0, 8)
-        max_nodes = _int_option(args[4:], 'max-nodes', 300, 1, 1000)
+        depth = _int_option(args[4:], 'depth', 5, 0, MAX_TRAVERSAL_DEPTH)
+        max_nodes = _int_option(args[4:], 'max-nodes', 300, 1, MAX_FIND_NODES)
         limit = _int_option(args[4:], 'limit', 30, 1, 100)
         type_filter = _option(args[4:], 'type', None)
         match_mode = _string_option(args[4:], 'match', 'name', ('name', 'path', 'both'))
@@ -1222,10 +1389,44 @@ except Exception as exc:
         return out.str();
     }
 
+    inline bool jsonArrayHasNumbers(const nlohmann::json& array, std::size_t count) {
+        if (!array.is_array() || array.size() < count) {
+            return false;
+        }
+        for (std::size_t i = 0; i < count; ++i) {
+            if (!array[i].is_number()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    inline std::string jsonNumberPairAttr(const nlohmann::json& array) {
+        std::ostringstream out;
+        out << jsonScalarToString(array[0]) << ',' << jsonScalarToString(array[1]);
+        return out.str();
+    }
+
     inline std::string nodeHtmlAttrs(const nlohmann::json& node) {
         std::vector<std::string> attrs;
         attrs.push_back("data-type=\"" + htmlEscape(node.value("type", std::string()), true) + "\"");
         attrs.push_back("data-path=\"" + htmlEscape(node.value("path", std::string()), true) + "\"");
+
+        if (node.contains("computed") && node["computed"].is_object()) {
+            const auto& computed = node["computed"];
+            const auto& size     = computed.contains("size") ? computed["size"] : nlohmann::json();
+            const auto& pos      = computed.contains("position") ? computed["position"] : nlohmann::json();
+            const auto& global   = computed.contains("global_position") ? computed["global_position"] : nlohmann::json();
+            if (jsonArrayHasNumbers(size, 2)) {
+                attrs.push_back("data-runtime-size=\"" + htmlEscape(jsonNumberPairAttr(size), true) + "\"");
+            }
+            if (jsonArrayHasNumbers(pos, 2)) {
+                attrs.push_back("data-runtime-position=\"" + htmlEscape(jsonNumberPairAttr(pos), true) + "\"");
+            }
+            if (jsonArrayHasNumbers(global, 2)) {
+                attrs.push_back("data-runtime-global-position=\"" + htmlEscape(jsonNumberPairAttr(global), true) + "\"");
+            }
+        }
 
         const auto& layout = node.contains("layout") ? node["layout"] : nlohmann::json();
         if (layout.is_object()) {
@@ -1434,29 +1635,38 @@ except Exception as exc:
         const auto& root     = data["tree"];
         const auto& computed = root.contains("computed") && root["computed"].is_object() ? root["computed"] : nlohmann::json();
         const auto& size     = computed.contains("size") ? computed["size"] : nlohmann::json();
+        const auto& rootGp   = computed.contains("global_position") ? computed["global_position"] : nlohmann::json();
         const double width   = std::max(1.0, jsonArrayNumberOr(size, 0, 640.0));
         const double height  = std::max(1.0, jsonArrayNumberOr(size, 1, 360.0));
+        const double originX = jsonArrayNumberOr(rootGp, 0, 0.0);
+        const double originY = jsonArrayNumberOr(rootGp, 1, 0.0);
         const auto labelMode  = data.value("render_label", std::string("name"));
         const bool showLegend = data.value("render_legend", true);
+        const double headerHeight = 18.0;
+        const double legendHeight = showLegend ? 34.0 : 0.0;
+        const double viewHeight   = height + headerHeight + legendHeight;
 
         std::vector<SvgNodeRef> nodes;
         collectSvgNodes(root, nodes);
 
         std::ostringstream svg;
-        svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 " << width << ' ' << height
-            << "\" width=\"" << width << "\" height=\"" << height << "\">\n";
-        svg << "  <rect x=\"0\" y=\"0\" width=\"" << width << "\" height=\"" << height
-            << "\" fill=\"#111827\" opacity=\"0.08\"/>\n";
+        svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 " << width << ' ' << viewHeight
+            << "\" width=\"" << width << "\" height=\"" << viewHeight << "\">\n";
+        svg << "  <rect x=\"0\" y=\"0\" width=\"" << width << "\" height=\"" << viewHeight
+            << "\" fill=\"#ffffff\"/>\n";
         svg << "  <text x=\"6\" y=\"14\" font-family=\"monospace\" font-size=\"10\" fill=\"#111827\">"
             << htmlEscape(data.value("screen", std::string()), false) << " runtime layout diagram</text>\n";
+        svg << "  <g transform=\"translate(0 " << headerHeight << ")\">\n";
+        svg << "    <rect x=\"0\" y=\"0\" width=\"" << width << "\" height=\"" << height
+            << "\" fill=\"#111827\" opacity=\"0.08\"/>\n";
 
         for (std::size_t i = 0; i < nodes.size(); ++i) {
             const auto& node = *nodes[i].node;
             const auto& comp = node.contains("computed") && node["computed"].is_object() ? node["computed"] : nlohmann::json();
             const auto& gp   = comp.contains("global_position") ? comp["global_position"] : nlohmann::json();
             const auto& ns   = comp.contains("size") ? comp["size"] : nlohmann::json();
-            double       x    = jsonArrayNumberOr(gp, 0, 0.0);
-            double       y    = jsonArrayNumberOr(gp, 1, 0.0);
+            double       x    = jsonArrayNumberOr(gp, 0, originX) - originX;
+            double       y    = jsonArrayNumberOr(gp, 1, originY) - originY;
             double       w    = jsonArrayNumberOr(ns, 0, 0.0);
             double       h    = jsonArrayNumberOr(ns, 1, 0.0);
             const auto type  = node.value("type", std::string());
@@ -1467,9 +1677,9 @@ except Exception as exc:
             const double inset = std::min(3.0, static_cast<double>(nodes[i].depth) * 0.65);
 
             if (w <= 0.5 || h <= 0.5) {
-                const double cx = std::min(std::max(x, 0.0), width);
-                const double cy = std::min(std::max(y, 0.0), height);
-                svg << "  <g opacity=\"" << strokeOpacity << "\"><title>" << htmlEscape(svgTitleForNode(node))
+                const double cx = x;
+                const double cy = y;
+                svg << "    <g opacity=\"" << strokeOpacity << "\"><title>" << htmlEscape(svgTitleForNode(node))
                     << "</title><line x1=\"" << cx - 3 << "\" y1=\"" << cy
                     << "\" x2=\"" << cx + 3 << "\" y2=\"" << cy << "\" stroke=\"" << color
                     << "\" stroke-width=\"1\"/><line x1=\"" << cx << "\" y1=\"" << cy - 3 << "\" x2=\"" << cx
@@ -1484,7 +1694,7 @@ except Exception as exc:
                 h -= inset * 2.0;
             }
 
-            svg << "  <rect x=\"" << x << "\" y=\"" << y << "\" width=\"" << w << "\" height=\"" << h
+            svg << "    <rect x=\"" << x << "\" y=\"" << y << "\" width=\"" << w << "\" height=\"" << h
                 << "\" fill=\"" << color << "\" fill-opacity=\"" << opacity << "\" stroke=\"" << color
                 << "\" stroke-opacity=\"" << strokeOpacity << "\" stroke-width=\"" << (i == 0 ? 1.4 : 0.8)
                 << "\"><title>" << htmlEscape(svgTitleForNode(node)) << "</title></rect>\n";
@@ -1492,17 +1702,18 @@ except Exception as exc:
             const auto label = renderLabelForNode(node, labelMode);
             if (!label.empty() && w >= 24.0 && h >= 10.0) {
                 const double labelWidth = std::min(w - 2.0, 8.0 + static_cast<double>(std::min<std::size_t>(label.size(), 42)) * 4.8);
-                svg << "  <rect x=\"" << x + 1 << "\" y=\"" << y + 1 << "\" width=\"" << labelWidth
+                svg << "    <rect x=\"" << x + 1 << "\" y=\"" << y + 1 << "\" width=\"" << labelWidth
                     << "\" height=\"11\" fill=\"#ffffff\" fill-opacity=\"0.72\"/>\n";
-                svg << "  <text x=\"" << x + 4 << "\" y=\"" << y + 10
+                svg << "    <text x=\"" << x + 4 << "\" y=\"" << y + 10
                     << "\" font-family=\"monospace\" font-size=\"8\" fill=\"#111827\"><title>"
                     << htmlEscape(svgTitleForNode(node)) << "</title>"
                     << htmlEscape(label.substr(0, 42)) << "</text>\n";
             }
         }
 
+        svg << "  </g>\n";
         if (showLegend) {
-            svg << "  <g transform=\"translate(6 " << std::max(24.0, height - 42)
+            svg << "  <g transform=\"translate(6 " << height + headerHeight + 16.0
                 << ")\" font-family=\"monospace\" font-size=\"8\" fill=\"#111827\">\n";
             svg << "    <rect x=\"-3\" y=\"-10\" width=\"" << std::max(1.0, width - 12.0)
                 << "\" height=\"28\" fill=\"#ffffff\" fill-opacity=\"0.72\"/>\n";
