@@ -82,14 +82,19 @@ Useful next step:
 - After a custom UI is identified here, use its screen_name and component_path with native commands such as /tree, /html, /render, or /find.)";
         }
         if (command == "reload-ui" || command == "/reload-ui") {
-            return R"(/reload-ui
+            return R"(/reload-ui [--preserve-mod-ui]
 Trigger Minecraft's native Ctrl+R JSON UI definition reload from the host process.
 
 This command belongs to jsonui_debugger because it is specifically for JSON UI hot-reload testing. It follows the same engine path as pressing Ctrl+R in game; it is not ui_editor.reload_ui_file and does not call ModSDK business-side UI APIs.
 
+Options:
+- --preserve-mod-ui: experimental ModSDK custom UI freeze/restore transaction. Before Ctrl+R, it freezes a temporary Python-side snapshot of user Addon UI registry entries and the currently loaded CreateUI/PushScreen stack, clears current ModSDK UI, then restores the saved registry and UI stack after UIDefReloadSceneStackAfter. It does not hook ModSDK source methods, does not broadcast UiInitFinished, and does not serialize complex UI params into C++.
+
 Known behavior:
 - The engine may reset pushed screens and mod HUD UI during reload.
 - ModSDK Python ScreenNode state may become out of sync after the engine rebuilds JSON UI definitions.
+- --preserve-mod-ui is intended to keep the visible Mod UI session alive across JSON UI reload by freezing and restoring a short-lived snapshot.
+- UI-specific creation params are restored only when the UI explicitly stored a dict in _mcdk_reload_param. CreateUI uses a non-blocking HUD fallback param when missing; PushScreen uses None when missing.
 - Use this only when intentionally testing JSON UI hot-reload behavior.)";
         }
         if (command == "probe" || command == "/probe") {
@@ -172,7 +177,7 @@ Options:
 /screens
 /overview [--screen=top|all|<screen>] [--child-limit=12] [--nud]
 /mod-ui [--include-registered] [--children-depth=1] [--limit=80]
-/reload-ui
+/reload-ui [--preserve-mod-ui]
 /probe <screen> <path>
 /children <screen> <path> [--detail] [--limit=50]
 /node <screen> <path> [--fields=basic,layout,text,container]
@@ -184,7 +189,7 @@ Options:
 Safety:
 - Start with /overview when component paths are unknown.
 - Use /mod-ui only to list ModSDK ScreenNode custom UI loading state, especially HUD overlays created by CreateUI. It must not be used as native JSON UI analysis or C++ UI tree fallback.
-- /reload-ui intentionally triggers the native Ctrl+R UI definition reload and may reset pushed screens or mod HUD UI.
+- /reload-ui intentionally triggers the native Ctrl+R UI definition reload and may reset pushed screens or mod HUD UI. Use /reload-ui --preserve-mod-ui to freeze a temporary ModSDK user UI snapshot and restore it after reload.
 - For HUD overlays, use /overview --screen=hud.hud_screen; HUD controls are mounted under vanilla HUD parents and / is not enumerable.
 - Tree commands expand level by level.
 - Default /tree limits: depth=2, max-nodes=80.

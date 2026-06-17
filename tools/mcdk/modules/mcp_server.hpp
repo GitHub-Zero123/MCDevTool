@@ -11,6 +11,7 @@
 #include "./log_buffer.hpp"
 #include "./mcp_tool_definitions.hpp"
 #include "./jsonui_debugger.hpp"
+#include "./jsonui_reload_support.hpp"
 #include <nlohmann/json.hpp>
 #include <mcp_server.h>
 #include <base64.hpp>
@@ -226,23 +227,105 @@ namespace mcdk {
                         };
                     }
 
-                    if (jsonui_debugger::trimCopy(cmd) == "/reload-ui") {
+                    const std::string trimmedCmd = jsonui_debugger::trimCopy(cmd);
+                    if (trimmedCmd == "/reload-ui"
+                        || (jsonui_debugger::startsWith(trimmedCmd, "/reload-ui ")
+                            && !jsonui_debugger::startsWith(trimmedCmd, "/reload-ui-"))) {
+                        nlohmann::json preservePrepare = nullptr;
+                        if (jsonui_debugger::commandHasFlag(trimmedCmd, "--preserve-mod-ui")) {
+                            if (!codeExecuteHandler) {
+                                const auto out = nlohmann::json{
+                                    {"ok", false},
+                                    {"cmd", "/reload-ui"},
+                                    {"error",
+                                     {{"code", "CODE_EXECUTION_UNAVAILABLE"},
+                                      {"message", "Cannot prepare ModSDK UI preserve transaction without code execution."}}}
+                                };
+                                return nlohmann::json{
+                                    {"isError", true},
+                                    {"content", nlohmann::json::array({{{"type", "text"}, {"text", out.dump(2)}}})}
+                                };
+                            }
+
+                            auto rawPrepare = codeExecuteHandler(
+                                jsonui_reload_support::buildPreparePreserveModUiPythonCode(), true, true
+                            );
+                            if (rawPrepare.value("isError", false)) {
+                                return rawPrepare;
+                            }
+
+                            std::string prepareText;
+                            if (rawPrepare.contains("content") && rawPrepare["content"].is_array()
+                                && !rawPrepare["content"].empty()) {
+                                const auto& first = rawPrepare["content"][0];
+                                if (first.is_object()) {
+                                    prepareText = first.value("text", "");
+                                }
+                            }
+                            if (prepareText.empty()) {
+                                prepareText = rawPrepare.dump();
+                            }
+                            preservePrepare = jsonui_debugger::parseFirstJsonFromDirtyText(prepareText);
+                            if (!preservePrepare.is_object() || !preservePrepare.value("ok", false)) {
+                                const auto out = nlohmann::json{
+                                    {"ok", false},
+                                    {"cmd", "/reload-ui"},
+                                    {"error",
+                                     {{"code", "PRESERVE_MOD_UI_PREPARE_FAILED"},
+                                      {"message",
+                                       "Failed to prepare ModSDK UI preserve transaction; Ctrl+R was not triggered."},
+                                      {"prepare", preservePrepare}}}
+                                };
+                                return nlohmann::json{
+                                    {"isError", true},
+                                    {"content", nlohmann::json::array({{{"type", "text"}, {"text", out.dump(2)}}})}
+                                };
+                            }
+                        }
+
                         if (reloadUiHandler && reloadUiHandler()) {
                             const auto out = nlohmann::json{
                                 {"ok", true},
                                 {"cmd", "/reload-ui"},
                                 {"data",
                                  {{"trigger", "Ctrl+R"},
+                                  {"preserve_mod_ui", !preservePrepare.is_null()},
+                                  {"preserve_prepare", preservePrepare},
                                   {"message",
-                                   "Native JSON UI definition reload was triggered from the host process."},
+                                   preservePrepare.is_null()
+                                       ? "Native JSON UI definition reload was triggered from the host process."
+                                       : "Native JSON UI definition reload was triggered after freezing a temporary "
+                                         "ModSDK user UI snapshot; the snapshot will be restored after the engine "
+                                         "reload event."},
                                   {"warning",
-                                   "The engine may reset pushed screens or mod HUD UI; ModSDK ScreenNode state may "
-                                   "need a follow-up recovery pass."}}}
+                                   preservePrepare.is_null()
+                                       ? "The engine may reset pushed screens or mod HUD UI; ModSDK ScreenNode state "
+                                         "may need a follow-up recovery pass."
+                                       : "During reload, ModSDK UI is temporarily cleared and restored from a "
+                                         "Python-side snapshot. UiInitFinished is not broadcast."}}}
                             };
                             return nlohmann::json{
                                 {"isError", false},
                                 {"content", nlohmann::json::array({{{"type", "text"}, {"text", out.dump(2)}}})}
                             };
+                        }
+                        nlohmann::json rollbackRestore = nullptr;
+                        if (!preservePrepare.is_null() && codeExecuteHandler) {
+                            auto rawRollback = codeExecuteHandler(
+                                jsonui_reload_support::buildRestorePreservedModUiPythonCode(), true, true
+                            );
+                            std::string rollbackText;
+                            if (rawRollback.contains("content") && rawRollback["content"].is_array()
+                                && !rawRollback["content"].empty()) {
+                                const auto& first = rawRollback["content"][0];
+                                if (first.is_object()) {
+                                    rollbackText = first.value("text", "");
+                                }
+                            }
+                            if (rollbackText.empty()) {
+                                rollbackText = rawRollback.dump();
+                            }
+                            rollbackRestore = jsonui_debugger::parseFirstJsonFromDirtyText(rollbackText);
                         }
                         const auto out = nlohmann::json{
                             {"ok", false},
@@ -251,7 +334,9 @@ namespace mcdk {
                              {{"code", "RELOAD_UI_FAILED"},
                               {"message",
                                "Failed to trigger Ctrl+R. The game window may not exist, may be minimized, or may "
-                               "not accept background key messages."}}}
+                               "not accept background key messages."},
+                              {"preserve_prepare", preservePrepare},
+                              {"rollback_restore", rollbackRestore}}}
                         };
                         return nlohmann::json{
                             {"isError", true},
