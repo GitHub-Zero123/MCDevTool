@@ -81,6 +81,17 @@ Output data:
 Useful next step:
 - After a custom UI is identified here, use its screen_name and component_path with native commands such as /tree, /html, /render, or /find.)";
         }
+        if (command == "reload-ui" || command == "/reload-ui") {
+            return R"(/reload-ui
+Trigger Minecraft's native Ctrl+R JSON UI definition reload from the host process.
+
+This command belongs to jsonui_debugger because it is specifically for JSON UI hot-reload testing. It follows the same engine path as pressing Ctrl+R in game; it is not ui_editor.reload_ui_file and does not call ModSDK business-side UI APIs.
+
+Known behavior:
+- The engine may reset pushed screens and mod HUD UI during reload.
+- ModSDK Python ScreenNode state may become out of sync after the engine rebuilds JSON UI definitions.
+- Use this only when intentionally testing JSON UI hot-reload behavior.)";
+        }
         if (command == "probe" || command == "/probe") {
             return R"(/probe <screen> <path>
 Check whether a node path can be read and return a compact summary.
@@ -161,6 +172,7 @@ Options:
 /screens
 /overview [--screen=top|all|<screen>] [--child-limit=12] [--nud]
 /mod-ui [--include-registered] [--children-depth=1] [--limit=80]
+/reload-ui
 /probe <screen> <path>
 /children <screen> <path> [--detail] [--limit=50]
 /node <screen> <path> [--fields=basic,layout,text,container]
@@ -172,6 +184,7 @@ Options:
 Safety:
 - Start with /overview when component paths are unknown.
 - Use /mod-ui only to list ModSDK ScreenNode custom UI loading state, especially HUD overlays created by CreateUI. It must not be used as native JSON UI analysis or C++ UI tree fallback.
+- /reload-ui intentionally triggers the native Ctrl+R UI definition reload and may reset pushed screens or mod HUD UI.
 - For HUD overlays, use /overview --screen=hud.hud_screen; HUD controls are mounted under vanilla HUD parents and / is not enumerable.
 - Tree commands expand level by level.
 - Default /tree limits: depth=2, max-nodes=80.
@@ -1052,7 +1065,7 @@ MAX_FIND_NODES = 5000
 def _run(cmd):
     args = _split_args(cmd)
     if not args or args[0] == '/help':
-        return _ok('/help', {'text': 'Commands: /help, /screens, /overview, /mod-ui, /probe, /children, /node, /tree, /html, /find'})
+        return _ok('/help', {'text': 'Commands: /help, /screens, /overview, /mod-ui, /reload-ui, /probe, /children, /node, /tree, /html, /find'})
     name = args[0]
     if name == '/screens':
         return _ok(name, _screens())

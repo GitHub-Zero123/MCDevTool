@@ -93,6 +93,7 @@ namespace mcdk {
         SimpleHandler                reloadGameHandler;         // 重载游戏处理器
         SimpleHandler                reloadShadersHandler;      // 重载着色器处理器
         SimpleHandler                reloadAddonAndGameHandler; // 重载插件和游戏处理器
+        SimpleHandler                reloadUiHandler;           // 重载 UI definition 处理器
         StringParamHandler           reloadOnceShadersHandler;  // 重载单个着色器处理器
         int                          mcPid = 0;                 // 存储Minecraft进程ID以供后续使用
 
@@ -107,7 +108,9 @@ namespace mcdk {
         void setReloadShadersHandler(SimpleHandler handler) { reloadShadersHandler = std::move(handler); }
         void setReloadOnceShadersHandler(StringParamHandler handler) { reloadOnceShadersHandler = std::move(handler); }
         void setReloadAddonAndGameHandler(SimpleHandler handler) { reloadAddonAndGameHandler = std::move(handler); }
+        void setReloadUiHandler(SimpleHandler handler) { reloadUiHandler = std::move(handler); }
         void setMinecraftProcessId(int pid) { mcPid = pid; }
+        int getMinecraftProcessId() const { return mcPid; }
 
         static nlohmann::json _logVectorToJson(const std::vector<std::string>& logVector) {
             nlohmann::json jsonArray = nlohmann::json::array();
@@ -220,6 +223,39 @@ namespace mcdk {
                         return nlohmann::json{
                             {"isError", false},
                             {"content", nlohmann::json::array({{{"type", "text"}, {"text", help.dump(2)}}})}
+                        };
+                    }
+
+                    if (jsonui_debugger::trimCopy(cmd) == "/reload-ui") {
+                        if (reloadUiHandler && reloadUiHandler()) {
+                            const auto out = nlohmann::json{
+                                {"ok", true},
+                                {"cmd", "/reload-ui"},
+                                {"data",
+                                 {{"trigger", "Ctrl+R"},
+                                  {"message",
+                                   "Native JSON UI definition reload was triggered from the host process."},
+                                  {"warning",
+                                   "The engine may reset pushed screens or mod HUD UI; ModSDK ScreenNode state may "
+                                   "need a follow-up recovery pass."}}}
+                            };
+                            return nlohmann::json{
+                                {"isError", false},
+                                {"content", nlohmann::json::array({{{"type", "text"}, {"text", out.dump(2)}}})}
+                            };
+                        }
+                        const auto out = nlohmann::json{
+                            {"ok", false},
+                            {"cmd", "/reload-ui"},
+                            {"error",
+                             {{"code", "RELOAD_UI_FAILED"},
+                              {"message",
+                               "Failed to trigger Ctrl+R. The game window may not exist, may be minimized, or may "
+                               "not accept background key messages."}}}
+                        };
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content", nlohmann::json::array({{{"type", "text"}, {"text", out.dump(2)}}})}
                         };
                     }
 

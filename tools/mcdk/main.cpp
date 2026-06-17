@@ -405,6 +405,15 @@ static void launchGameExe(
             return ipcServer->sendMessage(8); // ADDON AND GAME RELOAD
         });
 
+        // 触发游戏窗口原生 Ctrl+R UI definition 热重载
+        mcpServer.setReloadUiHandler([&mcpServer]() -> bool {
+            const int pid = mcpServer.getMinecraftProcessId();
+            if (pid <= 0) {
+                return false;
+            }
+            return MCDevTool::Style::triggerMinecraftUiReloadShortcut(pid);
+        });
+
         // 重载着色器（重新编译着色器）
         mcpServer.setReloadShadersHandler([ipcServer]() -> bool {
             if (ipcServer->getClientCount() == 0) {

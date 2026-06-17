@@ -577,4 +577,37 @@ namespace MCDevTool::Style {
         return false;
 #endif
     }
+
+    bool triggerMinecraftUiReloadShortcut(int pid) {
+#ifdef _WIN32
+        static const std::wstring keyword = L"Minecraft";
+        HWND hwnd = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
+        if (!hwnd) {
+            return false;
+        }
+
+        if (IsIconic(hwnd)) {
+            return false;
+        }
+
+        auto makeKeyLParam = [](UINT vk, bool keyUp) -> LPARAM {
+            UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+            LPARAM lParam = 1 | (static_cast<LPARAM>(scan) << 16);
+            if (keyUp) {
+                lParam |= (1LL << 30) | (1LL << 31);
+            }
+            return lParam;
+        };
+
+        const bool ok =
+            PostMessageW(hwnd, WM_KEYDOWN, VK_CONTROL, makeKeyLParam(VK_CONTROL, false)) &&
+            PostMessageW(hwnd, WM_KEYDOWN, 'R', makeKeyLParam('R', false)) &&
+            PostMessageW(hwnd, WM_KEYUP, 'R', makeKeyLParam('R', true)) &&
+            PostMessageW(hwnd, WM_KEYUP, VK_CONTROL, makeKeyLParam(VK_CONTROL, true));
+        return ok;
+#else
+        (void)pid;
+        return false;
+#endif
+    }
 } // namespace MCDevTool::Style

@@ -54,4 +54,7 @@ namespace MCDevTool::Style {
 
     // 根据指定pid点击窗口画面的指定坐标（百分比为单位确保适配不同分辨率）点击坐标为(0.0-1.0, 0.0-1.0)
     bool clickMinecraftWindowAt(int pid, double xPercent, double yPercent);
+
+    // Trigger Minecraft's native Ctrl+R UI definition reload from the host process.
+    bool triggerMinecraftUiReloadShortcut(int pid);
 } // namespace MCDevTool::Style
