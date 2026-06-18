@@ -697,8 +697,7 @@ static void launchGameExe(
                 std::cout << "  - " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
             }
             uiReloadTask.setProcessId(pid);
-            uiReloadTask.setModDirs(std::vector<std::filesystem::path>(hotReloadDirs));
-            uiReloadTask.setUiHotReloadDirs(std::move(uiHotReloadDirs));
+            uiReloadTask.setModDirs(std::move(uiHotReloadDirs));
             uiReloadTask.start();
         }
     }

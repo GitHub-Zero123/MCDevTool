@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include "console.hpp"
+#include "json_diagnostics.hpp"
 
 namespace mcdk {
 
@@ -146,16 +147,6 @@ namespace mcdk {
 
         void setUiHotReloadAction(UiHotReloadAction action) { mUiHotReloadAction = std::move(action); }
 
-        void setUiHotReloadDirs(std::vector<std::filesystem::path> dirs) {
-            std::lock_guard<std::mutex> lock(mMutex);
-            mUiHotReloadDirs.clear();
-            for (auto& dir : dirs) {
-                if (std::filesystem::is_directory(dir)) {
-                    mUiHotReloadDirs.insert(std::filesystem::absolute(dir).lexically_normal());
-                }
-            }
-        }
-
         void setModDirs(std::vector<std::filesystem::path>&& modDirs) {
             MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(modDirs));
         }
@@ -185,35 +176,35 @@ namespace mcdk {
         }
 
     private:
-        static bool isPathInsideDir(const std::filesystem::path& path, const std::filesystem::path& dir) {
-            auto pathIt = path.begin();
-            auto dirIt  = dir.begin();
-            for (; dirIt != dir.end(); ++dirIt, ++pathIt) {
-                if (pathIt == path.end() || *pathIt != *dirIt) {
-                    return false;
-                }
+        bool isValidJsonFile(const std::filesystem::path& filePath) const {
+            auto diagnostic = json_diagnostics::validateJsonFileWithComments(
+                filePath,
+                "[HotReload] warning: invalid JSON; UI hot reload skipped"
+            );
+            if (diagnostic.ok) {
+                return true;
             }
-            return true;
+            if (!diagnostic.readable) {
+                output(
+                    ConsoleColor::Yellow,
+                    "[HotReload] warning: UI json hot reload skipped: " + diagnostic.message + " "
+                        + diagnostic.path
+                );
+                return false;
+            }
+            output(ConsoleColor::Yellow, diagnostic.formatted);
+            return false;
         }
 
         bool isUiJsonPath(const std::filesystem::path& filePath) const {
             if (filePath.extension().string() != ".json") {
                 return false;
             }
-            if (mUiHotReloadDirs.empty()) {
-                return false;
-            }
             const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
-            for (const auto& uiDir : mUiHotReloadDirs) {
-                if (isPathInsideDir(absPath, uiDir)) {
-                    return true;
-                }
-            }
-            return false;
+            return isValidJsonFile(absPath);
         }
 
         UiHotReloadAction                         mUiHotReloadAction;
-        std::unordered_set<std::filesystem::path> mUiHotReloadDirs;
         mutable std::mutex                        mMutex;
         bool                                      mDirty = false;
     };
