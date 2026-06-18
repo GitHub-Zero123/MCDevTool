@@ -227,17 +227,6 @@ static void debuggerAttachToProcess(DWORD pid, int port) {
     std::cout << "调试器已启动，正在附加到进程PID：" << pid << " 端口：" << port << " ..." << _MCDEV_LOG_OUTPUT_ENDL;
 }
 
-// 检查用户配置是否需要启用IPC调试功能
-static bool checkUserConfigEnableIPC(const nlohmann::json& userConfig) {
-    // 若启用了auto_hot_reload_mods则启用IPC
-    bool autoHotReload = userConfig.value("auto_hot_reload_mods", true);
-    bool autoHotReloadUi = userConfig.value("auto_hot_reload_ui", false);
-    if (autoHotReload || autoHotReloadUi) {
-        return true;
-    }
-    return false;
-}
-
 // 将utf8的string转换为utf16的wstring
 static std::wstring convertUtf8ToUtf16(const std::string& utf8Str) {
     if (utf8Str.empty()) {
@@ -288,18 +277,24 @@ static void launchGameExe(
 ) {
     bool  autoHotReload   = userConfig.value("auto_hot_reload_mods", true);
     bool  autoHotReloadUi = userConfig.value("auto_hot_reload_ui", false);
-    bool  enableIPC       = autoHotReload || autoHotReloadUi;
+    auto  mcpServerConfig = mcdk::getMcpServerConfigFromJson(userConfig);
+    auto  hotReloadDirs   = modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList)
+                                                  : std::vector<std::filesystem::path>();
+    auto  uiHotReloadDirs = autoHotReloadUi && modDirList != nullptr
+                                ? UserModDirConfig::toResourcePackUiPathList(*modDirList)
+                                : std::vector<std::filesystem::path>();
+    bool  enablePyHotReload = autoHotReload && !hotReloadDirs.empty();
+    bool  enableUiHotReload = autoHotReloadUi && !hotReloadDirs.empty() && !uiHotReloadDirs.empty();
+    bool  enableIPC         = mcpServerConfig.enabled || enablePyHotReload || enableUiHotReload;
     bool  needLogBuffer = false;
     void* lpEnvironment = nullptr;
 
-    auto mcpServerConfig = mcdk::getMcpServerConfigFromJson(userConfig);
     auto ipcServer       = MCDevTool::Debug::createDebugServer();
     auto logBuffer       = std::make_shared<mcdk::LogBuffer>(1000, 250);
     auto errBuffer       = std::make_shared<mcdk::LogBuffer>(1000, 400);
     auto mcpServer       = mcdk::MCPServer(mcpServerConfig);
     if (mcpServerConfig.enabled) {
         // 若启用MCP服务器将自动启用IPC调试功能
-        autoHotReload = true;
         enableIPC     = true;
         needLogBuffer = true;
         printColoredAtomic(
@@ -679,30 +674,30 @@ static void launchGameExe(
         debuggerAttachToProcess(pid, debuggerPort);
     }
 
-    if ((autoHotReload || autoHotReloadUi) && modDirList != nullptr) {
-        auto hotReloadDirs = UserModDirConfig::toPathList(*modDirList);
+    if ((enablePyHotReload || enableUiHotReload) && modDirList != nullptr) {
         // 输出追踪目录列表
-        std::cout << "[HotReload] 追踪目录列表：\n";
-        for (const auto& modDirConfig : *modDirList) {
-            if (modDirConfig.hotReload) {
-                std::cout << "  └── " << modDirConfig.getAbsoluteU8String() << "\n";
+        if(modDirList) {
+            std::cout << "[HotReload] 追踪目录列表：\n";
+            for (const auto& modDirConfig : *modDirList) {
+                if (modDirConfig.hotReload) {
+                    std::cout << "  └── " << modDirConfig.getAbsoluteU8String() << "\n";
+                }
             }
         }
 
-        if (autoHotReload) {
+        if (enablePyHotReload) {
             pyReloadTask.setProcessId(pid);
             pyReloadTask.setModDirs(std::vector<std::filesystem::path>(hotReloadDirs));
             pyReloadTask.start();
         }
 
-        if (autoHotReloadUi) {
-            auto uiHotReloadDirs = UserModDirConfig::toResourcePackUiPathList(*modDirList);
+        if (enableUiHotReload) {
             std::cout << "[HotReload] UI hot reload source ui dirs:\n";
             for (const auto& uiDir : uiHotReloadDirs) {
                 std::cout << "  - " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
             }
             uiReloadTask.setProcessId(pid);
-            uiReloadTask.setModDirs(std::move(hotReloadDirs));
+            uiReloadTask.setModDirs(std::vector<std::filesystem::path>(hotReloadDirs));
             uiReloadTask.setUiHotReloadDirs(std::move(uiHotReloadDirs));
             uiReloadTask.start();
         }
