@@ -13,6 +13,7 @@ namespace mcdk::json_diagnostics {
     struct JsonDiagnostic {
         bool        ok       = false;
         bool        readable = false;
+        bool        empty    = false;
         std::size_t line     = 1;
         std::size_t column   = 1;
         std::size_t byte     = 0;
@@ -70,6 +71,17 @@ namespace mcdk::json_diagnostics {
                 }
             }
 
+            const std::string lastReadMarker = "; last read:";
+            const auto        lastReadPos    = message.find(lastReadMarker);
+            if (lastReadPos != std::string::npos) {
+                const auto expectedMarker = message.find("; expected ", lastReadPos + lastReadMarker.size());
+                if (expectedMarker != std::string::npos) {
+                    message.erase(lastReadPos, expectedMarker - lastReadPos);
+                } else {
+                    message.erase(lastReadPos);
+                }
+            }
+
             return message.empty() ? "syntax error" : message;
         }
 
@@ -120,6 +132,21 @@ namespace mcdk::json_diagnostics {
             return out;
         }
 
+        inline bool isAsciiPrintableToken(const std::string& token) {
+            if (token.empty()) {
+                return false;
+            }
+            for (unsigned char ch : token) {
+                if (ch == '\t' || ch == '\r' || ch == '\n') {
+                    continue;
+                }
+                if (ch < 0x20 || ch >= 0x7F) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         inline std::string formatDiagnostic(const JsonDiagnostic& diagnostic, const std::string& title) {
             std::ostringstream out;
             out << title << "\n"
@@ -127,7 +154,7 @@ namespace mcdk::json_diagnostics {
                 << diagnostic.message << "\n"
                 << "  " << diagnostic.line << " | " << diagnostic.lineText << "\n"
                 << "     | " << diagnostic.caretLine;
-            if (!diagnostic.lastToken.empty()) {
+            if (isAsciiPrintableToken(diagnostic.lastToken)) {
                 out << "\n     = near token: " << diagnostic.lastToken;
             }
             return out.str();
@@ -154,6 +181,7 @@ namespace mcdk::json_diagnostics {
         diagnostic.byte      = sax.position;
         diagnostic.lastToken = sax.lastToken;
         diagnostic.message   = detail::cleanParseMessage(sax.message);
+        diagnostic.empty     = text.empty();
         detail::locateBytePosition(text, sax.position, diagnostic.line, diagnostic.column, diagnostic.lineText);
         diagnostic.caretLine = detail::makeCaretLine(diagnostic.lineText, diagnostic.column);
         diagnostic.formatted = detail::formatDiagnostic(diagnostic, title);

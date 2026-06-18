@@ -181,7 +181,7 @@ namespace mcdk {
                 filePath,
                 "[HotReload] warning: invalid JSON; UI hot reload skipped"
             );
-            if (diagnostic.ok) {
+            if (diagnostic.ok || diagnostic.empty) {
                 return true;
             }
             if (!diagnostic.readable) {
