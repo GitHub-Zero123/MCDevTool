@@ -23,6 +23,12 @@ namespace MCDevTool::Level {
         bool                    keepInventory      = true;         // 死亡时是否保留物品栏
         bool                    doWeatherCycle     = true;         // 是否启用天气自然变化
         bool                    doDaylightCycle    = true;         // 是否启用昼夜交替
+        bool                    doMobSpawning      = true;         // 是否允许生物自然生成
+        bool                    doMobLoot          = true;         // 生物死亡是否掉落战利品
+        bool                    mobGriefing        = true;         // 生物是否可破坏方块
+        bool                    bonusChest         = false;        // 是否生成奖励箱
+        bool                    setWorldTimeOnStart = false;       // 是否在启动时设置世界时间
+        int32_t                 worldTime           = 0;           // 世界时间刻，范围 0..24000
         ExperimentsOptions      experimentsOptions = {};           // 实验性功能选项
     };
 

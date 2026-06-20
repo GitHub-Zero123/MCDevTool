@@ -20,3 +20,7 @@ target_link_libraries(mcp_server_test PRIVATE mcdevtool mcp)
 add_executable(captureTest captureTest.cpp)
 target_compile_features(captureTest PRIVATE cxx_std_23)
 target_link_libraries(captureTest PRIVATE mcdevtool)
+
+add_executable(level_options_test level_options_test.cpp)
+target_compile_features(level_options_test PRIVATE cxx_std_23)
+target_link_libraries(level_options_test PRIVATE mcdevtool)

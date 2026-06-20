@@ -64,6 +64,28 @@ namespace MCDevTool::Level {
         compoundTag["doweathercycle"] = nbt::ByteTag(options.doWeatherCycle ? 1 : 0);
         // doDaylightCycle Byte
         compoundTag["dodaylightcycle"] = nbt::ByteTag(options.doDaylightCycle ? 1 : 0);
+        // doMobSpawning Byte
+        compoundTag["domobspawning"] = nbt::ByteTag(options.doMobSpawning ? 1 : 0);
+        // spawnMobs Byte
+        compoundTag["spawnMobs"] = nbt::ByteTag(options.doMobSpawning ? 1 : 0);
+        // doMobLoot Byte
+        compoundTag["domobloot"] = nbt::ByteTag(options.doMobLoot ? 1 : 0);
+        // mobGriefing Byte
+        compoundTag["mobgriefing"] = nbt::ByteTag(options.mobGriefing ? 1 : 0);
+
+        if (init) {
+            // 奖励箱仅对新建世界有效，已有存档不重新触发生成。
+            compoundTag["bonusChestEnabled"] = nbt::ByteTag(options.bonusChest ? 1 : 0);
+            if (!options.bonusChest) {
+                compoundTag["bonusChestSpawned"] = nbt::ByteTag(0);
+            }
+        }
+
+        if (options.setWorldTimeOnStart) {
+            compoundTag["Time"] = nbt::LongTag(static_cast<int64_t>(options.worldTime));
+            compoundTag["currentTick"] = nbt::LongTag(static_cast<int64_t>(options.worldTime));
+            compoundTag["daylightCycle"] = nbt::IntTag(static_cast<int32_t>(options.worldTime));
+        }
 
         // 处理实验性功能 experiments 键
         if (options.experimentsOptions.enable) {
