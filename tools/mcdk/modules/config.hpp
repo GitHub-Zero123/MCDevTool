@@ -55,6 +55,22 @@ namespace mcdk {
             {       "enable_cheats",                          true},
             // 保留物品栏
             {      "keep_inventory",                          true},
+            // 天气是否自然更替
+            {    "do_weather_cycle",                          true},
+            // 昼夜是否自然更替
+            {   "do_daylight_cycle",                          true},
+            // 生物是否自然生成
+            {    "do_mob_spawning",                          true},
+            // 生物死亡是否掉落战利品
+            {        "do_mob_loot",                          true},
+            // 生物是否可破坏方块
+            {       "mob_griefing",                          true},
+            // 新建世界时是否生成奖励箱
+            {        "bonus_chest",                         false},
+            // 是否在启动时设置世界时间
+            {"set_world_time_on_start",                      false},
+            // 世界时间刻，null表示不覆盖
+            {         "world_time",                       nullptr},
         };
         // 游戏可执行文件路径
         auto u8Path = exePath.generic_u8string();

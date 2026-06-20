@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <mcdevtool/level.h>
 
@@ -19,6 +20,16 @@ namespace mcdk {
         options.keepInventory   = config.value("keep_inventory", true);
         options.doWeatherCycle  = config.value("do_weather_cycle", true);
         options.doDaylightCycle = config.value("do_daylight_cycle", true);
+        options.doMobSpawning   = config.value("do_mob_spawning", true);
+        options.doMobLoot       = config.value("do_mob_loot", true);
+        options.mobGriefing     = config.value("mob_griefing", true);
+        options.bonusChest      = config.value("bonus_chest", false);
+        if (config.value("set_world_time_on_start", false) && config.contains("world_time") &&
+            !config["world_time"].is_null()) {
+            auto worldTime = config["world_time"].get<int64_t>();
+            options.setWorldTimeOnStart = true;
+            options.worldTime           = static_cast<int32_t>(std::clamp<int64_t>(worldTime, 0, 24000));
+        }
         // 处理实验性选项
         MCDevTool::Level::ExperimentsOptions expOptions;
         // 检查存在experiment_options字段

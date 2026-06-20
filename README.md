@@ -160,6 +160,18 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "do_weather_cycle": true,
     // 昼夜是否自然更替
     "do_daylight_cycle": true,
+    // 生物是否自然生成
+    "do_mob_spawning": true,
+    // 生物死亡是否掉落战利品
+    "do_mob_loot": true,
+    // 生物是否可破坏方块
+    "mob_griefing": true,
+    // 新建世界时是否生成奖励箱；对已有存档不会重新生成
+    "bonus_chest": false,
+    // 是否在启动时设置世界时间；仅当 world_time 非 null 时生效
+    "set_world_time_on_start": false,
+    // 世界时间刻，范围 0..24000；null 表示不覆盖
+    "world_time": null,
     // 实验性玩法配置
     "experiment_options": {
         // 数据驱动生物群系

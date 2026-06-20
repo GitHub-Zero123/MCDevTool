@@ -374,4 +374,10 @@ reloadFiles/
 logs/
 /.roo/
 /.codex/
+/.agents/
+/.claude/
+/.codegraph/
+/scripts/sync_claude_skills.py
+/AGENTS.md
+/CLAUDE.md
 /temps/
