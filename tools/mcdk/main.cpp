@@ -134,6 +134,25 @@ static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
     SetConsoleTextAttribute(hConsole, info.wAttributes);
 }
 
+static void printStartupLogo() {
+    // std::cout << _MCDEV_LOG_OUTPUT_ENDL;
+    // printColoredAtomic("  ----------------------------------------------------------------", ConsoleColor::DarkGray);
+    std::cout << _MCDEV_LOG_OUTPUT_ENDL;
+    printColoredAtomic(
+        "  ███╗   ███╗ ██████╗ ██████╗ ██╗  ██╗\n"
+        "  ████╗ ████║██╔════╝ ██╔══██╗██║ ██╔╝\n"
+        "  ██╔████╔██║██║      ██║  ██║█████╔╝\n"
+        "  ██║╚██╔╝██║██║      ██║  ██║██╔═██╗\n"
+        "  ██║ ╚═╝ ██║╚██████╗ ██████╔╝██║  ██╗\n"
+        "  ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝",
+        ConsoleColor::Default
+    );
+    printColoredAtomic("  Minecraft Creator Development Kit", ConsoleColor::DarkGray);
+    std::cout << _MCDEV_LOG_OUTPUT_ENDL;
+    // printColoredAtomic("  ----------------------------------------------------------------", ConsoleColor::DarkGray);
+    // std::cout << _MCDEV_LOG_OUTPUT_ENDL;
+}
+
 // 进程buffer行处理
 static void processBufferAppend(
     std::string&                                   lineBuf,
@@ -987,6 +1006,7 @@ int main(int argc, char* argv[]) {
             return MCDK_CLI_PARSE(argc, argv);
         }
 #endif
+        printStartupLogo();
         auto config = mcdk::userParseConfig();
         startGame(config);
 #ifdef NDEBUG
