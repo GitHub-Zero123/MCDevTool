@@ -134,7 +134,7 @@ static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
     SetConsoleTextAttribute(hConsole, info.wAttributes);
 }
 
-static void printStartupLogo() {
+static void printStartupLogo(bool pluginEnv) {
     std::cout << _MCDEV_LOG_OUTPUT_ENDL;
     printColoredAtomic(
         "  ███╗   ███╗ ██████╗ ██████╗ ██╗  ██╗\n"
@@ -146,7 +146,11 @@ static void printStartupLogo() {
         ConsoleColor::Default
     );
     printColoredAtomic("  Minecraft Creator Development Kit", ConsoleColor::DarkGray);
-    printColoredAtomic("  Core tool by Kid Studio", ConsoleColor::DarkGray);
+    if (pluginEnv) {
+        printColoredAtomic("  Kid Studio Core Tool · VSCode Extension: Dofes", ConsoleColor::DarkGray);
+    } else {
+        printColoredAtomic("  Kid Studio Core Tool", ConsoleColor::DarkGray);
+    }
     std::cout << _MCDEV_LOG_OUTPUT_ENDL;
 }
 
@@ -1000,7 +1004,7 @@ int main(int argc, char* argv[]) {
             return MCDK_CLI_PARSE(argc, argv);
         }
 #endif
-        printStartupLogo();
+        printStartupLogo(mcdk::getEnvIsPluginEnv());
         auto config = mcdk::userParseConfig();
         startGame(config);
 #ifdef NDEBUG
