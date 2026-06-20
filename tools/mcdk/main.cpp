@@ -324,7 +324,7 @@ static void launchGameExe(
         enableIPC     = true;
         needLogBuffer = true;
         printColoredAtomic(
-            "[MCDK] MCP server  " + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
+            "[MCDK] MCP server " + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
             ConsoleColor::Green
         );
         mcpServer.start();
@@ -553,7 +553,7 @@ static void launchGameExe(
     if (enableIPC) {
         ipcServer->start();
         int port = ipcServer->getPort();
-        printColoredAtomic("[MCDK] IPC bridge  port " + std::to_string(port), ConsoleColor::Green);
+        printColoredAtomic("[MCDK] IPC bridge listening on port " + std::to_string(port), ConsoleColor::Green);
         newEnv        = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
         lpEnvironment = (void*)newEnv.data();
     }
