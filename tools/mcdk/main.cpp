@@ -740,7 +740,7 @@ static void launchGameExe(
         if (enableUiHotReload && !hotReloadUiDirs.empty()) {
             std::cout << "[HotReload] UI hot reload source ui dirs:\n";
             for (const auto& uiDir : hotReloadUiDirs) {
-                std::cout << "  - " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
+                std::cout << "  └── " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
             }
             uiReloadTask.setProcessId(pid);
             uiReloadTask.setModDirs(std::move(hotReloadUiDirs));
@@ -750,7 +750,7 @@ static void launchGameExe(
         if (enableShaderHotReload && !hotReloadShaderDirs.empty()) {
             std::cout << "[HotReload] Shader hot reload source shaders dirs:\n";
             for (const auto& shaderDir : hotReloadShaderDirs) {
-                std::cout << "  - " << MCDevTool::Utils::pathToGenericUtf8(shaderDir) << "\n";
+                std::cout << "  └── " << MCDevTool::Utils::pathToGenericUtf8(shaderDir) << "\n";
             }
             shaderReloadTask.setProcessId(pid);
             shaderReloadTask.setModDirs(std::move(hotReloadShaderDirs));
