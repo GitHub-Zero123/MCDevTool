@@ -1,7 +1,23 @@
 # MCDevTool
+
+[![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C?logo=cplusplus&logoColor=white)](https://en.cppreference.com/w/cpp/23)
+[![CMake](https://img.shields.io/badge/build-CMake-064F8C?logo=cmake&logoColor=white)](https://cmake.org/)
+[![Build Test Artifacts](https://github.com/GitHub-Zero123/MCDevTool/actions/workflows/build-artifacts.yml/badge.svg)](https://github.com/GitHub-Zero123/MCDevTool/actions/workflows/build-artifacts.yml)
+[![MCP](https://img.shields.io/badge/MCP-enabled-6f42c1)](https://modelcontextprotocol.io/)
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](README.md)
+[![License](https://img.shields.io/github/license/GitHub-Zero123/MCDevTool)](LICENSE)
+
 适用于**网易我的世界**的开发者工具包，提供创建测试世界、加载用户Mod等功能，方便开发者在脱离**mcs编辑器**的环境下离线测试Mod。
 
 ![image](./mods/demo2.webp)
+
+## 功能概览
+
+- 一键生成并启动开发测试世界，自动挂载用户行为包 / 资源包。
+- 支持 Python Mod 热更新，修改代码后回到游戏前台自动触发增量刷新。
+- 支持 JSON UI 热重载，可在资源包 `ui/*.json` 变化后触发原生 `Ctrl+R` UI definition reload。
+- 内置调试 MOD，可重定向 Python 输出、绑定热更新快捷键，并提供调试期 IPC 能力。
+- 可选启用 MCP 服务，让 AI / 自动化客户端读取日志、执行代码、分析 JSON UI、截图和点击游戏窗口。
 
 ## 配置mcdk
 您可以将**mcdk**添加到环境变量Path中，也可以直接放置在本地项目工作区以便命令搜索。
@@ -198,7 +214,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     // MCP服务器配置项
     "mcp_server_config": {
         // 是否启用MCP服务器功能
-        // 该MCP提供：日志查询，代码执行，画面捕获，自动化操作 等一系列功能。
+        // 该 MCP 提供：日志查询、客户端/服务端代码执行、JSON UI 运行时分析、画面捕获、点击操作、重载命令等能力。
         "enabled": false,
         // 服务器IP地址
         "server_ip": "localhost",
@@ -210,7 +226,39 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 
 ## MCP客户端配置
 
-支持标准MCP客户端接入，以下配置以 `Roo Code` 为例。
+启用 `mcp_server_config.enabled` 后，mcdk 会随游戏进程启动一个标准 MCP Server。它适合接入 Roo Code、Copilot、Claude Desktop 等 MCP 客户端，让 AI 在开发期直接使用结构化工具观察和操作游戏。
+
+### MCP 功能
+
+常用工具包括：
+
+- `get_latest_logs` / `get_latest_error_logs`：读取游戏运行日志和 Python 错误输出。
+- `execute_code`：在客户端或服务端执行 Python 代码，适合触发开发期测试函数、查询运行时状态。
+- `jsonui_debugger`：读取 Minecraft JSON UI 运行时结构，支持 screen 列表、节点查询、子节点枚举、树结构、HTML-like 布局、SVG 布局图、节点搜索、Mod UI 状态分析和 UI 重载。
+- `capture_game_window` / `click_game_window`：用于必要时的视觉确认和简单交互。
+- `reload_game` / `reload_addon_and_game` / `reload_all_shaders` / `reload_single_shader`：触发常见开发期重载操作。
+
+`jsonui_debugger` 是推荐用于 UI 开发反馈的主入口。常用命令：
+
+![JSON UI Debugger runtime layout](./mods/ui1.svg)
+
+```text
+/help
+/screens
+/overview [--screen=top|all|<screen>] [--nud]
+/tree <screen> <path> [--depth=2] [--max-nodes=80]
+/html <screen> <path> [--depth=2] [--html-only]
+/render <screen> <path> [--depth=2] [--out=<absolute.svg>]
+/find <screen> <path> <query> [--depth=5]
+/mod-ui [--include-registered] [--children-depth=1]
+/reload-ui [--preserve-mod-ui]
+```
+
+更多 UI 调试设计说明见 [docs/ui-debugger/README.md](docs/ui-debugger/README.md)。
+
+### 客户端示例
+
+支持标准 MCP 客户端接入，以下配置以 `Roo Code` 为例。
 
 ```jsonc
 {
