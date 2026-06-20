@@ -5,9 +5,12 @@
 [![Build Test Artifacts](https://github.com/GitHub-Zero123/MCDevTool/actions/workflows/build-artifacts.yml/badge.svg)](https://github.com/GitHub-Zero123/MCDevTool/actions/workflows/build-artifacts.yml)
 [![MCP](https://img.shields.io/badge/MCP-enabled-6f42c1)](https://modelcontextprotocol.io/)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](README.md)
+[![Kid Studio](https://img.shields.io/badge/by-Kid%20Studio-00AEEF)](https://space.bilibili.com/396964958)
 [![License](https://img.shields.io/github/license/GitHub-Zero123/MCDevTool)](LICENSE)
 
 适用于**网易我的世界**的开发者工具包，提供创建测试世界、加载用户Mod等功能，方便开发者在脱离**mcs编辑器**的环境下离线测试Mod。
+
+该工具由 [Kid Studio](https://space.bilibili.com/396964958) 成员 Zero123 创建并维护，源于网易我的世界 Mod / Addon 开发中的本地调试需求。
 
 ![image](./mods/demo2.webp)
 
@@ -22,7 +25,7 @@
 ## 配置mcdk
 您可以将**mcdk**添加到环境变量Path中，也可以直接放置在本地项目工作区以便命令搜索。
 
-> vscode[插件](https://marketplace.visualstudio.com/items?itemName=dofes.mcdev-tools)现已经上线，可直接使用插件一站式开发，无需额外配置。
+> vscode[插件](https://marketplace.visualstudio.com/items?itemName=dofes.mcdev-tools)现已经上线，可直接使用插件一站式开发，无需额外配置。该插件由 dofes 封装与维护。
 
 ## 在vscode中使用
 您可以在**vscode**中配置任务以便直接运行**mcdk**，例如：

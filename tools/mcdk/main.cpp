@@ -135,8 +135,6 @@ static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
 }
 
 static void printStartupLogo() {
-    // std::cout << _MCDEV_LOG_OUTPUT_ENDL;
-    // printColoredAtomic("  ----------------------------------------------------------------", ConsoleColor::DarkGray);
     std::cout << _MCDEV_LOG_OUTPUT_ENDL;
     printColoredAtomic(
         "  ███╗   ███╗ ██████╗ ██████╗ ██╗  ██╗\n"
@@ -148,9 +146,8 @@ static void printStartupLogo() {
         ConsoleColor::Default
     );
     printColoredAtomic("  Minecraft Creator Development Kit", ConsoleColor::DarkGray);
+    printColoredAtomic("  Core tool by Kid Studio", ConsoleColor::DarkGray);
     std::cout << _MCDEV_LOG_OUTPUT_ENDL;
-    // printColoredAtomic("  ----------------------------------------------------------------", ConsoleColor::DarkGray);
-    // std::cout << _MCDEV_LOG_OUTPUT_ENDL;
 }
 
 // 进程buffer行处理
@@ -324,7 +321,7 @@ static void launchGameExe(
         enableIPC     = true;
         needLogBuffer = true;
         printColoredAtomic(
-            "[MCDK] MCP server " + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
+            "[MCDK] MCP Server " + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
             ConsoleColor::Green
         );
         mcpServer.start();
@@ -553,7 +550,7 @@ static void launchGameExe(
     if (enableIPC) {
         ipcServer->start();
         int port = ipcServer->getPort();
-        printColoredAtomic("[MCDK] IPC bridge listening on port " + std::to_string(port), ConsoleColor::Green);
+        printColoredAtomic("[MCDK] IPC Bridge listening on port " + std::to_string(port), ConsoleColor::Green);
         newEnv        = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
         lpEnvironment = (void*)newEnv.data();
     }
@@ -742,7 +739,7 @@ static void launchGameExe(
         if (modDirList) {
             for (const auto& modDirConfig : *modDirList) {
                 if (modDirConfig.hotReload) {
-                    std::cout << "  mods     " << modDirConfig.getAbsoluteU8String() << "\n";
+                    std::cout << "  Mods     " << modDirConfig.getAbsoluteU8String() << "\n";
                 }
             }
         }
@@ -755,7 +752,7 @@ static void launchGameExe(
 
         if (enableUiHotReload && !hotReloadUiDirs.empty()) {
             for (const auto& uiDir : hotReloadUiDirs) {
-                std::cout << "  json-ui  " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
+                std::cout << "  JsonUi   " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
             }
             uiReloadTask.setProcessId(pid);
             uiReloadTask.setModDirs(std::move(hotReloadUiDirs));
@@ -764,7 +761,7 @@ static void launchGameExe(
 
         if (enableShaderHotReload && !hotReloadShaderDirs.empty()) {
             for (const auto& shaderDir : hotReloadShaderDirs) {
-                std::cout << "  shaders  " << MCDevTool::Utils::pathToGenericUtf8(shaderDir) << "\n";
+                std::cout << "  Shaders  " << MCDevTool::Utils::pathToGenericUtf8(shaderDir) << "\n";
             }
             shaderReloadTask.setProcessId(pid);
             shaderReloadTask.setModDirs(std::move(hotReloadShaderDirs));
@@ -842,7 +839,7 @@ static void startGame(const nlohmann::json& config) {
     if (config.value("include_debug_mod", true)) {
         auto debugMod = mcdk::registerDebugMod(config, modDirConfigs);
         std::cout << "[MCDK] Addons\n";
-        std::cout << "  debug    uuid=" << debugMod.uuid << "\n";
+        std::cout << "  Debug    UUID=" << debugMod.uuid << "\n";
         linkedPacks.push_back(std::move(debugMod));
         mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks);
     } else {

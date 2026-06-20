@@ -95,16 +95,16 @@ namespace mcdk {
             auto packInfos = linkSourceAddonToRuntimePacks(dir);
             for (auto& info : packInfos) {
                 if (info.type == Addon::PackType::BEHAVIOR) {
-                    std::cout << "  behavior \"" << info.name << "\"  uuid=" << info.uuid;
+                    std::cout << "  Behavior \"" << info.name << "\"  UUID=" << info.uuid;
                     if (modConfig.hotReload) {
-                        std::cout << "  watch=py";
+                        std::cout << "  Watch=Py";
                         if (updateConfigPaths) {
                             modConfig.path = info.path; // 重新更新为link后的路径
                         }
                     }
                     std::cout << "\n";
                 } else if (info.type == Addon::PackType::RESOURCE) {
-                    std::cout << "  resource \"" << info.name << "\"  uuid=" << info.uuid << "\n";
+                    std::cout << "  Resource \"" << info.name << "\"  UUID=" << info.uuid << "\n";
                 }
                 linkedPacks.push_back(std::move(info));
             }
