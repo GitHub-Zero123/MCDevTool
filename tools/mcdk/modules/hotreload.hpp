@@ -209,4 +209,86 @@ namespace mcdk {
         bool                                      mDirty = false;
     };
 
+    class ShaderReloadWatcherTask : public ConsoleWatcherTask {
+    public:
+        using ShaderHotReloadAction = std::function<void(const nlohmann::json&)>;
+        using ConsoleWatcherTask::ConsoleWatcherTask;
+
+        void setShaderHotReloadAction(ShaderHotReloadAction action) { mShaderHotReloadAction = std::move(action); }
+
+        void setModDirs(std::vector<std::filesystem::path>&& shaderDirs) {
+            mShaderDirs.clear();
+            for (const auto& dir : shaderDirs) {
+                mShaderDirs.push_back(std::filesystem::absolute(dir).lexically_normal());
+            }
+            MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(shaderDirs));
+        }
+
+        bool shouldWatchFile(const std::filesystem::path& filePath) const override {
+            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
+            std::error_code ec;
+            return std::filesystem::is_regular_file(absPath, ec);
+        }
+
+        void onFileChanged(const std::filesystem::path& filePath) override {
+            outputChangedPath(filePath);
+            auto shaderName = shaderPathToReloadName(filePath);
+            if (shaderName.empty()) {
+                return;
+            }
+            std::lock_guard<std::mutex> lock(mMutex);
+            mCachedShaderNames.insert(std::move(shaderName));
+        }
+
+        void onHotReloadTriggered() override {
+            nlohmann::json shaderNames = nlohmann::json::array();
+            {
+                std::lock_guard<std::mutex> lock(mMutex);
+                for (const auto& shaderName : mCachedShaderNames) {
+                    shaderNames.push_back(shaderName);
+                }
+                mCachedShaderNames.clear();
+            }
+            if (shaderNames.empty()) {
+                return;
+            }
+            output(ConsoleColor::Yellow, "[HotReload] Detected shader changes; triggering shader hot reload.");
+            if (mShaderHotReloadAction) {
+                mShaderHotReloadAction(shaderNames);
+            }
+        }
+
+    private:
+        std::string shaderPathToReloadName(const std::filesystem::path& filePath) const {
+            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
+            for (const auto& shaderDir : mShaderDirs) {
+                if (!isPathInsideDir(absPath, shaderDir)) {
+                    continue;
+                }
+                auto relPath = std::filesystem::relative(absPath, shaderDir);
+                if (relPath.empty() || relPath == ".") {
+                    return {};
+                }
+                return MCDevTool::Utils::pathToGenericUtf8(relPath);
+            }
+            return {};
+        }
+
+        static bool isPathInsideDir(const std::filesystem::path& child, const std::filesystem::path& parent) {
+            auto childIt  = child.begin();
+            auto parentIt = parent.begin();
+            for (; parentIt != parent.end(); ++parentIt, ++childIt) {
+                if (childIt == child.end() || *childIt != *parentIt) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        ShaderHotReloadAction                    mShaderHotReloadAction;
+        std::vector<std::filesystem::path>       mShaderDirs;
+        std::unordered_set<std::string>          mCachedShaderNames;
+        mutable std::mutex                       mMutex;
+    };
+
 } // namespace mcdk

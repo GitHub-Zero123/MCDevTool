@@ -32,6 +32,7 @@
 #include "modules/mcp_server.hpp"
 #include "modules/jsonui_reload_support.hpp"
 #include "modules/ipc_code_execution.hpp"
+#include "modules/shader_reload_support.hpp"
 
 
 // mcdevtool api
@@ -270,23 +271,29 @@ static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const 
 
 // 启动游戏可执行文件
 static void launchGameExe(
-    const std::filesystem::path&         exePath,
-    std::string_view                     config     = "",
-    const nlohmann::json&                userConfig = nlohmann::json::object(),
-    const std::vector<UserModDirConfig>* modDirList = nullptr
+    const std::filesystem::path&                    exePath,
+    std::string_view                                config      = "",
+    const nlohmann::json&                           userConfig  = nlohmann::json::object(),
+    const std::vector<UserModDirConfig>*            modDirList   = nullptr,
+    const std::vector<MCDevTool::Addon::PackInfo>*  linkedPacks  = nullptr
 ) {
-    bool  autoHotReload   = userConfig.value("auto_hot_reload_mods", true);
-    bool  autoHotReloadUi = userConfig.value("auto_hot_reload_ui", false);
-    auto  mcpServerConfig = mcdk::getMcpServerConfigFromJson(userConfig);
-    auto  hotReloadDirs   = modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList)
-                                                  : std::vector<std::filesystem::path>();
-    auto  uiHotReloadDirs = autoHotReloadUi && modDirList != nullptr
-                                ? UserModDirConfig::toResourcePackUiPathList(*modDirList)
-                                : std::vector<std::filesystem::path>();
-    bool  enablePyHotReload = autoHotReload && !hotReloadDirs.empty();
-    bool  enableUiHotReload = autoHotReloadUi && !hotReloadDirs.empty() && !uiHotReloadDirs.empty();
-    bool  enableIPC         = mcpServerConfig.enabled || enablePyHotReload || enableUiHotReload;
-    bool  needLogBuffer = false;
+    bool autoHotReload        = userConfig.value("auto_hot_reload_mods", true);
+    bool autoHotReloadUi      = userConfig.value("auto_hot_reload_ui", false);
+    bool autoHotReloadShaders = userConfig.value("auto_hot_reload_shaders", false);
+    auto mcpServerConfig      = mcdk::getMcpServerConfigFromJson(userConfig);
+    auto hotReloadDirs        = modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList)
+                                                      : std::vector<std::filesystem::path>();
+    auto hotReloadUiDirs      = autoHotReloadUi && linkedPacks != nullptr
+                                    ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "ui")
+                                    : std::vector<std::filesystem::path>();
+    auto hotReloadShaderDirs  = autoHotReloadShaders && linkedPacks != nullptr
+                                    ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "shaders")
+                                    : std::vector<std::filesystem::path>();
+    bool enablePyHotReload     = autoHotReload && !hotReloadDirs.empty();
+    bool enableUiHotReload     = autoHotReloadUi && !hotReloadUiDirs.empty();
+    bool enableShaderHotReload = autoHotReloadShaders && !hotReloadShaderDirs.empty();
+    bool enableIPC     = mcpServerConfig.enabled || enablePyHotReload || enableUiHotReload || enableShaderHotReload;
+    bool needLogBuffer = false;
     void* lpEnvironment = nullptr;
 
     auto ipcServer       = MCDevTool::Debug::createDebugServer();
@@ -430,6 +437,7 @@ static void launchGameExe(
     }
     mcdk::PyReloadWatcherTask pyReloadTask;
     mcdk::UiReloadWatcherTask uiReloadTask;
+    mcdk::ShaderReloadWatcherTask shaderReloadTask;
     mcdk::UserStyleProcessor  styleProcessor(0, userConfig);
     pyReloadTask.setHotReloadAction([ipcServer](const nlohmann::json& targetPaths) {
         ipcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
@@ -480,8 +488,46 @@ static void launchGameExe(
             ConsoleColor::Red
         );
     });
+    shaderReloadTask.setShaderHotReloadAction([ipcServer](const nlohmann::json& shaderNames) {
+        if (ipcServer->getClientCount() == 0) {
+            printColoredAtomic(
+                "[HotReload] Shader hot reload skipped: IPC is not connected. The player may not be in game.",
+                ConsoleColor::Yellow
+            );
+            return;
+        }
+
+        auto result = mcdk::ipc_code_execution::requestClientCodeReturnValueJson(
+            ipcServer,
+            mcdk::shader_reload_support::buildReloadShadersPythonCode(shaderNames, true),
+            60000
+        );
+        if (!result.is_object() || !result.value("ok", false)) {
+            printColoredAtomic(
+                "[HotReload] Shader hot reload failed: " + result.dump(),
+                ConsoleColor::Red
+            );
+            return;
+        }
+        const auto attempted = result.value("attempted", 0);
+        const auto reloaded = result.value("reloaded", 0);
+        const auto failed = result.value("failed", nlohmann::json::array());
+        if (!failed.empty()) {
+            printColoredAtomic(
+                "[HotReload] Shader hot reload finished with failures: " + result.dump(),
+                ConsoleColor::Yellow
+            );
+            return;
+        }
+        printColoredAtomic(
+            "[HotReload] Shader hot reload finished: " + std::to_string(reloaded) + "/"
+                + std::to_string(attempted) + " shader(s) reloaded.",
+            ConsoleColor::Green
+        );
+    });
     pyReloadTask.setOutputCallback(printColoredAtomic);
     uiReloadTask.setOutputCallback(printColoredAtomic);
+    shaderReloadTask.setOutputCallback(printColoredAtomic);
     styleProcessor.setOutputCallback(printColoredAtomic);
 
     std::wstring newEnv;
@@ -674,7 +720,7 @@ static void launchGameExe(
         debuggerAttachToProcess(pid, debuggerPort);
     }
 
-    if ((enablePyHotReload || enableUiHotReload) && modDirList != nullptr) {
+    if ((enablePyHotReload || enableUiHotReload || enableShaderHotReload) && modDirList != nullptr) {
         // 输出追踪目录列表
         if(modDirList) {
             std::cout << "[HotReload] 追踪目录列表：\n";
@@ -691,14 +737,24 @@ static void launchGameExe(
             pyReloadTask.start();
         }
 
-        if (enableUiHotReload) {
+        if (enableUiHotReload && !hotReloadUiDirs.empty()) {
             std::cout << "[HotReload] UI hot reload source ui dirs:\n";
-            for (const auto& uiDir : uiHotReloadDirs) {
+            for (const auto& uiDir : hotReloadUiDirs) {
                 std::cout << "  - " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
             }
             uiReloadTask.setProcessId(pid);
-            uiReloadTask.setModDirs(std::move(uiHotReloadDirs));
+            uiReloadTask.setModDirs(std::move(hotReloadUiDirs));
             uiReloadTask.start();
+        }
+
+        if (enableShaderHotReload && !hotReloadShaderDirs.empty()) {
+            std::cout << "[HotReload] Shader hot reload source shaders dirs:\n";
+            for (const auto& shaderDir : hotReloadShaderDirs) {
+                std::cout << "  - " << MCDevTool::Utils::pathToGenericUtf8(shaderDir) << "\n";
+            }
+            shaderReloadTask.setProcessId(pid);
+            shaderReloadTask.setModDirs(std::move(hotReloadShaderDirs));
+            shaderReloadTask.start();
         }
     }
     styleProcessor.start();
@@ -710,6 +766,7 @@ static void launchGameExe(
     // 停止热更新任务
     pyReloadTask.safeExit();
     uiReloadTask.safeExit();
+    shaderReloadTask.safeExit();
     // 停止IPC服务器 如果已启用
     ipcServer->safeExit();
     // 停止样式处理器
@@ -776,7 +833,6 @@ static void startGame(const nlohmann::json& config) {
     } else {
         mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks);
     }
-
     // 创建世界
     auto worldFolderName = config.value("world_folder_name", "MC_DEV_WORLD");
     auto resetWorld      = config.value("reset_world", false); // 若启用该参数 每次都会强制覆盖世界
@@ -841,7 +897,13 @@ static void startGame(const nlohmann::json& config) {
 
     if (!autoJoinGame) {
         // 不自动进入游戏 直接启动游戏exe
-        launchGameExe(gameExePath, "", config, &modDirConfigs);
+        launchGameExe(
+            gameExePath,
+            "",
+            config,
+            &modDirConfigs,
+            &linkedPacks
+        );
         return;
     }
 
@@ -888,7 +950,13 @@ static void startGame(const nlohmann::json& config) {
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
     configFile.close();
-    launchGameExe(gameExePath, MCDevTool::Utils::pathToGenericUtf8(configPath), config, &modDirConfigs);
+    launchGameExe(
+        gameExePath,
+        MCDevTool::Utils::pathToGenericUtf8(configPath),
+        config,
+        &modDirConfigs,
+        &linkedPacks
+    );
 }
 
 #ifdef MCDK_ENABLE_CLI

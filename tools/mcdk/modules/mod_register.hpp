@@ -93,7 +93,7 @@ namespace mcdk {
         for (auto& modConfig : configs) {
             auto dir       = modConfig.getAbsolutePath();
             auto packInfos = linkSourceAddonToRuntimePacks(dir);
-            for (const auto& info : packInfos) {
+            for (auto& info : packInfos) {
                 if (info.type == Addon::PackType::BEHAVIOR) {
                     std::cout << "[MCDK] LINK行为包: \"" << info.name << "\", UUID: " << info.uuid << "\n";
                     if (modConfig.hotReload) {

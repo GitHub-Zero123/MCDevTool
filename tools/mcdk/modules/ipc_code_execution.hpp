@@ -24,7 +24,8 @@ namespace mcdk::ipc_code_execution {
 
         nlohmann::json params = {
             {"code", code},
-            {"is_client", isClient}
+            {"is_client", isClient},
+            {"timeout", static_cast<double>(timeoutMs) / 1000.0}
         };
         auto result = ipcServer->requestJson("execute_code", params.dump(), timeoutMs);
         if (!result.success) {

@@ -50,7 +50,8 @@ namespace MCDevTool::Addon {
         parseJsonPackInfo(content, out);
         if (out) {
             // 设置路径
-            out.path = packPath;
+            out.path    = packPath;
+            out.srcPath = packPath;
         }
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <filesystem>
 #include <stdexcept>
@@ -105,32 +106,22 @@ namespace mcdk {
             return paths;
         }
 
-        static std::vector<std::filesystem::path> toResourcePackUiPathList(const std::vector<UserModDirConfig>& configs) {
+        static std::vector<std::filesystem::path> collectHotReloadResourceSubdirPaths(
+            const std::vector<MCDevTool::Addon::PackInfo>& sourcePacks,
+            std::string_view                               subdirName
+        ) {
             std::vector<std::filesystem::path> paths;
-            auto addResourcePackUiPath = [&paths](const std::filesystem::path& packPath) {
-                auto info = MCDevTool::Addon::parsePackInfo(packPath);
-                if (!info || info.type != MCDevTool::Addon::PackType::RESOURCE) {
-                    return;
-                }
-                auto uiPath = packPath / "ui";
-                if (std::filesystem::is_directory(uiPath)) {
-                    paths.push_back(std::filesystem::absolute(uiPath).lexically_normal());
-                }
-            };
-
-            for (const auto& config : configs) {
-                if (!config.hotReload) {
+            for (const auto& pack : sourcePacks) {
+                if (pack.type != MCDevTool::Addon::PackType::RESOURCE || pack.srcPath.empty() || subdirName.empty()) {
                     continue;
                 }
-                const auto root = config.getAbsolutePath();
-                addResourcePackUiPath(root);
-                if (std::filesystem::is_directory(root)) {
-                    for (const auto& entry : std::filesystem::directory_iterator(root)) {
-                        if (entry.is_directory()) {
-                            addResourcePackUiPath(entry.path());
-                        }
-                    }
+                const auto& packPath = pack.srcPath;
+                const auto targetPath = packPath / std::filesystem::u8path(std::string(subdirName));
+                std::error_code ec;
+                if (!std::filesystem::is_directory(targetPath, ec)) {
+                    continue;
                 }
+                paths.push_back(std::filesystem::absolute(targetPath).lexically_normal());
             }
             return paths;
         }

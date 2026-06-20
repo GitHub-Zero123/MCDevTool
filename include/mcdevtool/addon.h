@@ -14,6 +14,7 @@ namespace MCDevTool::Addon {
         std::string           uuid;
         std::string           version;
         std::filesystem::path path;
+        std::filesystem::path srcPath;
         PackType              type = PackType::UNKNOWN;
 
         explicit operator bool() const { return !uuid.empty() && !version.empty() && type != PackType::UNKNOWN; }
