@@ -147,7 +147,7 @@ static void printStartupLogo(bool pluginEnv) {
     );
     printColoredAtomic("  Minecraft Creator Development Kit", ConsoleColor::DarkGray);
     if (pluginEnv) {
-        printColoredAtomic("  Kid Studio Core Tool · VSCode Extension: Dofes", ConsoleColor::DarkGray);
+        printColoredAtomic("  Kid Studio Core Tool · VSCode Extension: Dofes, Zero123", ConsoleColor::DarkGray);
     } else {
         printColoredAtomic("  Kid Studio Core Tool", ConsoleColor::DarkGray);
     }
