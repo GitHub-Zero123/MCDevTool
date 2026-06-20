@@ -324,7 +324,7 @@ static void launchGameExe(
         enableIPC     = true;
         needLogBuffer = true;
         printColoredAtomic(
-            "[MCDK] MCP服务器已启用：" + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
+            "[MCDK] MCP server  " + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
             ConsoleColor::Green
         );
         mcpServer.start();
@@ -553,9 +553,7 @@ static void launchGameExe(
     if (enableIPC) {
         ipcServer->start();
         int port = ipcServer->getPort();
-        // std::cout << "[MCDK] IPC调试服务器已启动，端口：" << port <<
-        // _MCDEV_LOG_OUTPUT_ENDL;
-        printColoredAtomic("[MCDK] IPC调试服务器已启动，端口：" + std::to_string(port), ConsoleColor::Green);
+        printColoredAtomic("[MCDK] IPC bridge  port " + std::to_string(port), ConsoleColor::Green);
         newEnv        = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
         lpEnvironment = (void*)newEnv.data();
     }
@@ -740,12 +738,11 @@ static void launchGameExe(
     }
 
     if ((enablePyHotReload || enableUiHotReload || enableShaderHotReload) && modDirList != nullptr) {
-        // 输出追踪目录列表
-        if(modDirList) {
-            std::cout << "[HotReload] 追踪目录列表：\n";
+        std::cout << "[HotReload] Watchers\n";
+        if (modDirList) {
             for (const auto& modDirConfig : *modDirList) {
                 if (modDirConfig.hotReload) {
-                    std::cout << "  └── " << modDirConfig.getAbsoluteU8String() << "\n";
+                    std::cout << "  mods     " << modDirConfig.getAbsoluteU8String() << "\n";
                 }
             }
         }
@@ -757,9 +754,8 @@ static void launchGameExe(
         }
 
         if (enableUiHotReload && !hotReloadUiDirs.empty()) {
-            std::cout << "[HotReload] UI hot reload source ui dirs:\n";
             for (const auto& uiDir : hotReloadUiDirs) {
-                std::cout << "  └── " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
+                std::cout << "  json-ui  " << MCDevTool::Utils::pathToGenericUtf8(uiDir) << "\n";
             }
             uiReloadTask.setProcessId(pid);
             uiReloadTask.setModDirs(std::move(hotReloadUiDirs));
@@ -767,9 +763,8 @@ static void launchGameExe(
         }
 
         if (enableShaderHotReload && !hotReloadShaderDirs.empty()) {
-            std::cout << "[HotReload] Shader hot reload source shaders dirs:\n";
             for (const auto& shaderDir : hotReloadShaderDirs) {
-                std::cout << "  └── " << MCDevTool::Utils::pathToGenericUtf8(shaderDir) << "\n";
+                std::cout << "  shaders  " << MCDevTool::Utils::pathToGenericUtf8(shaderDir) << "\n";
             }
             shaderReloadTask.setProcessId(pid);
             shaderReloadTask.setModDirs(std::move(hotReloadShaderDirs));
@@ -846,10 +841,12 @@ static void startGame(const nlohmann::json& config) {
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
     if (config.value("include_debug_mod", true)) {
         auto debugMod = mcdk::registerDebugMod(config, modDirConfigs);
-        std::cout << "[MCDK] 已注册调试MOD：" << debugMod.uuid << "\n";
+        std::cout << "[MCDK] Addons\n";
+        std::cout << "  debug    uuid=" << debugMod.uuid << "\n";
         linkedPacks.push_back(std::move(debugMod));
         mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks);
     } else {
+        std::cout << "[MCDK] Addons\n";
         mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks);
     }
     // 创建世界
