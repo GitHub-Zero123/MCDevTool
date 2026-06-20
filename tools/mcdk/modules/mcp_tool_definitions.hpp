@@ -60,10 +60,10 @@ Parameters:
         "when the reload is complete, so please verify the result visually in the game.";
 
     inline constexpr const char* ReloadSingleShaderName = "reload_single_shader";
-    inline constexpr const char* ReloadSingleShaderDescription = R"(Triggers a reload of a single shader by filename. This is faster than reloading all shaders and can be used for quicker iteration when only one shader file is modified.
+    inline constexpr const char* ReloadSingleShaderDescription = R"(Triggers a reload of a single shader by path. This is faster than reloading all shaders and can be used for quicker iteration when only one shader file is modified.
 Parameters:
-- file_name: The name of the shader file to reload, relative to the shaders directory.
-For example, "entity.fragment" or "block.vertex". Do not include the file extension.)";
+- file_name: Path relative to the resource pack shaders directory. Use forward slashes for nested paths, do not start with "/", and include the shader file extension when targeting a concrete file.
+Examples: "entity.fragment", "block.vertex", "effects/bloom.fragment".)";
 
     inline constexpr const char* CaptureGameWindowName = "capture_game_window";
     inline constexpr const char* CaptureGameWindowDescription =
@@ -150,7 +150,12 @@ Parameters:
     inline mcp::tool buildReloadSingleShaderTool() {
         return mcp::tool_builder(ReloadSingleShaderName)
             .with_description(ReloadSingleShaderDescription)
-            .with_string_param("file_name", "Name of the shader file to reload (e.g., 'entity.fragment')", true)
+            .with_string_param(
+                "file_name",
+                "Path relative to the resource pack shaders directory, e.g. 'entity.fragment' or "
+                "'effects/bloom.fragment'",
+                true
+            )
             .with_read_only_hint(false)
             .build();
     }
