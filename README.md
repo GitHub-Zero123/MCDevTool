@@ -244,7 +244,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 - `execute_code`：在客户端或服务端执行 Python 代码，适合触发开发期测试函数、查询运行时状态。
 - `jsonui_debugger`：读取 Minecraft JSON UI 运行时结构，支持 screen 列表、节点查询、子节点枚举、树结构、HTML-like 布局、SVG 布局图、节点搜索、Mod UI 状态分析和 UI 重载。
 - `capture_game_window` / `click_game_window`：用于必要时的视觉确认和简单交互。
-- `reload_game` / `reload_addon_and_game` / `reload_all_shaders` / `reload_single_shader`：触发常见开发期重载操作。
+- `reload_game`：触发完整游戏重载；资源级重载使用 `reload_game(reload_addons=true)`。
 
 `jsonui_debugger` 是推荐用于 UI 开发反馈的主入口。常用命令：
 

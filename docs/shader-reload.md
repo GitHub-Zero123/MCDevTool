@@ -1,8 +1,8 @@
 # Shader 重载
 
-MCDK 提供了开发期 Shader 重载能力，用于快速验证资源包中的着色器修改。
+MCDK 提供了开发期 Shader 自动热更新能力，用于快速验证资源包中的着色器修改。
 
-只修改单个 Shader 源文件时，优先使用单文件重载；如果修改了共享 include、材质、渲染管线配置，或一次修改了多个互相依赖的 Shader 文件，应使用全量 Shader 重载。
+启用 `auto_hot_reload_shaders` 后，MCDK 会监听资源包 `shaders` 目录下的文件变化，并在回到游戏前台时调用底层单文件 Shader 重载接口。
 
 ## API 参数规则
 
@@ -41,13 +41,13 @@ clientlevel.reload_one_shader("shaders/entity.fragment", True)
 clientlevel.reload_one_shader("/shaders/effects/bloom.fragment", True)
 ```
 
-## MCP 工具参数
+## 自动热更新参数
 
-MCP 工具 `reload_single_shader` 使用面向用户的 `file_name` 参数。该参数应传入相对于资源包 `shaders` 目录的路径，不带前导 `/`。
+自动热更新会把发生变化的文件转换为相对于资源包 `shaders` 目录的路径，不带前导 `/`。
 
 ```text
-reload_single_shader(file_name="entity.fragment")
-reload_single_shader(file_name="effects/bloom.fragment")
+entity.fragment
+effects/bloom.fragment
 ```
 
 如果 Shader 文件实际位于：
@@ -56,7 +56,7 @@ reload_single_shader(file_name="effects/bloom.fragment")
 R/shaders/effects/bloom.fragment
 ```
 
-那么 MCP 参数应传：
+那么传给底层接口的参数会是：
 
 ```text
 effects/bloom.fragment
@@ -66,4 +66,4 @@ effects/bloom.fragment
 
 单文件 Shader 重载仍然可能耗时较长，因为引擎可能会编译并校验相关 Shader 状态。
 
-如果修改内容涉及共享 include、材质、渲染管线配置，或多个 Shader 文件之间存在依赖关系，`reload_all_shaders` 通常更可靠。
+如果修改内容涉及共享 include、材质、渲染管线配置，或多个 Shader 文件之间存在依赖关系，底层引擎仍可能触发相关 Shader 编译或报出依赖侧错误。这类情况通常需要结合游戏日志判断，而不是只看被修改的单个文件。

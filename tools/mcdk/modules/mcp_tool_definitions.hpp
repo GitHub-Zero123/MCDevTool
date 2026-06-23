@@ -44,26 +44,10 @@ Parameters:
 - direct_return: Whether to wait for and directly return the execution result (default true). Set false to use the legacy async log-based behavior.)";
 
     inline constexpr const char* ReloadGameName = "reload_game";
-    inline constexpr const char* ReloadGameDescription =
-        "Reloads the game environment. Use with caution and only when necessary. Python code supports "
-        "incremental hot-reload, so a full reload should be avoided unless hot-reload is insufficient.";
+    inline constexpr const char* ReloadGameDescription = R"(Reloads the running game environment. Prefer automatic Python/UI/Shader/Material hot reload when available; use this only when a full engine-side refresh is still needed.
 
-    inline constexpr const char* ReloadAddonAndGameName = "reload_addon_and_game";
-    inline constexpr const char* ReloadAddonAndGameDescription =
-        "Reloads both the game environment and the addon data. Use this when you have made changes to "
-        "addon resources (e.g., textures, sounds) that require a full reload to take effect.";
-
-    inline constexpr const char* ReloadAllShadersName = "reload_all_shaders";
-    inline constexpr const char* ReloadAllShadersDescription =
-        "Triggers a reload of all shaders. This is a heavy operation and may cause significant lag. "
-        "Use only when necessary, such as after modifying shader files. There is no direct feedback "
-        "when the reload is complete, so please verify the result visually in the game.";
-
-    inline constexpr const char* ReloadSingleShaderName = "reload_single_shader";
-    inline constexpr const char* ReloadSingleShaderDescription = R"(Triggers a reload of a single shader by path. This is faster than reloading all shaders and can be used for quicker iteration when only one shader file is modified.
 Parameters:
-- file_name: Path relative to the resource pack shaders directory. Use forward slashes for nested paths, do not start with "/", and include the shader file extension when targeting a concrete file.
-Examples: "entity.fragment", "block.vertex", "effects/bloom.fragment".)";
+- reload_addons: When true, trigger the more complete addon-data + game reload path. Use it for resource changes such as JSON, PNG, audio, or other addon files not handled by automatic hot reload.)";
 
     inline constexpr const char* CaptureGameWindowName = "capture_game_window";
     inline constexpr const char* CaptureGameWindowDescription =
@@ -129,33 +113,7 @@ Parameters:
     inline mcp::tool buildReloadGameTool() {
         return mcp::tool_builder(ReloadGameName)
             .with_description(ReloadGameDescription)
-            .with_read_only_hint(false)
-            .build();
-    }
-
-    inline mcp::tool buildReloadAddonAndGameTool() {
-        return mcp::tool_builder(ReloadAddonAndGameName)
-            .with_description(ReloadAddonAndGameDescription)
-            .with_read_only_hint(false)
-            .build();
-    }
-
-    inline mcp::tool buildReloadAllShadersTool() {
-        return mcp::tool_builder(ReloadAllShadersName)
-            .with_description(ReloadAllShadersDescription)
-            .with_read_only_hint(false)
-            .build();
-    }
-
-    inline mcp::tool buildReloadSingleShaderTool() {
-        return mcp::tool_builder(ReloadSingleShaderName)
-            .with_description(ReloadSingleShaderDescription)
-            .with_string_param(
-                "file_name",
-                "Path relative to the resource pack shaders directory, e.g. 'entity.fragment' or "
-                "'effects/bloom.fragment'",
-                true
-            )
+            .with_boolean_param("reload_addons", "Reload addon data together with the game environment", false)
             .with_read_only_hint(false)
             .build();
     }
@@ -192,9 +150,6 @@ Parameters:
             buildExecuteCodeTool(),
             buildJsonUiDebuggerTool(),
             buildReloadGameTool(),
-            buildReloadAddonAndGameTool(),
-            buildReloadAllShadersTool(),
-            buildReloadSingleShaderTool(),
             buildCaptureGameWindowTool(),
             buildClickGameWindowTool(),
         };

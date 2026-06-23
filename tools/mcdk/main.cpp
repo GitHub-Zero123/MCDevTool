@@ -420,25 +420,18 @@ static void launchGameExe(
             }
         );
 
-        // 重载游戏
-        mcpServer.setReloadGameHandler([ipcServer, logBuffer, errBuffer]() -> bool {
+        // 重载游戏，reloadAddons=true 时同时重载 Addon 数据
+        mcpServer.setReloadGameHandler([ipcServer, logBuffer, errBuffer](bool reloadAddons) -> bool {
             if (ipcServer->getClientCount() == 0) {
                 return false; // 没有连接的客户端，无法执行
             }
-            if (!ipcServer->sendMessage(5)) { // GAME RELOAD
+            const int messageId = reloadAddons ? 8 : 5; // 8 = ADDON AND GAME RELOAD, 5 = GAME RELOAD
+            if (!ipcServer->sendMessage(messageId)) {
                 return false;
             }
             logBuffer->clear();
             errBuffer->clear();
             return true;
-        });
-
-        // 重载插件和游戏
-        mcpServer.setReloadAddonAndGameHandler([ipcServer]() -> bool {
-            if (ipcServer->getClientCount() == 0) {
-                return false; // 没有连接的客户端，无法执行
-            }
-            return ipcServer->sendMessage(8); // ADDON AND GAME RELOAD
         });
 
         // 触发游戏窗口原生 Ctrl+R UI definition 热重载
@@ -448,22 +441,6 @@ static void launchGameExe(
                 return false;
             }
             return MCDevTool::Style::triggerMinecraftUiReloadShortcut(pid);
-        });
-
-        // 重载着色器（重新编译着色器）
-        mcpServer.setReloadShadersHandler([ipcServer]() -> bool {
-            if (ipcServer->getClientCount() == 0) {
-                return false; // 没有连接的客户端，无法执行
-            }
-            return ipcServer->sendMessage(6); // SHADERS RELOAD
-        });
-
-        // 重载单个着色器（重新编译单个着色器）
-        mcpServer.setReloadOnceShadersHandler([ipcServer](const std::string& fileName) -> bool {
-            if (ipcServer->getClientCount() == 0) {
-                return false; // 没有连接的客户端，无法执行
-            }
-            return ipcServer->sendMessage(7, fileName); // ONCE SHADER RELOAD
         });
     }
     mcdk::PyReloadWatcherTask pyReloadTask;
