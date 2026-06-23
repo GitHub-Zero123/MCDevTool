@@ -421,11 +421,16 @@ static void launchGameExe(
         );
 
         // 重载游戏
-        mcpServer.setReloadGameHandler([ipcServer]() -> bool {
+        mcpServer.setReloadGameHandler([ipcServer, logBuffer, errBuffer]() -> bool {
             if (ipcServer->getClientCount() == 0) {
                 return false; // 没有连接的客户端，无法执行
             }
-            return ipcServer->sendMessage(5); // GAME RELOAD
+            if (!ipcServer->sendMessage(5)) { // GAME RELOAD
+                return false;
+            }
+            logBuffer->clear();
+            errBuffer->clear();
+            return true;
         });
 
         // 重载插件和游戏
