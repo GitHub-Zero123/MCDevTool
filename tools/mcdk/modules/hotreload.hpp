@@ -291,4 +291,111 @@ namespace mcdk {
         mutable std::mutex                       mMutex;
     };
 
+    class MaterialReloadWatcherTask : public ConsoleWatcherTask {
+    public:
+        using MaterialHotReloadAction = std::function<void(const nlohmann::json&)>;
+        using ConsoleWatcherTask::ConsoleWatcherTask;
+
+        void setMaterialHotReloadAction(MaterialHotReloadAction action) {
+            mMaterialHotReloadAction = std::move(action);
+        }
+
+        void setModDirs(std::vector<std::filesystem::path>&& materialDirs) {
+            mMaterialDirs.clear();
+            for (const auto& dir : materialDirs) {
+                mMaterialDirs.push_back(std::filesystem::absolute(dir).lexically_normal());
+            }
+            MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(materialDirs));
+        }
+
+        bool shouldWatchFile(const std::filesystem::path& filePath) const override {
+            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(absPath, ec)) {
+                return false;
+            }
+            return isValidMaterialJsonFile(absPath);
+        }
+
+        void onFileChanged(const std::filesystem::path& filePath) override {
+            outputChangedPath(filePath);
+            auto materialPath = materialPathToReloadName(filePath);
+            if (materialPath.empty()) {
+                return;
+            }
+            std::lock_guard<std::mutex> lock(mMutex);
+            mCachedMaterialPaths.insert(std::move(materialPath));
+        }
+
+        void onHotReloadTriggered() override {
+            nlohmann::json materialPaths = nlohmann::json::array();
+            {
+                std::lock_guard<std::mutex> lock(mMutex);
+                for (const auto& materialPath : mCachedMaterialPaths) {
+                    materialPaths.push_back(materialPath);
+                }
+                mCachedMaterialPaths.clear();
+            }
+            if (materialPaths.empty()) {
+                return;
+            }
+            output(ConsoleColor::Yellow, "[HotReload] Detected material changes; triggering material hot reload.");
+            if (mMaterialHotReloadAction) {
+                mMaterialHotReloadAction(materialPaths);
+            }
+        }
+
+    private:
+        bool isValidMaterialJsonFile(const std::filesystem::path& filePath) const {
+            auto diagnostic = json_diagnostics::validateJsonFileWithComments(
+                filePath,
+                "[HotReload] warning: invalid Material JSON; material hot reload skipped"
+            );
+            if (diagnostic.ok || diagnostic.empty) {
+                return true;
+            }
+            if (!diagnostic.readable) {
+                output(
+                    ConsoleColor::Yellow,
+                    "[HotReload] warning: material hot reload skipped: " + diagnostic.message + " "
+                        + diagnostic.path
+                );
+                return false;
+            }
+            output(ConsoleColor::Yellow, diagnostic.formatted);
+            return false;
+        }
+
+        std::string materialPathToReloadName(const std::filesystem::path& filePath) const {
+            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
+            for (const auto& materialDir : mMaterialDirs) {
+                if (!isPathInsideDir(absPath, materialDir)) {
+                    continue;
+                }
+                auto relPath = std::filesystem::relative(absPath, materialDir);
+                if (relPath.empty() || relPath == ".") {
+                    return {};
+                }
+                return "materials/" + MCDevTool::Utils::pathToGenericUtf8(relPath);
+            }
+            return {};
+        }
+
+        static bool isPathInsideDir(const std::filesystem::path& child, const std::filesystem::path& parent) {
+            auto childIt  = child.begin();
+            auto parentIt = parent.begin();
+            for (; parentIt != parent.end(); ++parentIt, ++childIt) {
+                if (childIt == child.end() || *childIt != *parentIt) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        MaterialHotReloadAction                  mMaterialHotReloadAction;
+        std::vector<std::filesystem::path>       mMaterialDirs;
+        std::unordered_set<std::string>          mCachedMaterialPaths;
+        mutable std::mutex                       mMutex;
+    };
+
 } // namespace mcdk

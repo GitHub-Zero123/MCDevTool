@@ -19,6 +19,7 @@
 - 一键生成并启动开发测试世界，自动挂载用户行为包 / 资源包。
 - 支持 Python Mod 热更新，修改代码后回到游戏前台自动触发增量刷新。
 - 支持 JSON UI 热重载，可在资源包 `ui/*.json` 变化后触发原生 `Ctrl+R` UI definition reload。
+- 支持 Shader / Material 单文件热更新，可在资源包文件变化后回到游戏前台触发增量重载。
 - 内置调试 MOD，可重定向 Python 输出、绑定热更新快捷键，并提供调试期 IPC 能力。
 - 可选启用 MCP 服务，让 AI / 自动化客户端读取日志、执行代码、分析 JSON UI、截图和点击游戏窗口。
 
@@ -148,6 +149,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "auto_hot_reload_ui": false,
     // 是否自动热更新 Shader，默认关闭。开启后，资源包 shaders 目录下任意文件修改会在回到游戏前台时触发单文件 Shader 重载
     "auto_hot_reload_shaders": false,
+    // 是否自动热更新 Material，默认关闭。开启后，资源包 materials 目录下任意 material 文件修改会在回到游戏前台时触发单文件 Material 重载
+    "auto_hot_reload_materials": false,
     // 生成的世界类型(0.旧版有限世界 1.无限世界 2.超平坦) (int)
     "world_type": 1,
     // 游戏模式(0.生存 1.创造 2.冒险) (int)

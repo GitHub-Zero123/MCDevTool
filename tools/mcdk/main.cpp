@@ -33,6 +33,7 @@
 #include "modules/jsonui_reload_support.hpp"
 #include "modules/ipc_code_execution.hpp"
 #include "modules/shader_reload_support.hpp"
+#include "modules/material_reload_support.hpp"
 
 
 // mcdevtool api
@@ -136,15 +137,14 @@ static void printColoredAtomic(const std::string& msg, ConsoleColor color) {
 
 static void printStartupLogo(bool pluginEnv) {
     std::cout << _MCDEV_LOG_OUTPUT_ENDL;
-    printColoredAtomic(
-        "  ███╗   ███╗ ██████╗ ██████╗ ██╗  ██╗\n"
-        "  ████╗ ████║██╔════╝ ██╔══██╗██║ ██╔╝\n"
-        "  ██╔████╔██║██║      ██║  ██║█████╔╝\n"
-        "  ██║╚██╔╝██║██║      ██║  ██║██╔═██╗\n"
-        "  ██║ ╚═╝ ██║╚██████╗ ██████╔╝██║  ██╗\n"
-        "  ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝",
-        ConsoleColor::Default
-    );
+    std::cout
+        << "  ███╗   ███╗ ██████╗ ██████╗ ██╗  ██╗\n"
+        << "  ████╗ ████║██╔════╝ ██╔══██╗██║ ██╔╝\n"
+        << "  ██╔████╔██║██║      ██║  ██║█████╔╝\n"
+        << "  ██║╚██╔╝██║██║      ██║  ██║██╔═██╗\n"
+        << "  ██║ ╚═╝ ██║╚██████╗ ██████╔╝██║  ██╗\n"
+        << "  ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝"
+        << _MCDEV_LOG_OUTPUT_ENDL;
     printColoredAtomic("  Minecraft Creator Development Kit", ConsoleColor::DarkGray);
     if (pluginEnv) {
         printColoredAtomic("  Kid Studio Core Tool · VSCode Extension: Dofes, Zero123", ConsoleColor::DarkGray);
@@ -297,9 +297,10 @@ static void launchGameExe(
     const std::vector<UserModDirConfig>*            modDirList   = nullptr,
     const std::vector<MCDevTool::Addon::PackInfo>*  linkedPacks  = nullptr
 ) {
-    bool autoHotReload        = userConfig.value("auto_hot_reload_mods", true);
-    bool autoHotReloadUi      = userConfig.value("auto_hot_reload_ui", false);
-    bool autoHotReloadShaders = userConfig.value("auto_hot_reload_shaders", false);
+    bool autoHotReload          = userConfig.value("auto_hot_reload_mods", true);
+    bool autoHotReloadUi        = userConfig.value("auto_hot_reload_ui", false);
+    bool autoHotReloadShaders   = userConfig.value("auto_hot_reload_shaders", false);
+    bool autoHotReloadMaterials = userConfig.value("auto_hot_reload_materials", false);
     auto mcpServerConfig      = mcdk::getMcpServerConfigFromJson(userConfig);
     auto hotReloadDirs        = modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList)
                                                       : std::vector<std::filesystem::path>();
@@ -309,10 +310,15 @@ static void launchGameExe(
     auto hotReloadShaderDirs  = autoHotReloadShaders && linkedPacks != nullptr
                                     ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "shaders")
                                     : std::vector<std::filesystem::path>();
-    bool enablePyHotReload     = autoHotReload && !hotReloadDirs.empty();
-    bool enableUiHotReload     = autoHotReloadUi && !hotReloadUiDirs.empty();
-    bool enableShaderHotReload = autoHotReloadShaders && !hotReloadShaderDirs.empty();
-    bool enableIPC     = mcpServerConfig.enabled || enablePyHotReload || enableUiHotReload || enableShaderHotReload;
+    auto hotReloadMaterialDirs = autoHotReloadMaterials && linkedPacks != nullptr
+                                     ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "materials")
+                                     : std::vector<std::filesystem::path>();
+    bool enablePyHotReload       = autoHotReload && !hotReloadDirs.empty();
+    bool enableUiHotReload       = autoHotReloadUi && !hotReloadUiDirs.empty();
+    bool enableShaderHotReload   = autoHotReloadShaders && !hotReloadShaderDirs.empty();
+    bool enableMaterialHotReload = autoHotReloadMaterials && !hotReloadMaterialDirs.empty();
+    bool enableAnyHotReload      = enablePyHotReload || enableUiHotReload || enableShaderHotReload || enableMaterialHotReload;
+    bool enableIPC               = mcpServerConfig.enabled || enableAnyHotReload;
     bool needLogBuffer = false;
     void* lpEnvironment = nullptr;
 
@@ -458,6 +464,7 @@ static void launchGameExe(
     mcdk::PyReloadWatcherTask pyReloadTask;
     mcdk::UiReloadWatcherTask uiReloadTask;
     mcdk::ShaderReloadWatcherTask shaderReloadTask;
+    mcdk::MaterialReloadWatcherTask materialReloadTask;
     mcdk::UserStyleProcessor  styleProcessor(0, userConfig);
     pyReloadTask.setHotReloadAction([ipcServer](const nlohmann::json& targetPaths) {
         ipcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
@@ -545,9 +552,54 @@ static void launchGameExe(
             ConsoleColor::Green
         );
     });
+    materialReloadTask.setMaterialHotReloadAction([ipcServer](const nlohmann::json& materialPaths) {
+        if (ipcServer->getClientCount() == 0) {
+            printColoredAtomic(
+                "[HotReload] Material hot reload skipped: IPC is not connected. The player may not be in game.",
+                ConsoleColor::Yellow
+            );
+            return;
+        }
+
+        auto result = mcdk::ipc_code_execution::requestClientCodeReturnValueJson(
+            ipcServer,
+            mcdk::material_reload_support::buildReloadMaterialsPythonCode(materialPaths, true),
+            60000
+        );
+        if (!result.is_object() || !result.value("ok", false)) {
+            if (result.is_object() && result.value("unsupported", false)) {
+                printColoredAtomic(
+                    "[HotReload] Material hot reload is not supported by this MC version. Please update to MC 3.9 or newer.",
+                    ConsoleColor::Yellow
+                );
+                return;
+            }
+            printColoredAtomic(
+                "[HotReload] Material hot reload failed: " + result.dump(),
+                ConsoleColor::Red
+            );
+            return;
+        }
+        const auto attempted = result.value("attempted", 0);
+        const auto reloaded = result.value("reloaded", 0);
+        const auto failed = result.value("failed", nlohmann::json::array());
+        if (!failed.empty()) {
+            printColoredAtomic(
+                "[HotReload] Material hot reload finished with failures: " + result.dump(),
+                ConsoleColor::Yellow
+            );
+            return;
+        }
+        printColoredAtomic(
+            "[HotReload] Material hot reload finished: " + std::to_string(reloaded) + "/"
+                + std::to_string(attempted) + " material file(s) reloaded.",
+            ConsoleColor::Green
+        );
+    });
     pyReloadTask.setOutputCallback(printColoredAtomic);
     uiReloadTask.setOutputCallback(printColoredAtomic);
     shaderReloadTask.setOutputCallback(printColoredAtomic);
+    materialReloadTask.setOutputCallback(printColoredAtomic);
     styleProcessor.setOutputCallback(printColoredAtomic);
 
     std::wstring newEnv;
@@ -738,7 +790,7 @@ static void launchGameExe(
         debuggerAttachToProcess(pid, debuggerPort);
     }
 
-    if ((enablePyHotReload || enableUiHotReload || enableShaderHotReload) && modDirList != nullptr) {
+    if (enableAnyHotReload && modDirList != nullptr) {
         std::cout << "[HotReload] Watchers\n";
         if (modDirList) {
             for (const auto& modDirConfig : *modDirList) {
@@ -771,6 +823,15 @@ static void launchGameExe(
             shaderReloadTask.setModDirs(std::move(hotReloadShaderDirs));
             shaderReloadTask.start();
         }
+
+        if (enableMaterialHotReload && !hotReloadMaterialDirs.empty()) {
+            for (const auto& materialDir : hotReloadMaterialDirs) {
+                std::cout << "  Material " << MCDevTool::Utils::pathToGenericUtf8(materialDir) << "\n";
+            }
+            materialReloadTask.setProcessId(pid);
+            materialReloadTask.setModDirs(std::move(hotReloadMaterialDirs));
+            materialReloadTask.start();
+        }
     }
     styleProcessor.start();
 
@@ -782,6 +843,7 @@ static void launchGameExe(
     pyReloadTask.safeExit();
     uiReloadTask.safeExit();
     shaderReloadTask.safeExit();
+    materialReloadTask.safeExit();
     // 停止IPC服务器 如果已启用
     ipcServer->safeExit();
     // 停止样式处理器
