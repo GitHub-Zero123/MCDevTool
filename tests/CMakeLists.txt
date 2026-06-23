@@ -20,3 +20,8 @@ target_link_libraries(mcp_server_test PRIVATE mcdevtool mcp)
 add_executable(captureTest captureTest.cpp)
 target_compile_features(captureTest PRIVATE cxx_std_23)
 target_link_libraries(captureTest PRIVATE mcdevtool)
+
+# mcdk_core 冒烟测试：验证纯内存 config 启动入口与注入式 logger
+add_executable(core_smoke_test core_smoke_test.cpp)
+target_compile_features(core_smoke_test PRIVATE cxx_std_23)
+target_link_libraries(core_smoke_test PRIVATE mcdk_core)

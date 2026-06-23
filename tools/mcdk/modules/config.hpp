@@ -25,8 +25,8 @@ namespace mcdk {
             exePath = autoExePath.value();
         }
         if (!std::filesystem::is_regular_file(exePath)) {
-            std::cerr << "路径无效，文件不存在。\n";
-            exit(1);
+            // 路径无效时抛出异常，交由上层(如 main)决定如何处理
+            throw std::runtime_error("提供的游戏可执行文件路径无效，文件不存在。");
         }
         nlohmann::json config{
             // 包含的mod目录，支持多个

@@ -10,6 +10,7 @@
 #include <mcdevtool/addon.h>
 
 #include "mod_dir_config.hpp"
+#include "console.hpp"
 #include "utils.hpp"
 
 namespace mcdk {
@@ -86,7 +87,8 @@ namespace mcdk {
     inline void linkUserConfigModDirs(
         std::vector<UserModDirConfig>&           configs,
         std::vector<MCDevTool::Addon::PackInfo>& linkedPacks,
-        bool                                     updateConfigPaths = false
+        bool                                     updateConfigPaths = false,
+        ConsoleOutputCallback                    outputCallback = nullptr
     ) {
         using namespace MCDevTool;
 
@@ -95,16 +97,22 @@ namespace mcdk {
             auto packInfos = linkSourceAddonToRuntimePacks(dir);
             for (auto& info : packInfos) {
                 if (info.type == Addon::PackType::BEHAVIOR) {
-                    std::cout << "  Behavior \"" << info.name << "\"  UUID=" << info.uuid;
-                    if (modConfig.hotReload) {
-                        std::cout << "  Watch=Py";
-                        if (updateConfigPaths) {
-                            modConfig.path = info.path; // 重新更新为link后的路径
+                    if (outputCallback) {
+                        std::string line = "  Behavior \"" + info.name + "\"  UUID=" + info.uuid;
+                        if (modConfig.hotReload) {
+                            line += "  Watch=Py";
+                            if (updateConfigPaths) {
+                                modConfig.path = info.path; // 重新更新为link后的路径
+                            }
                         }
+                        outputCallback(line, ConsoleColor::Default);
+                    } else if (modConfig.hotReload && updateConfigPaths) {
+                        modConfig.path = info.path; // 重新更新为link后的路径
                     }
-                    std::cout << "\n";
                 } else if (info.type == Addon::PackType::RESOURCE) {
-                    std::cout << "  Resource \"" << info.name << "\"  UUID=" << info.uuid << "\n";
+                    if (outputCallback) {
+                        outputCallback("  Resource \"" + info.name + "\"  UUID=" + info.uuid, ConsoleColor::Default);
+                    }
                 }
                 linkedPacks.push_back(std::move(info));
             }
