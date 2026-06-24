@@ -312,16 +312,16 @@ static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const 
 // 启动游戏可执行文件
 static void launchGameExe(
     const std::filesystem::path&                    exePath,
-    std::string_view                                config      = "",
-    const nlohmann::json&                           userConfig  = nlohmann::json::object(),
+    std::string_view                                config,
+    const mcdk::core::LaunchConfig&                 cfg,
     const std::vector<UserModDirConfig>*            modDirList   = nullptr,
     const std::vector<MCDevTool::Addon::PackInfo>*  linkedPacks  = nullptr
 ) {
-    bool autoHotReload          = userConfig.value("auto_hot_reload_mods", true);
-    bool autoHotReloadUi        = userConfig.value("auto_hot_reload_ui", false);
-    bool autoHotReloadShaders   = userConfig.value("auto_hot_reload_shaders", false);
-    bool autoHotReloadMaterials = userConfig.value("auto_hot_reload_materials", false);
-    auto mcpServerConfig      = mcdk::getMcpServerConfigFromJson(userConfig);
+    bool autoHotReload          = cfg.hotReload.mods;
+    bool autoHotReloadUi        = cfg.hotReload.ui;
+    bool autoHotReloadShaders   = cfg.hotReload.shaders;
+    bool autoHotReloadMaterials = cfg.hotReload.materials;
+    mcdk::McpServerConfig mcpServerConfig{cfg.mcpServer.enabled, cfg.mcpServer.serverIp, cfg.mcpServer.serverPort};
     auto hotReloadDirs        = modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList)
                                                       : std::vector<std::filesystem::path>();
     auto hotReloadUiDirs      = autoHotReloadUi && linkedPacks != nullptr
@@ -467,7 +467,7 @@ static void launchGameExe(
     mcdk::UiReloadWatcherTask uiReloadTask;
     mcdk::ShaderReloadWatcherTask shaderReloadTask;
     mcdk::MaterialReloadWatcherTask materialReloadTask;
-    mcdk::UserStyleProcessor  styleProcessor(0, userConfig);
+    mcdk::UserStyleProcessor  styleProcessor(0, cfg.windowStyle);
     pyReloadTask.setHotReloadAction([ipcServer](const nlohmann::json& targetPaths) {
         ipcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
     });
@@ -646,11 +646,9 @@ static void launchGameExe(
     si.hStdError   = errWrite;
     si.hStdInput   = GetStdHandle(STD_INPUT_HANDLE);
 
-    auto neteaseConfig = userConfig.value("netease_config", nlohmann::json::object());
-
     // Build command
     std::string cmd = "\"" + MCDevTool::Utils::pathToUtf8(exePath) + "\"";
-    if (!neteaseConfig.value("chat_extension", false)) {
+    if (!cfg.netease.chatExtension) {
         cmd.append(" chatExtension=false");
     }
 
@@ -660,7 +658,7 @@ static void launchGameExe(
     }
 
     // ptvsd 调试参数（官方调试器接口）
-    auto        ptvsdConfig = mcdk::getPtvsdConfigFromJson(userConfig);
+    auto        ptvsdConfig = mcdk::getPtvsdConfig(cfg.debug.ptvsd);
     std::string ptvsdArgs   = mcdk::buildPtvsdLaunchArgs(ptvsdConfig);
     if (!ptvsdArgs.empty()) {
         cmd.append(" " + ptvsdArgs);
@@ -768,17 +766,13 @@ static void launchGameExe(
 
     // ===================== 用户配置后置处理 =====================
     // 是否过滤非Python输出
-    bool filterPython = userConfig.value("include_debug_mod", true);
+    bool filterPython = cfg.debug.includeDebugMod;
     // 调试器端口（0为不启用）
     int debuggerPort = mcdk::getEnvDebuggerPort();
     if (debuggerPort == 0) {
-        // 解析用户配置覆盖
-        auto debuggerConfig = userConfig.value("modpc_debugger", nlohmann::json::object());
-        if (debuggerConfig.is_object()) {
-            bool debuggerEnabled = debuggerConfig.value("enabled", false);
-            if (debuggerEnabled) {
-                debuggerPort = debuggerConfig.value("port", 5632);
-            }
+        // 环境变量未指定时回落到用户配置
+        if (cfg.debug.modpc.enabled) {
+            debuggerPort = cfg.debug.modpc.port;
         }
     }
 
@@ -869,18 +863,24 @@ static void launchGameExe(
 // ===================== 启动游戏逻辑 =====================
 
 // 启动游戏
-static void startGame(const nlohmann::json& config) {
-    auto gameExePath = std::filesystem::u8path(config.value("game_executable_path", ""));
+static void startGame(const mcdk::core::LaunchConfig& cfg, const mcdk::core::LaunchOptions& options) {
+    auto gameExePath = std::filesystem::u8path(cfg.gameExecutablePath);
     if (!std::filesystem::is_regular_file(gameExePath)) {
         // 游戏exe路径无效 重新搜索新版
         if (mcdk::updateGamePath(gameExePath)) {
             std::cout << "游戏路径无效，重新搜索：" << MCDevTool::Utils::pathToGenericUtf8(gameExePath) << "\n";
-            std::string u8input;
-            std::cout << "是否更新配置文件中的游戏路径？(y/n)：";
-            std::getline(std::cin, u8input);
-            if (u8input == "Y" || u8input == "y") {
-                mcdk::tryUpdateUserGamePath(gameExePath);
-                std::cout << "已更新配置文件中的游戏路径。\n";
+            // 是否回写磁盘配置：交互走 options.prompter（核心模式 nullptr → 直接抛异常，不弹交互）。
+            if (!options.prompter) {
+                throw std::runtime_error(
+                    "游戏路径无效，且未提供交互回调（核心模式请在 LaunchConfig.gameExecutablePath 指定有效路径）。"
+                );
+            }
+            if (options.prompter("是否更新配置文件中的游戏路径？(y/n)：")) {
+                // 仅 ReadWrite 策略允许回写磁盘 .mcdev.json；其余策略只在内存里用搜到的新路径。
+                if (options.configFilePolicy == mcdk::core::ConfigFilePolicy::ReadWrite) {
+                    mcdk::tryUpdateUserGamePath(gameExePath);
+                    std::cout << "已更新配置文件中的游戏路径。\n";
+                }
             } else {
                 throw std::runtime_error("未更新配置文件中的游戏路径，启动终止。");
             }
@@ -895,17 +895,22 @@ static void startGame(const nlohmann::json& config) {
         MCDevTool::cleanRuntimePacks();
     }
 
-    auto modDirConfigs =
-        UserModDirConfig::parseListFromJson(config.value("included_mod_dirs", nlohmann::json::array({"./"})));
+    // included_mod_dirs：强类型 → UserModDirConfig（沿用原 parseListFromJson 的"仅保留 enabled"语义）
+    std::vector<UserModDirConfig> modDirConfigs;
+    for (const auto& d : cfg.includedModDirs) {
+        if (d.enabled) {
+            modDirConfigs.emplace_back(std::filesystem::u8path(d.path), d.hotReload, d.enabled);
+        }
+    }
 
     if (_isSubprocessMode) {
         // 子进程模式 直接启动游戏exe（通常由vsc插件多开使用）
-        launchGameExe(gameExePath, "", config, &modDirConfigs);
+        launchGameExe(gameExePath, "", cfg, &modDirConfigs);
         return;
     }
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
-    if (config.value("include_debug_mod", true)) {
-        auto debugMod = mcdk::registerDebugMod(config, modDirConfigs);
+    if (cfg.debug.includeDebugMod) {
+        auto debugMod = mcdk::registerDebugMod(cfg.debug.options, modDirConfigs);
         std::cout << "[MCDK] Addons\n";
         std::cout << "  Debug    UUID=" << debugMod.uuid << "\n";
         linkedPacks.push_back(std::move(debugMod));
@@ -915,8 +920,8 @@ static void startGame(const nlohmann::json& config) {
         mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks, false, printColoredAtomic);
     }
     // 创建世界
-    auto worldFolderName = config.value("world_folder_name", "MC_DEV_WORLD");
-    auto resetWorld      = config.value("reset_world", false); // 若启用该参数 每次都会强制覆盖世界
+    auto worldFolderName = cfg.world.folderName;
+    auto resetWorld      = cfg.world.reset; // 若启用该参数 每次都会强制覆盖世界
     auto worldsPath      = MCDevTool::getMinecraftWorldsPath() / std::filesystem::u8path(worldFolderName);
     if (!std::filesystem::is_directory(worldsPath) || resetWorld) {
         std::filesystem::remove_all(worldsPath);
@@ -925,14 +930,14 @@ static void startGame(const nlohmann::json& config) {
         }
         std::filesystem::create_directories(worldsPath);
         std::ofstream levelFile(worldsPath / "level.dat", std::ios::binary);
-        auto          levelDat = mcdk::createUserLevel(config);
+        auto          levelDat = mcdk::createUserLevel(cfg);
         levelFile.write(reinterpret_cast<const char*>(levelDat.data()), levelDat.size());
         levelFile.close();
     } else {
         // 更新level.dat的配置数据
         if (mcdk::getEnvIsPluginEnv()) {
             // 插件环境每次启动都要覆盖配置
-            auto levelOptions = mcdk::parseLevelOptionsFromUserConfig(config);
+            auto levelOptions = mcdk::parseLevelOptionsFromUserConfig(cfg);
             MCDevTool::Level::updateLevelDatWorldDataInFile(worldsPath / "level.dat", std::nullopt, levelOptions);
         } else {
             // 非插件环境只更新时间戳
@@ -955,7 +960,7 @@ static void startGame(const nlohmann::json& config) {
         }
     }
 
-    auto autoJoinGame = config.value("auto_join_game", true);
+    auto autoJoinGame = cfg.autoJoinGame;
     auto envAutoJoin  = mcdk::getEnvAutoJoinGameState();
     if (envAutoJoin != -1) {
         // 环境变量覆写配置文件
@@ -981,7 +986,7 @@ static void startGame(const nlohmann::json& config) {
         launchGameExe(
             gameExePath,
             "",
-            config,
+            cfg,
             &modDirConfigs,
             &linkedPacks
         );
@@ -997,25 +1002,19 @@ static void startGame(const nlohmann::json& config) {
          {
              {"urs", ""},
              {"user_id", 0},
-             {"user_name", config.value("user_name", "developer")},
+             {"user_name", cfg.player.name},
          }},
     };
 
     auto defaultSkinPath =
         MCDevTool::Utils::pathToGenericUtf8(gameExePath.parent_path() / "data/skin_packs/vanilla/steve.png");
 
-    if (config.contains("skin_info") && config["skin_info"].is_object()) {
-        // 用户自定义skin_info
-        devConfig["skin_info"] = config["skin_info"];
-        auto& skinInfo         = devConfig["skin_info"];
-        // 自动生成缺失字段
-        if (!skinInfo.contains("slim")) {
-            skinInfo["slim"] = false;
-        }
-        std::string skinPath = skinInfo.value("skin", "");
+    if (cfg.player.skin.has_value()) {
+        // 用户自定义skin_info（强类型 SkinInfo；skin 留空时回填默认 vanilla steve）
+        const auto& sk       = *cfg.player.skin;
+        std::string skinPath = sk.skin;
         if (skinPath.empty()) {
-            skinInfo["skin"] = defaultSkinPath;
-            skinPath         = std::move(defaultSkinPath);
+            skinPath = std::move(defaultSkinPath);
         }
         // 安全校验 检查文件是否存在
         if (!skinPath.empty()) {
@@ -1024,6 +1023,7 @@ static void startGame(const nlohmann::json& config) {
                 throw std::runtime_error("自定义皮肤文件不存在：" + skinPath);
             }
         }
+        devConfig["skin_info"] = {{"slim", sk.slim}, {"skin", std::move(skinPath)}};
     } else {
         // 自动生成skin_info
         devConfig["skin_info"] = {{"slim", false}, {"skin", std::move(defaultSkinPath)}};
@@ -1034,7 +1034,7 @@ static void startGame(const nlohmann::json& config) {
     launchGameExe(
         gameExePath,
         MCDevTool::Utils::pathToGenericUtf8(configPath),
-        config,
+        cfg,
         &modDirConfigs,
         &linkedPacks
     );
@@ -1079,6 +1079,6 @@ int mcdk::core::Launcher::run(mcdk::core::LaunchOptions options) {
         ~LoggerGuard() { slot = prev; }
     } guard{g_injectedLogger, prevLogger};
 
-    startGame(options.config);
+    startGame(options.config, options);
     return 0;
 }

@@ -4,42 +4,39 @@
 #include <cstdint>
 #include <nlohmann/json.hpp>
 #include <mcdevtool/level.h>
+#include <mcdk_core/launch_config.h>
 
 namespace mcdk {
 
-    // 基于用户config生成LevelOptions数据
-    inline MCDevTool::Level::LevelOptions parseLevelOptionsFromUserConfig(const nlohmann::json& config) {
+    // 基于强类型 LaunchConfig 生成 LevelOptions（v2：原吃 const nlohmann::json& 已改为强类型嵌套 world 组）
+    inline MCDevTool::Level::LevelOptions parseLevelOptionsFromUserConfig(const mcdk::core::LaunchConfig& config) {
+        const auto& world = config.world;
         MCDevTool::Level::LevelOptions options;
-        options.worldType = static_cast<uint32_t>(config.value("world_type", 1));
-        options.gameMode  = static_cast<uint32_t>(config.value("game_mode", 1));
-        if (config.contains("world_seed") && !config["world_seed"].is_null()) {
-            options.seed = config["world_seed"].get<uint64_t>();
+        options.worldType = static_cast<uint32_t>(world.type);
+        options.gameMode  = static_cast<uint32_t>(world.gameMode);
+        if (world.seed.has_value()) {
+            options.seed = world.seed.value();
         }
-        options.enableCheats    = config.value("enable_cheats", true);
-        options.keepInventory   = config.value("keep_inventory", true);
-        options.doWeatherCycle  = config.value("do_weather_cycle", true);
-        options.doDaylightCycle = config.value("do_daylight_cycle", true);
-        // 处理实验性选项
-        MCDevTool::Level::ExperimentsOptions expOptions;
-        // 检查存在experiment_options字段
-        if (config.contains("experiment_options")) {
-            auto experimentOptions = config["experiment_options"];
-            // 实验性玩法参数处理
-            if (experimentOptions.is_object()) {
-                expOptions.enable                     = true;
-                expOptions.dataDrivenBiomes           = experimentOptions.value("data_driven_biomes", false);
-                expOptions.dataDrivenItems            = experimentOptions.value("data_driven_items", false);
-                expOptions.experimentalMolangFeatures = experimentOptions.value("experimental_molang_features", false);
-                options.experimentsOptions            = expOptions;
-            }
+        options.enableCheats    = world.enableCheats;
+        options.keepInventory   = world.keepInventory;
+        options.doWeatherCycle  = world.doWeatherCycle;
+        options.doDaylightCycle = world.doDaylightCycle;
+        // 实验性玩法：存在 experiment_options 即启用（存在性即语义，对应原 contains+is_object 判定）
+        if (world.experiments.has_value()) {
+            MCDevTool::Level::ExperimentsOptions expOptions;
+            expOptions.enable                     = true;
+            expOptions.dataDrivenBiomes           = world.experiments->dataDrivenBiomes;
+            expOptions.dataDrivenItems            = world.experiments->dataDrivenItems;
+            expOptions.experimentalMolangFeatures = world.experiments->experimentalMolangFeatures;
+            options.experimentsOptions            = expOptions;
         }
         return options;
     }
 
-    // 根据用户config创建level.dat
-    inline std::vector<uint8_t> createUserLevel(const nlohmann::json& config) {
+    // 根据强类型 LaunchConfig 创建 level.dat
+    inline std::vector<uint8_t> createUserLevel(const mcdk::core::LaunchConfig& config) {
         auto        options   = parseLevelOptionsFromUserConfig(config);
-        std::string worldName = config.value("world_name", "MC_DEV_WORLD");
+        std::string worldName = config.world.name;
         auto        levelDat  = MCDevTool::Level::createDefaultLevelDat(worldName, options);
         return levelDat;
     }

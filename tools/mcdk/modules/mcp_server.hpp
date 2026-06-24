@@ -57,24 +57,14 @@ namespace mcdk {
         }
     }
 
-    // MCP服务器配置结构
+    // MCP服务器配置结构（运行时消费类型）。
+    // v2：原 getMcpServerConfigFromJson(json) 已删除——核心模式由 core.cpp 直接从
+    // 强类型 LaunchConfig::McpServer 构造本结构，不再经过 json 解析。
     struct McpServerConfig {
         bool        enabled    = false;
         std::string serverIp   = "localhost";
         int         serverPort = 19133;
     };
-
-    // 从JSON获取MCP服务器配置
-    inline McpServerConfig getMcpServerConfigFromJson(const nlohmann::json& userConfig) {
-        McpServerConfig config;
-        auto            mcpJson = userConfig.value("mcp_server_config", nlohmann::json::object());
-        if (mcpJson.is_object()) {
-            config.enabled    = mcpJson.value("enabled", false);
-            config.serverIp   = mcpJson.value("server_ip", "localhost");
-            config.serverPort = mcpJson.value("server_port", 19133);
-        }
-        return config;
-    }
 
     // 专为MCBE设计的MCP服务器
     class MCPServer {

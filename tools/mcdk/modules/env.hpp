@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <mcdk_core/launch_config.h>
 
 
 namespace mcdk {
@@ -152,24 +153,19 @@ namespace mcdk {
         return config;
     }
 
-    // 从用户配置 JSON 获取 ptvsd 配置
-    inline PtvsdConfig getPtvsdConfigFromJson(const nlohmann::json& userConfig) {
-        PtvsdConfig config;
-
+    // 从强类型 LaunchConfig::PtvsdDebugger 解析 ptvsd 运行配置（v2：原吃 json 已改为强类型）。
+    // 环境变量 MCDEV_PTVSD_IP/PORT 优先级高于 LaunchConfig（保持原行为）。
+    inline PtvsdConfig getPtvsdConfig(const mcdk::core::LaunchConfig::PtvsdDebugger& cfgPtvsd) {
         // 首先检查环境变量（优先级更高）
-        config = getEnvPtvsdConfig();
+        PtvsdConfig config = getEnvPtvsdConfig();
         if (config.enabled) {
             return config;
         }
 
-        // 从用户配置读取
-        auto ptvsdJson = userConfig.value("ptvsd_debugger", nlohmann::json::object());
-        if (ptvsdJson.is_object()) {
-            config.enabled = ptvsdJson.value("enabled", false);
-            config.ip      = ptvsdJson.value("ip", "localhost");
-            config.port    = ptvsdJson.value("port", 56788);
-        }
-
+        // 回落到用户配置
+        config.enabled = cfgPtvsd.enabled;
+        config.ip      = cfgPtvsd.ip;
+        config.port    = cfgPtvsd.port;
         return config;
     }
 

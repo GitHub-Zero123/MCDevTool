@@ -16,8 +16,10 @@
 namespace mcdk {
 
     // 注册调试MOD
+    // v2：原吃整个 const nlohmann::json& config（内部只取 debug_options 段），
+    // 改为直接吃 debug_options 这一段自由透传 json（缺省/非对象按空 {} 处理）。
     inline MCDevTool::Addon::PackInfo registerDebugMod(
-        const nlohmann::json&                config,
+        const nlohmann::json&                debugOptions,
         const std::vector<UserModDirConfig>& modDirConfigs,
         std::filesystem::path*               outConfigFile = nullptr
     ) {
@@ -46,11 +48,9 @@ namespace mcdk {
             std::filesystem::remove_all(target);
         }
 
-        // 处理debug_options参数
-        auto configDebugOptions = config.value("debug_options", nlohmann::json::object());
-
-        // 生成格式化的字面量json
-        auto DEBUG_OPTIONS = configDebugOptions.dump();
+        // 处理debug_options参数。等价原 config.value("debug_options", object()).dump()：
+        // 键缺失（在强类型模型里表现为 null 哨兵）→ "{}"；存在则原样 dump（不论类型）。
+        auto DEBUG_OPTIONS = (debugOptions.is_null() ? nlohmann::json::object() : debugOptions).dump();
 
         // 替换为python boolean格式
         stringReplace(DEBUG_OPTIONS, "true", "True");

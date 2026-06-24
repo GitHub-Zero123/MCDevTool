@@ -51,6 +51,7 @@ option(MCDK_CORE_ENABLE_MOD_RESOURCE "Enable embedded debug mod resource in mcdk
 
 add_library(mcdk_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/launch_config.cpp
 )
 target_compile_features(mcdk_core PUBLIC cxx_std_23)
 target_compile_definitions(mcdk_core PRIVATE _CRT_SECURE_NO_WARNINGS)
