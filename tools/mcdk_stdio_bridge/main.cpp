@@ -144,6 +144,10 @@ namespace {
         return json{{"jsonrpc", "2.0"}, {"id", id}, {"result", result}};
     }
 
+    std::string dumpJsonReplacingInvalidUtf8(const json& value) {
+        return value.dump(-1, ' ', false, json::error_handler_t::replace);
+    }
+
     class StdioTransport {
     public:
         std::optional<json> readMessage() {
@@ -199,7 +203,7 @@ namespace {
 
         void writeMessage(const json& message) {
             std::lock_guard<std::mutex> lock(writeMutex_);
-            std::cout << message.dump() << '\n';
+            std::cout << dumpJsonReplacingInvalidUtf8(message) << '\n';
             std::cout.flush();
         }
 
@@ -233,10 +237,14 @@ namespace {
 
             if (response.contains("error")) {
                 const auto& err = response["error"];
-                return makeToolErrorResult("MCDK game MCP returned an error: " + err.value("message", response.dump()));
+                return makeToolErrorResult(
+                    "MCDK game MCP returned an error: " + err.value("message", dumpJsonReplacingInvalidUtf8(response))
+                );
             }
             if (!response.contains("result")) {
-                return makeToolErrorResult("MCDK game MCP returned an invalid response: " + response.dump());
+                return makeToolErrorResult(
+                    "MCDK game MCP returned an invalid response: " + dumpJsonReplacingInvalidUtf8(response)
+                );
             }
             return response["result"];
         }
