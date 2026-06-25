@@ -10,6 +10,11 @@
 
 namespace mcp {
 
+    namespace {
+        std::string dump_json_replacing_invalid_utf8(const json& value) {
+            return value.dump(-1, ' ', false, json::error_handler_t::replace);
+        }
+    }
 
     server::server(const server::configuration& conf)
     : host_(conf.host),
@@ -704,7 +709,7 @@ namespace mcp {
 
             // Send response via SSE
             std::stringstream ss;
-            ss << "event: message\r\ndata: " << response_json.dump() << "\r\n\r\n";
+            ss << "event: message\r\ndata: " << dump_json_replacing_invalid_utf8(response_json) << "\r\n\r\n";
             bool result = dispatcher->send_event(ss.str());
 
             if (!result) {
@@ -875,7 +880,7 @@ namespace mcp {
 
         // Send message
         std::stringstream ss;
-        ss << "event: message\r\ndata: " << message.dump() << "\r\n\r\n";
+        ss << "event: message\r\ndata: " << dump_json_replacing_invalid_utf8(message) << "\r\n\r\n";
         bool result = dispatcher->send_event(ss.str());
 
         if (!result) {
@@ -1050,7 +1055,7 @@ namespace mcp {
                 return;
             }
             res.status = 200;
-            res.set_content(batch_result.dump(), "application/json");
+            res.set_content(dump_json_replacing_invalid_utf8(batch_result), "application/json");
             return;
         }
 
@@ -1097,7 +1102,7 @@ namespace mcp {
                 json err =
                     response::create_error(mcp_req.id, error_code::invalid_request, "Missing Mcp-Session-Id header")
                         .to_json();
-                res.set_content(err.dump(), "application/json");
+                res.set_content(dump_json_replacing_invalid_utf8(err), "application/json");
                 return;
             }
 
@@ -1110,7 +1115,7 @@ namespace mcp {
                     res.status = 404;
                     json err =
                         response::create_error(mcp_req.id, error_code::invalid_request, "Session not found").to_json();
-                    res.set_content(err.dump(), "application/json");
+                    res.set_content(dump_json_replacing_invalid_utf8(err), "application/json");
                     return;
                 }
                 dispatcher = it->second;
@@ -1134,7 +1139,7 @@ namespace mcp {
         }
 
         res.status = 200;
-        res.set_content(response_json.dump(), "application/json");
+        res.set_content(dump_json_replacing_invalid_utf8(response_json), "application/json");
     }
 
     void server::handle_streamable_get(const httplib::Request& req, httplib::Response& res) {
