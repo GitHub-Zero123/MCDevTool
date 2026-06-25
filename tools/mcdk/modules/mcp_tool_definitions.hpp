@@ -2,6 +2,7 @@
 
 #include <mcp_tool.h>
 #include "jsonui_debugger.hpp"
+#include "game_agent.hpp"
 
 namespace mcdk::mcp_tool_definitions {
 
@@ -142,6 +143,14 @@ Parameters:
             .build();
     }
 
+    inline mcp::tool buildGameAgentTool() {
+        return mcp::tool_builder(game_agent::ToolName)
+            .with_description(game_agent::ToolDescription)
+            .with_string_param("cmd", "Command string. Use /help to list commands and usage.", true)
+            .with_read_only_hint(false)
+            .build();
+    }
+
     inline std::vector<mcp::tool> buildAllTools() {
         return {
             buildGetLatestLogsTool(),
@@ -149,6 +158,7 @@ Parameters:
             buildGetLatestErrorLogsTool(),
             buildExecuteCodeTool(),
             buildJsonUiDebuggerTool(),
+            buildGameAgentTool(),
             buildReloadGameTool(),
             buildCaptureGameWindowTool(),
             buildClickGameWindowTool(),

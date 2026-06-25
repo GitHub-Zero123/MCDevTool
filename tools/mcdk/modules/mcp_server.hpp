@@ -12,6 +12,7 @@
 #include "./mcp_tool_definitions.hpp"
 #include "./jsonui_debugger.hpp"
 #include "./jsonui_reload_support.hpp"
+#include "./game_agent.hpp"
 #include <nlohmann/json.hpp>
 #include <mcp_server.h>
 #include <base64.hpp>
@@ -431,6 +432,58 @@ namespace mcdk {
         }
 
         // 初始化游戏相关工具
+        void initGameAgentTool() {
+            mcp::tool agentTool = mcp_tool_definitions::buildGameAgentTool();
+
+            server->register_tool(
+                agentTool,
+                [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
+                    const std::string cmd = params.value("cmd", "/help");
+                    if (cmd.empty() || cmd.rfind("/help", 0) == 0) {
+                        const auto out = nlohmann::json{
+                            {"ok", true},
+                            {"data", {{"help", game_agent::localHelpText()}}}
+                        };
+                        return nlohmann::json{
+                            {"isError", false},
+                            {"content", nlohmann::json::array({{{"type", "text"}, {"text", out.dump(2)}}})}
+                        };
+                    }
+
+                    if (!codeExecuteHandler) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content",
+                             nlohmann::json::array({{{"type", "text"}, {"text", "Code execution handler not set"}}})}
+                        };
+                    }
+
+                    auto raw = codeExecuteHandler(game_agent::buildPythonCode(cmd), true, true);
+                    if (raw.value("isError", false)) {
+                        return raw;
+                    }
+
+                    std::string text;
+                    if (raw.contains("content") && raw["content"].is_array() && !raw["content"].empty()) {
+                        const auto& first = raw["content"][0];
+                        if (first.is_object()) {
+                            text = first.value("text", "");
+                        }
+                    }
+                    if (text.empty()) {
+                        text = raw.dump();
+                    }
+
+                    auto parsed = jsonui_debugger::parseFirstJsonFromDirtyText(text);
+                    const bool isError = !parsed.is_object() || !parsed.value("ok", false);
+                    return nlohmann::json{
+                        {"isError", isError},
+                        {"content", nlohmann::json::array({{{"type", "text"}, {"text", parsed.dump(2)}}})}
+                    };
+                }
+            );
+        }
+
         void initGameTools() {
             // 提供重新加载游戏的工具
             mcp::tool reloadGameTool = mcp_tool_definitions::buildReloadGameTool();
@@ -576,6 +629,7 @@ namespace mcdk {
             initLogTool();
             initCodeExecutionTool();
             initJsonUiDebuggerTool();
+            initGameAgentTool();
             initGameTools();
             initGameWindowTools();
         }
