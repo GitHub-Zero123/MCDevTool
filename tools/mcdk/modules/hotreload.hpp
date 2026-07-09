@@ -34,6 +34,24 @@ namespace mcdk {
             output(ConsoleColor::Yellow, "[HotReload] Detected change in: " + std::string(u8Path.begin(), u8Path.end()));
         }
 
+        // JSON 语法校验，异常时打印诊断信息并跳过本次热更新
+        bool isValidHotReloadJsonFile(
+            const std::filesystem::path& filePath,
+            const std::string&           invalidTitle,
+            const std::string&           unreadablePrefix
+        ) const {
+            auto diagnostic = json_diagnostics::validateJsonFileWithComments(filePath, invalidTitle);
+            if (diagnostic.ok || diagnostic.empty) {
+                return true;
+            }
+            if (!diagnostic.readable) {
+                output(ConsoleColor::Yellow, unreadablePrefix + diagnostic.message + " " + diagnostic.path);
+                return false;
+            }
+            output(ConsoleColor::Yellow, diagnostic.formatted);
+            return false;
+        }
+
     private:
         ConsoleOutputCallback mOutputCallback;
     };
@@ -152,10 +170,15 @@ namespace mcdk {
         }
 
         bool shouldWatchFile(const std::filesystem::path& filePath) const override {
-            return isUiJsonPath(filePath);
+            return filePath.extension().string() == ".json";
         }
 
         void onFileChanged(const std::filesystem::path& filePath) override {
+            // 校验放在防抖之后，避免同一次保存的多条通知重复输出 JSON 诊断
+            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
+            if (!isValidJsonFile(absPath)) {
+                return;
+            }
             outputChangedPath(filePath);
             std::lock_guard<std::mutex> lock(mMutex);
             mDirty = true;
@@ -177,31 +200,11 @@ namespace mcdk {
 
     private:
         bool isValidJsonFile(const std::filesystem::path& filePath) const {
-            auto diagnostic = json_diagnostics::validateJsonFileWithComments(
+            return isValidHotReloadJsonFile(
                 filePath,
-                "[HotReload] warning: invalid JSON; UI hot reload skipped"
+                "[HotReload] warning: invalid JSON; UI hot reload skipped",
+                "[HotReload] warning: UI json hot reload skipped: "
             );
-            if (diagnostic.ok || diagnostic.empty) {
-                return true;
-            }
-            if (!diagnostic.readable) {
-                output(
-                    ConsoleColor::Yellow,
-                    "[HotReload] warning: UI json hot reload skipped: " + diagnostic.message + " "
-                        + diagnostic.path
-                );
-                return false;
-            }
-            output(ConsoleColor::Yellow, diagnostic.formatted);
-            return false;
-        }
-
-        bool isUiJsonPath(const std::filesystem::path& filePath) const {
-            if (filePath.extension().string() != ".json") {
-                return false;
-            }
-            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
-            return isValidJsonFile(absPath);
         }
 
         UiHotReloadAction                         mUiHotReloadAction;
@@ -209,67 +212,83 @@ namespace mcdk {
         bool                                      mDirty = false;
     };
 
-    class ShaderReloadWatcherTask : public ConsoleWatcherTask {
+    // 增量热更新任务基类：缓存变更文件相对于监听根目录的重载名，触发时一次性提交
+    class IncrementalReloadWatcherTask : public ConsoleWatcherTask {
     public:
-        using ShaderHotReloadAction = std::function<void(const nlohmann::json&)>;
+        using ReloadAction = std::function<void(const nlohmann::json&)>;
         using ConsoleWatcherTask::ConsoleWatcherTask;
 
-        void setShaderHotReloadAction(ShaderHotReloadAction action) { mShaderHotReloadAction = std::move(action); }
-
-        void setModDirs(std::vector<std::filesystem::path>&& shaderDirs) {
-            mShaderDirs.clear();
-            for (const auto& dir : shaderDirs) {
-                mShaderDirs.push_back(std::filesystem::absolute(dir).lexically_normal());
+        void setModDirs(std::vector<std::filesystem::path>&& rootDirs) {
+            mRootDirs.clear();
+            for (const auto& dir : rootDirs) {
+                mRootDirs.push_back(std::filesystem::absolute(dir).lexically_normal());
             }
-            MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(shaderDirs));
+            MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(rootDirs));
         }
 
-        bool shouldWatchFile(const std::filesystem::path& filePath) const override {
+        void onFileChanged(const std::filesystem::path& filePath) override {
             const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
+            // 内容校验放在此处而非 shouldWatchFile：谓词会被同一次保存的多条通知重复调用，
+            // 而 onFileChanged 已经过防抖，每次真实变更只会执行一次
+            if (!acceptChangedFile(absPath)) {
+                return;
+            }
+            outputChangedPath(filePath);
+            auto reloadName = pathToReloadName(absPath);
+            if (reloadName.empty()) {
+                return;
+            }
+            std::lock_guard<std::mutex> lock(mMutex);
+            mCachedReloadNames.insert(std::move(reloadName));
+        }
+
+        void onHotReloadTriggered() override {
+            nlohmann::json reloadNames = nlohmann::json::array();
+            {
+                std::lock_guard<std::mutex> lock(mMutex);
+                for (const auto& reloadName : mCachedReloadNames) {
+                    reloadNames.push_back(reloadName);
+                }
+                mCachedReloadNames.clear();
+            }
+            if (reloadNames.empty()) {
+                return;
+            }
+            output(ConsoleColor::Yellow, triggeredMessage());
+            if (mReloadAction) {
+                mReloadAction(reloadNames);
+            }
+        }
+
+    protected:
+        void setReloadAction(ReloadAction action) { mReloadAction = std::move(action); }
+
+        // 变更文件的内容准入检查（已在防抖之后），可在此输出诊断
+        virtual bool acceptChangedFile(const std::filesystem::path& absPath) const { return true; }
+
+        // 重载名前缀，例如 material 为 "materials/"；shader 无前缀
+        virtual std::string reloadNamePrefix() const { return {}; }
+
+        // 触发热更新时打印的提示
+        virtual std::string triggeredMessage() const = 0;
+
+        bool isRegularFile(const std::filesystem::path& absPath) const {
             std::error_code ec;
             return std::filesystem::is_regular_file(absPath, ec);
         }
 
-        void onFileChanged(const std::filesystem::path& filePath) override {
-            outputChangedPath(filePath);
-            auto shaderName = shaderPathToReloadName(filePath);
-            if (shaderName.empty()) {
-                return;
-            }
-            std::lock_guard<std::mutex> lock(mMutex);
-            mCachedShaderNames.insert(std::move(shaderName));
-        }
-
-        void onHotReloadTriggered() override {
-            nlohmann::json shaderNames = nlohmann::json::array();
-            {
-                std::lock_guard<std::mutex> lock(mMutex);
-                for (const auto& shaderName : mCachedShaderNames) {
-                    shaderNames.push_back(shaderName);
-                }
-                mCachedShaderNames.clear();
-            }
-            if (shaderNames.empty()) {
-                return;
-            }
-            output(ConsoleColor::Yellow, "[HotReload] Detected shader changes; triggering shader hot reload.");
-            if (mShaderHotReloadAction) {
-                mShaderHotReloadAction(shaderNames);
-            }
-        }
-
     private:
-        std::string shaderPathToReloadName(const std::filesystem::path& filePath) const {
+        std::string pathToReloadName(const std::filesystem::path& filePath) const {
             const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
-            for (const auto& shaderDir : mShaderDirs) {
-                if (!isPathInsideDir(absPath, shaderDir)) {
+            for (const auto& rootDir : mRootDirs) {
+                if (!isPathInsideDir(absPath, rootDir)) {
                     continue;
                 }
-                auto relPath = std::filesystem::relative(absPath, shaderDir);
+                auto relPath = std::filesystem::relative(absPath, rootDir);
                 if (relPath.empty() || relPath == ".") {
                     return {};
                 }
-                return MCDevTool::Utils::pathToGenericUtf8(relPath);
+                return reloadNamePrefix() + MCDevTool::Utils::pathToGenericUtf8(relPath);
             }
             return {};
         }
@@ -285,117 +304,84 @@ namespace mcdk {
             return true;
         }
 
-        ShaderHotReloadAction                    mShaderHotReloadAction;
-        std::vector<std::filesystem::path>       mShaderDirs;
-        std::unordered_set<std::string>          mCachedShaderNames;
+        ReloadAction                             mReloadAction;
+        std::vector<std::filesystem::path>       mRootDirs;
+        std::unordered_set<std::string>          mCachedReloadNames;
         mutable std::mutex                       mMutex;
     };
 
-    class MaterialReloadWatcherTask : public ConsoleWatcherTask {
+    class ShaderReloadWatcherTask : public IncrementalReloadWatcherTask {
     public:
-        using MaterialHotReloadAction = std::function<void(const nlohmann::json&)>;
-        using ConsoleWatcherTask::ConsoleWatcherTask;
+        using ShaderHotReloadAction = std::function<void(const nlohmann::json&)>;
+        using IncrementalReloadWatcherTask::IncrementalReloadWatcherTask;
 
-        void setMaterialHotReloadAction(MaterialHotReloadAction action) {
-            mMaterialHotReloadAction = std::move(action);
-        }
-
-        void setModDirs(std::vector<std::filesystem::path>&& materialDirs) {
-            mMaterialDirs.clear();
-            for (const auto& dir : materialDirs) {
-                mMaterialDirs.push_back(std::filesystem::absolute(dir).lexically_normal());
-            }
-            MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(materialDirs));
-        }
+        void setShaderHotReloadAction(ShaderHotReloadAction action) { setReloadAction(std::move(action)); }
 
         bool shouldWatchFile(const std::filesystem::path& filePath) const override {
-            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
-            std::error_code ec;
-            if (!std::filesystem::is_regular_file(absPath, ec)) {
-                return false;
-            }
-            return isValidMaterialJsonFile(absPath);
+            return isRegularFile(std::filesystem::absolute(filePath).lexically_normal());
         }
 
-        void onFileChanged(const std::filesystem::path& filePath) override {
-            outputChangedPath(filePath);
-            auto materialPath = materialPathToReloadName(filePath);
-            if (materialPath.empty()) {
-                return;
-            }
-            std::lock_guard<std::mutex> lock(mMutex);
-            mCachedMaterialPaths.insert(std::move(materialPath));
+    protected:
+        std::string triggeredMessage() const override {
+            return "[HotReload] Detected shader changes; triggering shader hot reload.";
+        }
+    };
+
+    class MaterialReloadWatcherTask : public IncrementalReloadWatcherTask {
+    public:
+        using MaterialHotReloadAction = std::function<void(const nlohmann::json&)>;
+        using IncrementalReloadWatcherTask::IncrementalReloadWatcherTask;
+
+        void setMaterialHotReloadAction(MaterialHotReloadAction action) { setReloadAction(std::move(action)); }
+
+        bool shouldWatchFile(const std::filesystem::path& filePath) const override {
+            return isRegularFile(std::filesystem::absolute(filePath).lexically_normal());
         }
 
-        void onHotReloadTriggered() override {
-            nlohmann::json materialPaths = nlohmann::json::array();
-            {
-                std::lock_guard<std::mutex> lock(mMutex);
-                for (const auto& materialPath : mCachedMaterialPaths) {
-                    materialPaths.push_back(materialPath);
-                }
-                mCachedMaterialPaths.clear();
-            }
-            if (materialPaths.empty()) {
-                return;
-            }
-            output(ConsoleColor::Yellow, "[HotReload] Detected material changes; triggering material hot reload.");
-            if (mMaterialHotReloadAction) {
-                mMaterialHotReloadAction(materialPaths);
-            }
-        }
-
-    private:
-        bool isValidMaterialJsonFile(const std::filesystem::path& filePath) const {
-            auto diagnostic = json_diagnostics::validateJsonFileWithComments(
-                filePath,
-                "[HotReload] warning: invalid Material JSON; material hot reload skipped"
+    protected:
+        bool acceptChangedFile(const std::filesystem::path& absPath) const override {
+            return isValidHotReloadJsonFile(
+                absPath,
+                "[HotReload] warning: invalid Material JSON; material hot reload skipped",
+                "[HotReload] warning: material hot reload skipped: "
             );
-            if (diagnostic.ok || diagnostic.empty) {
-                return true;
-            }
-            if (!diagnostic.readable) {
-                output(
-                    ConsoleColor::Yellow,
-                    "[HotReload] warning: material hot reload skipped: " + diagnostic.message + " "
-                        + diagnostic.path
-                );
+        }
+
+        std::string reloadNamePrefix() const override { return "materials/"; }
+
+        std::string triggeredMessage() const override {
+            return "[HotReload] Detected material changes; triggering material hot reload.";
+        }
+    };
+
+    class ParticleReloadWatcherTask : public IncrementalReloadWatcherTask {
+    public:
+        using ParticleHotReloadAction = std::function<void(const nlohmann::json&)>;
+        using IncrementalReloadWatcherTask::IncrementalReloadWatcherTask;
+
+        void setParticleHotReloadAction(ParticleHotReloadAction action) { setReloadAction(std::move(action)); }
+
+        bool shouldWatchFile(const std::filesystem::path& filePath) const override {
+            if (filePath.extension().string() != ".json") {
                 return false;
             }
-            output(ConsoleColor::Yellow, diagnostic.formatted);
-            return false;
+            return isRegularFile(std::filesystem::absolute(filePath).lexically_normal());
         }
 
-        std::string materialPathToReloadName(const std::filesystem::path& filePath) const {
-            const auto absPath = std::filesystem::absolute(filePath).lexically_normal();
-            for (const auto& materialDir : mMaterialDirs) {
-                if (!isPathInsideDir(absPath, materialDir)) {
-                    continue;
-                }
-                auto relPath = std::filesystem::relative(absPath, materialDir);
-                if (relPath.empty() || relPath == ".") {
-                    return {};
-                }
-                return "materials/" + MCDevTool::Utils::pathToGenericUtf8(relPath);
-            }
-            return {};
+    protected:
+        bool acceptChangedFile(const std::filesystem::path& absPath) const override {
+            return isValidHotReloadJsonFile(
+                absPath,
+                "[HotReload] warning: invalid Particle JSON; particle hot reload skipped",
+                "[HotReload] warning: particle hot reload skipped: "
+            );
         }
 
-        static bool isPathInsideDir(const std::filesystem::path& child, const std::filesystem::path& parent) {
-            auto childIt  = child.begin();
-            auto parentIt = parent.begin();
-            for (; parentIt != parent.end(); ++parentIt, ++childIt) {
-                if (childIt == child.end() || *childIt != *parentIt) {
-                    return false;
-                }
-            }
-            return true;
-        }
+        std::string reloadNamePrefix() const override { return "particles/"; }
 
-        MaterialHotReloadAction                  mMaterialHotReloadAction;
-        std::vector<std::filesystem::path>       mMaterialDirs;
-        std::unordered_set<std::string>          mCachedMaterialPaths;
-        mutable std::mutex                       mMutex;
+        std::string triggeredMessage() const override {
+            return "[HotReload] Detected particle changes; triggering particle hot reload.";
+        }
     };
 
 } // namespace mcdk

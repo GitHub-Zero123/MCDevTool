@@ -34,6 +34,7 @@
 #include "modules/ipc_code_execution.hpp"
 #include "modules/shader_reload_support.hpp"
 #include "modules/material_reload_support.hpp"
+#include "modules/particle_reload_support.hpp"
 
 
 // mcdevtool api
@@ -301,6 +302,7 @@ static void launchGameExe(
     bool autoHotReloadUi        = userConfig.value("auto_hot_reload_ui", false);
     bool autoHotReloadShaders   = userConfig.value("auto_hot_reload_shaders", false);
     bool autoHotReloadMaterials = userConfig.value("auto_hot_reload_materials", false);
+    bool autoHotReloadParticles = userConfig.value("auto_hot_reload_particles", false);
     auto mcpServerConfig      = mcdk::getMcpServerConfigFromJson(userConfig);
     auto hotReloadDirs        = modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList)
                                                       : std::vector<std::filesystem::path>();
@@ -313,11 +315,16 @@ static void launchGameExe(
     auto hotReloadMaterialDirs = autoHotReloadMaterials && linkedPacks != nullptr
                                      ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "materials")
                                      : std::vector<std::filesystem::path>();
+    auto hotReloadParticleDirs = autoHotReloadParticles && linkedPacks != nullptr
+                                     ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "particles")
+                                     : std::vector<std::filesystem::path>();
     bool enablePyHotReload       = autoHotReload && !hotReloadDirs.empty();
     bool enableUiHotReload       = autoHotReloadUi && !hotReloadUiDirs.empty();
     bool enableShaderHotReload   = autoHotReloadShaders && !hotReloadShaderDirs.empty();
     bool enableMaterialHotReload = autoHotReloadMaterials && !hotReloadMaterialDirs.empty();
-    bool enableAnyHotReload      = enablePyHotReload || enableUiHotReload || enableShaderHotReload || enableMaterialHotReload;
+    bool enableParticleHotReload = autoHotReloadParticles && !hotReloadParticleDirs.empty();
+    bool enableAnyHotReload      = enablePyHotReload || enableUiHotReload || enableShaderHotReload
+                                || enableMaterialHotReload || enableParticleHotReload;
     bool enableIPC               = mcpServerConfig.enabled || enableAnyHotReload;
     bool needLogBuffer = false;
     void* lpEnvironment = nullptr;
@@ -447,6 +454,7 @@ static void launchGameExe(
     mcdk::UiReloadWatcherTask uiReloadTask;
     mcdk::ShaderReloadWatcherTask shaderReloadTask;
     mcdk::MaterialReloadWatcherTask materialReloadTask;
+    mcdk::ParticleReloadWatcherTask particleReloadTask;
     mcdk::UserStyleProcessor  styleProcessor(0, userConfig);
     pyReloadTask.setHotReloadAction([ipcServer](const nlohmann::json& targetPaths) {
         ipcServer->sendMessage(2, targetPaths.dump()); // FAST RELOAD
@@ -578,10 +586,55 @@ static void launchGameExe(
             ConsoleColor::Green
         );
     });
+    particleReloadTask.setParticleHotReloadAction([ipcServer](const nlohmann::json& particlePaths) {
+        if (ipcServer->getClientCount() == 0) {
+            printColoredAtomic(
+                "[HotReload] Particle hot reload skipped: IPC is not connected. The player may not be in game.",
+                ConsoleColor::Yellow
+            );
+            return;
+        }
+
+        auto result = mcdk::ipc_code_execution::requestClientCodeReturnValueJson(
+            ipcServer,
+            mcdk::particle_reload_support::buildReloadParticlesPythonCode(particlePaths),
+            60000
+        );
+        if (!result.is_object() || !result.value("ok", false)) {
+            if (result.is_object() && result.value("unsupported", false)) {
+                printColoredAtomic(
+                    "[HotReload] Particle hot reload is not supported by this MC version.",
+                    ConsoleColor::Yellow
+                );
+                return;
+            }
+            printColoredAtomic(
+                "[HotReload] Particle hot reload failed: " + result.dump(),
+                ConsoleColor::Red
+            );
+            return;
+        }
+        const auto attempted = result.value("attempted", 0);
+        const auto reloaded = result.value("reloaded", 0);
+        const auto failed = result.value("failed", nlohmann::json::array());
+        if (!failed.empty()) {
+            printColoredAtomic(
+                "[HotReload] Particle hot reload finished with failures: " + result.dump(),
+                ConsoleColor::Yellow
+            );
+            return;
+        }
+        printColoredAtomic(
+            "[HotReload] Particle hot reload finished: " + std::to_string(reloaded) + "/"
+                + std::to_string(attempted) + " particle file(s) reloaded.",
+            ConsoleColor::Green
+        );
+    });
     pyReloadTask.setOutputCallback(printColoredAtomic);
     uiReloadTask.setOutputCallback(printColoredAtomic);
     shaderReloadTask.setOutputCallback(printColoredAtomic);
     materialReloadTask.setOutputCallback(printColoredAtomic);
+    particleReloadTask.setOutputCallback(printColoredAtomic);
     styleProcessor.setOutputCallback(printColoredAtomic);
 
     std::wstring newEnv;
@@ -814,6 +867,15 @@ static void launchGameExe(
             materialReloadTask.setModDirs(std::move(hotReloadMaterialDirs));
             materialReloadTask.start();
         }
+
+        if (enableParticleHotReload && !hotReloadParticleDirs.empty()) {
+            for (const auto& particleDir : hotReloadParticleDirs) {
+                std::cout << "  Particle " << MCDevTool::Utils::pathToGenericUtf8(particleDir) << "\n";
+            }
+            particleReloadTask.setProcessId(pid);
+            particleReloadTask.setModDirs(std::move(hotReloadParticleDirs));
+            particleReloadTask.start();
+        }
     }
     styleProcessor.start();
 
@@ -826,6 +888,7 @@ static void launchGameExe(
     uiReloadTask.safeExit();
     shaderReloadTask.safeExit();
     materialReloadTask.safeExit();
+    particleReloadTask.safeExit();
     // 停止IPC服务器 如果已启用
     ipcServer->safeExit();
     // 停止样式处理器

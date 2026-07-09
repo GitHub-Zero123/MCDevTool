@@ -151,6 +151,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "auto_hot_reload_shaders": false,
     // 是否自动热更新 Material，默认关闭。开启后，资源包 materials 目录下任意 material 文件修改会在回到游戏前台时触发单文件 Material 重载
     "auto_hot_reload_materials": false,
+    // 是否自动热更新 Particle，默认关闭。开启后，资源包 particles 目录下任意 json 修改会在回到游戏前台时触发单文件 Particle 重载
+    "auto_hot_reload_particles": false,
     // 生成的世界类型(0.旧版有限世界 1.无限世界 2.超平坦) (int)
     "world_type": 1,
     // 游戏模式(0.生存 1.创造 2.冒险) (int)

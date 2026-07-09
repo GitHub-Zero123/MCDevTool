@@ -8,6 +8,10 @@
 #include <atomic>
 
 namespace MCDevTool::HotReload {
+    // 文件过滤谓词。注意：它在防抖之前对每条系统通知调用，
+    // 而编辑器一次保存往往产生多条通知，因此实现必须廉价且无副作用
+    // （仅做路径判断，不要在此读取文件内容或输出日志）。
+    // 内容校验、诊断输出等带副作用的逻辑应放在 onFileChanged 中——那里已经过防抖。
     using FileWatchPredicate = std::function<bool(const std::filesystem::path&)>;
 
     std::optional<std::thread> watchAndReloadFiles(
