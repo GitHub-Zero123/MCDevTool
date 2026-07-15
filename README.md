@@ -209,6 +209,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         "hide_title_bar": false,
         // 自定义标题栏颜色 null | [R,G,B]
         "title_bar_color": null,
+        // 窗口整体不透明度（包括标题栏和窗口内容）null | int (0-255)
+        "opacity": null,
         // 锁定大小 null | [w, h]
         "fixed_size": null,
         // 锁定屏幕位置 null | [x, y]

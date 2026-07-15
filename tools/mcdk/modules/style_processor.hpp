@@ -37,6 +37,14 @@ namespace mcdk {
                 };
                 mNeedUpdateStyle = true;
             }
+            // 处理 opacity
+            if (styleConfig.contains("opacity") && styleConfig["opacity"].is_number_integer()) {
+                const int opacity = styleConfig["opacity"].get<int>();
+                if (opacity >= 0 && opacity <= 255) {
+                    config.windowOpacity = static_cast<uint8_t>(opacity);
+                    mNeedUpdateStyle     = true;
+                }
+            }
             // 处理 fixed_size（支持大分辨率）
             if (styleConfig.contains("fixed_size") && styleConfig["fixed_size"].is_array()
                 && styleConfig["fixed_size"].size() >= 2) {

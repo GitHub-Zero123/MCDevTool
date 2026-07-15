@@ -14,6 +14,8 @@ namespace MCDevTool::Style {
         bool hideTitleBar = false;
         // 自定义标题栏颜色 null | int[R,G,B] (0-255)
         std::optional<std::vector<uint8_t>> titleBarColor = std::nullopt; // RGB
+        // 窗口整体不透明度 null | int (0-255)
+        std::optional<uint8_t> windowOpacity = std::nullopt;
         // 锁定大小 null | int[w, h]
         std::optional<std::vector<int>> fixedSize = std::nullopt; // [w, h]
         // 锁定屏幕位置 null | int[x, y]

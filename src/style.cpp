@@ -125,6 +125,15 @@ namespace MCDevTool::Style {
             }
         }
 
+        // 窗口整体不透明度（包括客户区和标题栏）
+        if (config.windowOpacity.has_value()) {
+            LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            if ((exStyle & WS_EX_LAYERED) == 0) {
+                SetWindowLongW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
+            }
+            SetLayeredWindowAttributes(hwnd, 0, static_cast<BYTE>(config.windowOpacity.value()), LWA_ALPHA);
+        }
+
         // 固定大小：配置视为“客户区物理像素”，按 DPI 反推需要设置的窗口外框尺寸
         if (config.fixedSize.has_value()) {
             const auto& sizeVec = config.fixedSize.value();
