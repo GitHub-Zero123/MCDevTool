@@ -207,6 +207,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         "always_on_top": false,
         // 隐藏标题栏
         "hide_title_bar": false,
+        // 隐藏 Windows 任务栏图标
+        "hide_taskbar_icon": false,
         // 自定义标题栏颜色 null | [R,G,B]
         "title_bar_color": null,
         // 窗口整体不透明度（包括标题栏和窗口内容）null | int (0-255)

@@ -21,9 +21,10 @@ namespace mcdk {
             }
             auto&                         styleConfig = userConfig["window_style"];
             MCDevTool::Style::StyleConfig config;
-            config.alwaysOnTop  = styleConfig.value("always_on_top", false);
-            config.hideTitleBar = styleConfig.value("hide_title_bar", false);
-            if (config.hideTitleBar || config.alwaysOnTop) {
+            config.alwaysOnTop     = styleConfig.value("always_on_top", false);
+            config.hideTitleBar    = styleConfig.value("hide_title_bar", false);
+            config.hideTaskbarIcon = styleConfig.value("hide_taskbar_icon", false);
+            if (config.hideTitleBar || config.hideTaskbarIcon || config.alwaysOnTop) {
                 mNeedUpdateStyle = true;
             }
             // 处理 title_bar_color

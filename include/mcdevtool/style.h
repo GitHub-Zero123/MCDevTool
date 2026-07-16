@@ -12,6 +12,8 @@ namespace MCDevTool::Style {
         bool alwaysOnTop = false;
         // 隐藏标题栏
         bool hideTitleBar = false;
+        // 隐藏任务栏图标
+        bool hideTaskbarIcon = false;
         // 自定义标题栏颜色 null | int[R,G,B] (0-255)
         std::optional<std::vector<uint8_t>> titleBarColor = std::nullopt; // RGB
         // 窗口整体不透明度 null | int (0-255)

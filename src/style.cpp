@@ -11,9 +11,12 @@
 #include <windows.h>
 #include <dwmapi.h>
 #include <objidl.h>
+#include <shobjidl.h>
 #include <gdiplus.h>
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")
 #endif
 #include <iostream>
 #include <memory>
@@ -57,6 +60,30 @@ namespace MCDevTool::Style {
         );
 
         return ctx.found; // nullptr
+    }
+
+    static void hideWindowFromTaskbar(HWND hwnd) {
+        const HRESULT initializeResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        if (FAILED(initializeResult) && initializeResult != RPC_E_CHANGED_MODE) {
+            return;
+        }
+
+        ITaskbarList* taskbarList = nullptr;
+        if (SUCCEEDED(CoCreateInstance(
+                CLSID_TaskbarList,
+                nullptr,
+                CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&taskbarList)
+            ))) {
+            if (SUCCEEDED(taskbarList->HrInit())) {
+                taskbarList->DeleteTab(hwnd);
+            }
+            taskbarList->Release();
+        }
+
+        if (SUCCEEDED(initializeResult)) {
+            CoUninitialize();
+        }
     }
 
     // 应用样式到指定窗口句柄
@@ -113,6 +140,10 @@ namespace MCDevTool::Style {
             style      &= ~WS_CAPTION;
             SetWindowLongW(hwnd, GWL_STYLE, style);
             needStyle = true;
+        }
+
+        if (config.hideTaskbarIcon) {
+            hideWindowFromTaskbar(hwnd);
         }
 
         // 标题栏颜色
