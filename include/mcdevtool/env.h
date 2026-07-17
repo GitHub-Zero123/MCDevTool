@@ -29,6 +29,8 @@ namespace MCDevTool {
     void cleanRuntimeResourcePacks();
     // 同时清理双pack目录
     void cleanRuntimePacks();
+    // 创建目录联接；如果 link 路径已存在，会先删除原路径。
+    bool createDirectoryJunction(const std::filesystem::path& target, const std::filesystem::path& link);
     // 分析并link源代码pack目录到运行时行为/资源包目录(如果成功将返回有效的PackInfo)
     Addon::PackInfo linkSourcePackToRuntimePack(const std::filesystem::path& sourceDir);
     // 分析并link源代码addon目录到运行时行为包目录 该版本支持批量处理目录下的所有pack
