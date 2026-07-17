@@ -17,6 +17,7 @@
 ## 功能概览
 
 - 一键生成并启动开发测试世界，自动挂载用户行为包 / 资源包。
+- 支持直接运行玩法地图工程，自动识别包含 `level.dat` 的地图目录，并保留地图自带的世界数据和包清单。
 - 支持 Python Mod 热更新，修改代码后回到游戏前台自动触发增量刷新。
 - 支持 JSON UI 热重载，可在资源包 `ui/*.json` 变化后触发原生 `Ctrl+R` UI definition reload。
 - 支持 Shader / Material 单文件热更新，可在资源包文件变化后回到游戏前台触发增量重载。
@@ -133,12 +134,14 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "game_executable_path": "",
     // 生成的世界种子 若为null则随机生成(null / int)
     "world_seed": null,
-    // 是否在启动时重置并新生成世界
+    // 是否在启动时重置并新生成世界（玩法地图开发建议开启，详见下文）
     "reset_world": false,
     // 用于渲染的世界名称 (string)
     "world_name": "MC_DEV_WORLD",
     // 目录存档名(ASCII STRING)
     "world_folder_name": "MC_DEV_WORLD",
+    // 玩法地图源目录："auto" 会识别当前目录；空字符串表示不启用
+    "world_source_path": "auto",
     // 是否自动进入游戏存档
     "auto_join_game": true,
     // 是否附加调试MOD(boolean)，若启用将在生成的世界中包含热更新脚本(R键触发检测)并重定向输出流使其附加[Python]前缀可供筛选搜索。
@@ -237,6 +240,14 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     }
 }
 ```
+
+## 玩法地图工程
+
+`world_source_path` 默认为 `"auto"`，会识别当前目录中包含 `level.dat` 的地图，未找到时继续按普通 Addon 工程运行。地图位于子目录时需要显式指定路径；设置为空字符串或 `null` 可关闭地图识别。
+
+地图数据会复制到 `world_folder_name` 指定的运行时世界，带有标准 `manifest.json` 的行为包和资源包会通过目录联接加载并参与热更新。
+
+地图开发建议启用 `reset_world`，使每次启动都重新部署地图；否则项目地图的最新内容不会同步到运行时世界。需要保留游戏内测试进度时可临时关闭。
 
 ## MCP客户端配置
 
