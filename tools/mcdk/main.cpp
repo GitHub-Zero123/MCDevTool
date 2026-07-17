@@ -35,6 +35,7 @@
 #include "modules/shader_reload_support.hpp"
 #include "modules/material_reload_support.hpp"
 #include "modules/particle_reload_support.hpp"
+#include "modules/world_project.hpp"
 
 
 // mcdevtool api
@@ -940,15 +941,25 @@ static void startGame(const nlohmann::json& config) {
 
     auto modDirConfigs =
         UserModDirConfig::parseListFromJson(config.value("included_mod_dirs", nlohmann::json::array({"./"})));
+    const auto worldSourcePath        = mcdk::resolveWorldSourcePath(config);
+    auto       hotReloadModDirConfigs = modDirConfigs;
+    std::vector<MCDevTool::Addon::PackInfo> worldPacks;
+    if (worldSourcePath) {
+        // 地图源目录只加入热更新列表，不参与原有 Addon 扫描和全局链接。
+        worldPacks = mcdk::collectWorldPacks(*worldSourcePath);
+        mcdk::appendWorldHotReloadModDir(hotReloadModDirConfigs, *worldSourcePath);
+        std::cout << "[MCDK] World Source " << MCDevTool::Utils::pathToGenericUtf8(*worldSourcePath)
+                  << "  Packs=" << worldPacks.size() << "\n";
+    }
 
     if (_isSubprocessMode) {
         // 子进程模式 直接启动游戏exe（通常由vsc插件多开使用）
-        launchGameExe(gameExePath, "", config, &modDirConfigs);
+        launchGameExe(gameExePath, "", config, &hotReloadModDirConfigs, &worldPacks);
         return;
     }
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
     if (config.value("include_debug_mod", true)) {
-        auto debugMod = mcdk::registerDebugMod(config, modDirConfigs);
+        auto debugMod = mcdk::registerDebugMod(config, hotReloadModDirConfigs);
         std::cout << "[MCDK] Addons\n";
         std::cout << "  Debug    UUID=" << debugMod.uuid << "\n";
         linkedPacks.push_back(std::move(debugMod));
@@ -957,11 +968,19 @@ static void startGame(const nlohmann::json& config) {
         std::cout << "[MCDK] Addons\n";
         mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks);
     }
+    // 地图包只补充热更新所需的源码路径，不参与全局链接或世界包清单合并。
+    auto hotReloadPacks = mcdk::makeHotReloadPacks(linkedPacks, worldPacks);
     // 创建世界
     auto worldFolderName = config.value("world_folder_name", "MC_DEV_WORLD");
     auto resetWorld      = config.value("reset_world", false); // 若启用该参数 每次都会强制覆盖世界
     auto worldsPath      = MCDevTool::getMinecraftWorldsPath() / std::filesystem::u8path(worldFolderName);
-    if (!std::filesystem::is_directory(worldsPath) || resetWorld) {
+    if (worldSourcePath) {
+        // 玩法地图使用源码世界作为初始数据，并在后续启动中保留运行时进度。
+        const bool deployed = mcdk::deployWorldSource(*worldSourcePath, worldsPath, resetWorld);
+        if (deployed) {
+            std::cout << "已从玩法地图源码部署运行时世界数据。\n";
+        }
+    } else if (!std::filesystem::is_directory(worldsPath) || resetWorld) {
         std::filesystem::remove_all(worldsPath);
         if (resetWorld) {
             std::cout << "已删除旧世界数据，正在创建新世界...\n";
@@ -984,20 +1003,6 @@ static void startGame(const nlohmann::json& config) {
     }
 
     // netease_world_behavior_packs.json / netease_world_resource_packs.json
-    auto behPacksManifest = nlohmann::json::array();
-    auto resPacksManifest = nlohmann::json::array();
-    for (const auto& pack : linkedPacks) {
-        nlohmann::json packEntry{
-            {"pack_id", pack.uuid},
-            {"version", nlohmann::json::parse(pack.version)},
-        };
-        if (pack.type == MCDevTool::Addon::PackType::BEHAVIOR) {
-            behPacksManifest.push_back(std::move(packEntry));
-        } else if (pack.type == MCDevTool::Addon::PackType::RESOURCE) {
-            resPacksManifest.push_back(std::move(packEntry));
-        }
-    }
-
     auto autoJoinGame = config.value("auto_join_game", true);
     auto envAutoJoin  = mcdk::getEnvAutoJoinGameState();
     if (envAutoJoin != -1) {
@@ -1011,6 +1016,21 @@ static void startGame(const nlohmann::json& config) {
         targetBehJson = "world_behavior_packs.json";
         targetResJson = "world_resource_packs.json";
     }
+    auto behPacksManifest = worldSourcePath
+                              ? mcdk::loadWorldPackManifest(
+                                    *worldSourcePath,
+                                    MCDevTool::Addon::PackType::BEHAVIOR,
+                                    targetBehJson
+                                )
+                              : nlohmann::json::array();
+    auto resPacksManifest = worldSourcePath
+                              ? mcdk::loadWorldPackManifest(
+                                    *worldSourcePath,
+                                    MCDevTool::Addon::PackType::RESOURCE,
+                                    targetResJson
+                                )
+                              : nlohmann::json::array();
+    mcdk::mergeLinkedPacksIntoManifest(behPacksManifest, resPacksManifest, linkedPacks);
     std::ofstream behManifestFile(worldsPath / targetBehJson);
     behManifestFile << behPacksManifest.dump(4);
     behManifestFile.close();
@@ -1025,8 +1045,8 @@ static void startGame(const nlohmann::json& config) {
             gameExePath,
             "",
             config,
-            &modDirConfigs,
-            &linkedPacks
+            &hotReloadModDirConfigs,
+            &hotReloadPacks
         );
         return;
     }
@@ -1078,8 +1098,8 @@ static void startGame(const nlohmann::json& config) {
         gameExePath,
         MCDevTool::Utils::pathToGenericUtf8(configPath),
         config,
-        &modDirConfigs,
-        &linkedPacks
+        &hotReloadModDirConfigs,
+        &hotReloadPacks
     );
 }
 

@@ -39,6 +39,8 @@ namespace mcdk {
             {          "world_name",                "MC_DEV_WORLD"},
             // 世界文件夹名称
             {   "world_folder_name",                "MC_DEV_WORLD"},
+            // 玩法地图源目录；设为 auto 时自动识别当前工作目录
+            {   "world_source_path",                        "auto"},
             // 是否自动进入游戏存档
             {      "auto_join_game",                          true},
             // 包含调试模组(提供R键热更新以及py输出流标记)
