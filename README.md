@@ -169,10 +169,14 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "experiment_options": {
         // 数据驱动生物群系
         "data_driven_biomes": false,
-        // 其他数据型驱动功能
-        "data_driven_items": false,
-        // 实验性Molang特性
-        "experimental_molang_features": false
+        // 即将到来的创作者功能
+        "upcoming_creator_features": false,
+        // 创建者照相机的实验性功能
+        "experimental_creator_cameras": false,
+        // beta版api
+        "gametest": false,
+        // 为创作者提供的RenderDragon功能
+        "deferred_technical_preview": false
     },
     // 用户自定义名称(默认"developer")
     "user_name": "developer",

@@ -72,10 +72,11 @@ namespace MCDevTool::Level {
             if (compoundTag.items().contains("experiments")) {
                 experimentsTag = compoundTag["experiments"].as<nbt::CompoundTag>();
             }
-            experimentsTag["data_driven_biomes"] = nbt::ByteTag(options.experimentsOptions.dataDrivenBiomes ? 1 : 0);
-            experimentsTag["data_driven_items"]  = nbt::ByteTag(options.experimentsOptions.dataDrivenItems ? 1 : 0);
-            experimentsTag["experimental_molang_features"] =
-                nbt::ByteTag(options.experimentsOptions.experimentalMolangFeatures ? 1 : 0);
+            experimentsTag["data_driven_biomes"]          = nbt::ByteTag(options.experimentsOptions.dataDrivenBiomes ? 1 : 0);
+            experimentsTag["upcoming_creator_features"]   = nbt::ByteTag(options.experimentsOptions.upcomingCreatorFeatures ? 1 : 0);
+            experimentsTag["experimental_creator_cameras"] = nbt::ByteTag(options.experimentsOptions.experimentalCreatorCameras ? 1 : 0);
+            experimentsTag["gametest"]                    = nbt::ByteTag(options.experimentsOptions.gametest ? 1 : 0);
+            experimentsTag["deferred_technical_preview"]  = nbt::ByteTag(options.experimentsOptions.deferredTechnicalPreview ? 1 : 0);
             compoundTag["experiments"] = std::move(experimentsTag);
         }
         auto release = compoundTag.toBinaryNbtWithHeader();
