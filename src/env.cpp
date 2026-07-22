@@ -26,7 +26,7 @@ static std::vector<std::string> WIN32_GET_ALL_DRIVES() {
 }
 
 // 软链接目录
-static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::filesystem::path& link) {
+bool MCDevTool::createDirectoryJunction(const std::filesystem::path& target, const std::filesystem::path& link) {
 
     std::filesystem::create_directories(link.parent_path());
     if (std::filesystem::exists(link)) {
@@ -93,7 +93,9 @@ static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::file
 }
 
 #else
-static bool CREATE_JUNCTION(const std::filesystem::path& target, const std::filesystem::path& link) = delete
+bool MCDevTool::createDirectoryJunction(const std::filesystem::path&, const std::filesystem::path&) {
+    return false;
+}
 #endif
 
 static void normalizeUUIDString(std::string& uuidStr) {
@@ -263,7 +265,7 @@ namespace MCDevTool {
             auto uuid = info.uuid;
             normalizeUUIDString(uuid);
             auto destPath = getBehaviorPacksPath() / uuid;
-            if (!CREATE_JUNCTION(sourceDir, destPath)) {
+            if (!createDirectoryJunction(sourceDir, destPath)) {
                 std::cerr << "行为包软链接创建失败: " << Utils::pathToUtf8(sourceDir.filename()) << "\n";
             } else {
                 info.path = destPath;
@@ -272,7 +274,7 @@ namespace MCDevTool {
             auto uuid = info.uuid;
             normalizeUUIDString(uuid);
             auto destPath = getResourcePacksPath() / uuid;
-            if (!CREATE_JUNCTION(sourceDir, destPath)) {
+            if (!createDirectoryJunction(sourceDir, destPath)) {
                 std::cerr << "资源包软链接创建失败: " << Utils::pathToUtf8(sourceDir.filename()) << "\n";
             } else {
                 info.path = destPath;
