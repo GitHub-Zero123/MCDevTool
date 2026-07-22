@@ -10,8 +10,10 @@ namespace MCDevTool::Level {
     struct ExperimentsOptions {
         bool enable                     = false;
         bool dataDrivenBiomes           = false; // 数据驱动生物群系
-        bool dataDrivenItems            = false; // 其他数据型驱动功能
-        bool experimentalMolangFeatures = false; // 实验性Molang特性
+        bool upcomingCreatorFeatures    = false; // 即将到来的创作者功能
+        bool experimentalCreatorCameras = false; // 创建者照相机的实验性功能
+        bool gametest                   = false; // beta版api
+        bool deferredTechnicalPreview   = false; // 为创作者提供的RenderDragon功能
     };
 
     // 存档基础选项
