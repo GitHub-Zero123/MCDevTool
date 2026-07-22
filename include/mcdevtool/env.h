@@ -1,8 +1,8 @@
 #pragma once
 #include "addon.h"
+#include "game_discovery.h"
 #include <filesystem>
 #include <vector>
-#include <optional>
 
 namespace MCDevTool {
     // 获取应用数据目录路径
@@ -19,12 +19,6 @@ namespace MCDevTool {
     std::filesystem::path getResourcePacksPath();
     // 获取依赖包目录
     std::filesystem::path getDependenciesPacksPath();
-    // 自动搜索MCStudioDownload游戏路径（如果存在）
-    std::optional<std::filesystem::path> autoSearchMCStudioDownloadGamePath();
-    // 自动匹配全部游戏版本的可执行文件路径，按版本号从新到旧排序
-    const std::vector<std::filesystem::path>& autoMatchGameExePaths();
-    // 自动匹配最新版本游戏可执行文件路径（如果存在）
-    std::optional<std::filesystem::path> autoMatchLatestGameExePath();
     // 清理运行时行为包目录
     void cleanRuntimeBehaviorPacks();
     // 清理运行时资源包目录

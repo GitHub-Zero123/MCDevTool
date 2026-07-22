@@ -56,8 +56,7 @@ namespace mcdk {
             const auto first = input.find_first_not_of(" \t");
             if (first == std::string::npos) {
                 const auto version = MCDevTool::Utils::pathToUtf8(paths.front().parent_path().filename());
-                std::cout << "Selected: " << version << "  "
-                          << MCDevTool::Utils::pathToGenericUtf8(paths.front()) << " [latest]\n";
+                std::cout << "Selected: " << version << " [latest]\n";
                 return paths.front();
             }
             const auto last = input.find_last_not_of(" \t");
@@ -72,8 +71,11 @@ namespace mcdk {
             ) {
                 const auto& selectedPath = paths[selectedNumber - 1];
                 const auto version = MCDevTool::Utils::pathToUtf8(selectedPath.parent_path().filename());
-                std::cout << "Selected: " << version << "  " << MCDevTool::Utils::pathToGenericUtf8(selectedPath)
-                          << '\n';
+                std::cout << "Selected: " << version;
+                if (selectedNumber == 1) {
+                    std::cout << " [latest]";
+                }
+                std::cout << '\n';
                 return selectedPath;
             }
             std::cout << "Invalid selection. Enter a number from 1 to " << paths.size() << ".\n";

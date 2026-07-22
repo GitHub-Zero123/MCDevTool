@@ -918,8 +918,7 @@ static void startGame(const nlohmann::json& config) {
         // 游戏 exe 路径无效，重新发现并选择版本
         if (mcdk::updateGamePath(gameExePath)) {
             mcdk::tryUpdateUserGamePath(gameExePath);
-            std::cout << "已更新配置文件中的游戏路径："
-                      << MCDevTool::Utils::pathToGenericUtf8(gameExePath) << "\n";
+            std::cout << "已更新配置文件中的游戏路径。\n";
         } else {
             throw std::runtime_error("未能找到有效的游戏exe文件。");
         }

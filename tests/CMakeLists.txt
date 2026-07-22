@@ -24,3 +24,8 @@ target_link_libraries(captureTest PRIVATE mcdevtool)
 add_executable(py_hot_reload_filter_test py_hot_reload_filter_test.cpp)
 target_compile_features(py_hot_reload_filter_test PRIVATE cxx_std_23)
 target_link_libraries(py_hot_reload_filter_test PRIVATE mcdevtool)
+
+if(TARGET mcdk-api)
+    add_executable(mcdk_api_test mcdk_api_test.c)
+    target_link_libraries(mcdk_api_test PRIVATE mcdk-api)
+endif()
