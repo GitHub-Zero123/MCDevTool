@@ -1,16 +1,89 @@
 #pragma once
+#include <algorithm>
+#include <charconv>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 #include <mcdevtool/env.h>
+#include <mcdevtool/utils.h>
+
+#include "env.hpp"
 
 namespace mcdk {
+    inline std::optional<std::filesystem::path>
+    selectGameExePath(const std::vector<std::filesystem::path>& paths) {
+        if (paths.empty()) {
+            return std::nullopt;
+        }
+        if (getEnvIsSubprocessMode()) {
+            return paths.front();
+        }
+        if (paths.size() == 1) {
+            const auto version = MCDevTool::Utils::pathToUtf8(paths.front().parent_path().filename());
+            std::cout << "Discovered game version: " << version << "  "
+                      << MCDevTool::Utils::pathToGenericUtf8(paths.front()) << '\n';
+            return paths.front();
+        }
+
+        std::cout << "Discovered game versions (newest first):\n";
+        size_t versionWidth = 0;
+        for (const auto& path : paths) {
+            versionWidth = std::max(versionWidth, MCDevTool::Utils::pathToUtf8(path.parent_path().filename()).size());
+        }
+        for (size_t i = 0; i < paths.size(); ++i) {
+            const auto version = MCDevTool::Utils::pathToUtf8(paths[i].parent_path().filename());
+            std::cout << "  [" << i + 1 << "] " << version << std::string(versionWidth - version.size(), ' ');
+            if (i == 0) {
+                std::cout << " [latest]";
+            } else {
+                std::cout << "         ";
+            }
+            std::cout << "  " << MCDevTool::Utils::pathToGenericUtf8(paths[i]) << '\n';
+        }
+
+        while (true) {
+            std::cout << "Select game version [1-" << paths.size() << "] (default 1): " << std::flush;
+            std::string input;
+            if (!std::getline(std::cin, input)) {
+                std::cout << '\n';
+                return paths.front();
+            }
+            const auto first = input.find_first_not_of(" \t");
+            if (first == std::string::npos) {
+                const auto version = MCDevTool::Utils::pathToUtf8(paths.front().parent_path().filename());
+                std::cout << "Selected: " << version << "  "
+                          << MCDevTool::Utils::pathToGenericUtf8(paths.front()) << " [latest]\n";
+                return paths.front();
+            }
+            const auto last = input.find_last_not_of(" \t");
+            input = input.substr(first, last - first + 1);
+
+            size_t selectedNumber = 0;
+            const auto [parseEnd, parseError] =
+                std::from_chars(input.data(), input.data() + input.size(), selectedNumber);
+            if (
+                parseError == std::errc{} && parseEnd == input.data() + input.size() && selectedNumber >= 1
+                && selectedNumber <= paths.size()
+            ) {
+                const auto& selectedPath = paths[selectedNumber - 1];
+                const auto version = MCDevTool::Utils::pathToUtf8(selectedPath.parent_path().filename());
+                std::cout << "Selected: " << version << "  " << MCDevTool::Utils::pathToGenericUtf8(selectedPath)
+                          << '\n';
+                return selectedPath;
+            }
+            std::cout << "Invalid selection. Enter a number from 1 to " << paths.size() << ".\n";
+        }
+    }
+
     // 创建默认配置
     inline nlohmann::json createDefaultConfig() {
         std::filesystem::path exePath;
-        auto                  autoExePath = MCDevTool::autoMatchLatestGameExePath();
+        auto autoExePath = selectGameExePath(MCDevTool::autoMatchGameExePaths());
         if (!autoExePath.has_value()) {
             // 无法自动匹配到游戏exe路径，要求用户输入
             std::string u8input;
@@ -93,7 +166,7 @@ namespace mcdk {
 
     // 尝试更新游戏路径
     inline bool updateGamePath(std::filesystem::path& path) {
-        auto autoExePath = MCDevTool::autoMatchLatestGameExePath();
+        auto autoExePath = selectGameExePath(MCDevTool::autoMatchGameExePaths());
         if (autoExePath.has_value()) {
             path = std::move(autoExePath.value());
             return true;
