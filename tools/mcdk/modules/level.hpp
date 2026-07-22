@@ -28,8 +28,10 @@ namespace mcdk {
             if (experimentOptions.is_object()) {
                 expOptions.enable                     = true;
                 expOptions.dataDrivenBiomes           = experimentOptions.value("data_driven_biomes", false);
-                expOptions.dataDrivenItems            = experimentOptions.value("data_driven_items", false);
-                expOptions.experimentalMolangFeatures = experimentOptions.value("experimental_molang_features", false);
+                expOptions.upcomingCreatorFeatures    = experimentOptions.value("upcoming_creator_features", false);
+                expOptions.experimentalCreatorCameras = experimentOptions.value("experimental_creator_cameras", false);
+                expOptions.gametest                   = experimentOptions.value("gametest", false);
+                expOptions.deferredTechnicalPreview   = experimentOptions.value("deferred_technical_preview", false);
                 options.experimentsOptions            = expOptions;
             }
         }

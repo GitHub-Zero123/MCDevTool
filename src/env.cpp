@@ -1,5 +1,6 @@
 #include "mcdevtool/env.h"
 #include "mcdevtool/utils.h"
+#include <algorithm>
 #include <cstdlib>
 #include <utility> // std::move
 #include <iostream>
@@ -168,44 +169,68 @@ namespace MCDevTool {
     // 自动搜索MCStudioDownload游戏路径（如果存在）
     std::optional<std::filesystem::path> autoSearchMCStudioDownloadGamePath() { return std::nullopt; }
 #endif
-    static std::optional<std::filesystem::path> _cacheLastestGamePath;
+    static std::optional<std::vector<std::filesystem::path>> _cachedGameExePaths;
 
-    // 自动匹配最新版本游戏可执行文件路径（如果存在）
-    std::optional<std::filesystem::path> autoMatchLatestGameExePath() {
-        if (_cacheLastestGamePath) {
-            return _cacheLastestGamePath;
+    // 自动匹配全部游戏版本的可执行文件路径，按版本号从新到旧排序
+    const std::vector<std::filesystem::path>& autoMatchGameExePaths() {
+        if (_cachedGameExePaths) {
+            return *_cachedGameExePaths;
         }
         auto gamePath = autoSearchMCStudioDownloadGamePath();
         if (!gamePath) {
-            return std::nullopt;
+            _cachedGameExePaths = std::vector<std::filesystem::path>{};
+            return *_cachedGameExePaths;
         }
-        // 遍历子目录多个版本号文件夹
-        std::optional<std::filesystem::path> latestExePath;
-        MCDevTool::Utils::Version            latestVersion;
-        uint64_t                             latestVersionNum = 0;
-        for (const auto& entry : std::filesystem::directory_iterator(gamePath.value())) {
-            if (entry.is_directory()) {
-                std::string folderName = Utils::pathToUtf8(entry.path().filename());
-                // 文件夹版本号解析
-                MCDevTool::Utils::Version ver{folderName};
-                if (!ver) {
-                    continue;
-                }
-                auto exePath = entry.path() / "Minecraft.Windows.exe";
-                if (std::filesystem::is_regular_file(exePath)) {
-                    // 比较版本号大小
-                    if (latestVersionNum == 0 || latestVersion < ver) {
-                        latestVersion = std::move(ver);
-                        latestExePath = exePath;
-                        latestVersionNum++;
-                    }
+
+        struct GameExeCandidate {
+            std::filesystem::path executablePath;
+            Utils::Version        version;
+        };
+
+        std::vector<GameExeCandidate> candidates;
+        std::error_code               ec;
+        std::filesystem::directory_iterator it(
+            *gamePath,
+            std::filesystem::directory_options::skip_permission_denied,
+            ec
+        );
+        const std::filesystem::directory_iterator end;
+        while (!ec && it != end) {
+            std::error_code entryError;
+            if (it->is_directory(entryError)) {
+                Utils::Version version{Utils::pathToUtf8(it->path().filename())};
+                auto           exePath = it->path() / "Minecraft.Windows.exe";
+                if (version && std::filesystem::is_regular_file(exePath, entryError)) {
+                    candidates.push_back({std::move(exePath), std::move(version)});
                 }
             }
+            it.increment(ec);
         }
-        if (latestExePath) {
-            _cacheLastestGamePath = latestExePath;
+
+        std::sort(candidates.begin(), candidates.end(), [](const auto& left, const auto& right) {
+            if (left.version == right.version) {
+                return Utils::pathToGenericUtf8(left.executablePath)
+                     < Utils::pathToGenericUtf8(right.executablePath);
+            }
+            return right.version < left.version;
+        });
+
+        std::vector<std::filesystem::path> paths;
+        paths.reserve(candidates.size());
+        for (auto& candidate : candidates) {
+            paths.push_back(std::move(candidate.executablePath));
         }
-        return latestExePath;
+        _cachedGameExePaths = std::move(paths);
+        return *_cachedGameExePaths;
+    }
+
+    // 自动匹配最新版本游戏可执行文件路径（如果存在）
+    std::optional<std::filesystem::path> autoMatchLatestGameExePath() {
+        const auto& paths = autoMatchGameExePaths();
+        if (paths.empty()) {
+            return std::nullopt;
+        }
+        return paths.front();
     }
 
     // 清理运行时行为包目录

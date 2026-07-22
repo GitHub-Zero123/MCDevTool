@@ -916,18 +916,11 @@ static void launchGameExe(
 static void startGame(const nlohmann::json& config) {
     auto gameExePath = std::filesystem::u8path(config.value("game_executable_path", ""));
     if (!std::filesystem::is_regular_file(gameExePath)) {
-        // 游戏exe路径无效 重新搜索新版
+        // 游戏 exe 路径无效，重新发现并选择版本
         if (mcdk::updateGamePath(gameExePath)) {
-            std::cout << "游戏路径无效，重新搜索：" << MCDevTool::Utils::pathToGenericUtf8(gameExePath) << "\n";
-            std::string u8input;
-            std::cout << "是否更新配置文件中的游戏路径？(y/n)：";
-            std::getline(std::cin, u8input);
-            if (u8input == "Y" || u8input == "y") {
-                mcdk::tryUpdateUserGamePath(gameExePath);
-                std::cout << "已更新配置文件中的游戏路径。\n";
-            } else {
-                throw std::runtime_error("未更新配置文件中的游戏路径，启动终止。");
-            }
+            mcdk::tryUpdateUserGamePath(gameExePath);
+            std::cout << "已更新配置文件中的游戏路径："
+                      << MCDevTool::Utils::pathToGenericUtf8(gameExePath) << "\n";
         } else {
             throw std::runtime_error("未能找到有效的游戏exe文件。");
         }

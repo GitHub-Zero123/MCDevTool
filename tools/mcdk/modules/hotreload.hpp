@@ -65,14 +65,43 @@ namespace mcdk {
 
         void setModDirs(std::vector<std::filesystem::path>&& modDirs) {
             modRootDirPaths.clear();
+            modPackageDirPaths.clear();
             for (const auto& dir : modDirs) {
-                modRootDirPaths.insert(dir);
+                const auto rootDir = std::filesystem::absolute(dir).lexically_normal();
+                modRootDirPaths.insert(rootDir);
+
+                std::error_code ec;
+                std::filesystem::recursive_directory_iterator it(
+                    rootDir,
+                    std::filesystem::directory_options::skip_permission_denied,
+                    ec
+                );
+                const std::filesystem::recursive_directory_iterator end;
+                while (!ec && it != end) {
+                    const auto& entry = *it;
+                    std::error_code entryError;
+                    if (entry.is_regular_file(entryError) && entry.path().filename() == "modMain.py") {
+                        modPackageDirPaths.insert(entry.path().parent_path().lexically_normal());
+                    }
+                    it.increment(ec);
+                }
             }
             MCDevTool::Debug::HotReloadWatcherTask::setModDirs(std::move(modDirs));
         }
 
         bool shouldWatchFile(const std::filesystem::path& filePath) const override {
-            return filePath.extension().string() == ".py";
+            if (filePath.extension() != ".py") {
+                return false;
+            }
+
+            const auto normalizedPath = std::filesystem::absolute(filePath).lexically_normal();
+            for (const auto& packageDir : modPackageDirPaths) {
+                const auto relativePath = normalizedPath.lexically_relative(packageDir);
+                if (!relativePath.empty() && *relativePath.begin() != "..") {
+                    return true;
+                }
+            }
+            return false;
         }
 
         void onFileChanged(const std::filesystem::path& filePath) override {
@@ -155,6 +184,7 @@ namespace mcdk {
         HotReloadAction                           mHotReloadAction;
         std::unordered_set<std::filesystem::path> mCachedPyModulePaths;
         std::unordered_set<std::filesystem::path> modRootDirPaths;
+        std::unordered_set<std::filesystem::path> modPackageDirPaths;
         std::mutex                                mMutex;
     };
 
