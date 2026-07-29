@@ -678,7 +678,26 @@ static void launchGameExe(
     si.dwFlags    |= STARTF_USESTDHANDLES;
     si.hStdOutput  = outWrite;
     si.hStdError   = errWrite;
-    si.hStdInput   = GetStdHandle(STD_INPUT_HANDLE);
+
+    // Do not expose MCDK's terminal as Minecraft stdin. A Mod calling input()
+    // would otherwise block the game thread while waiting for terminal input.
+    HANDLE nullInput = CreateFileW(
+        L"NUL",
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (nullInput == INVALID_HANDLE_VALUE) {
+        CloseHandle(outRead);
+        CloseHandle(outWrite);
+        CloseHandle(errRead);
+        CloseHandle(errWrite);
+        throw std::runtime_error("CreateFileW(NUL) failed");
+    }
+    si.hStdInput = nullInput;
 
     auto neteaseConfig = userConfig.value("netease_config", nlohmann::json::object());
 
@@ -704,9 +723,10 @@ static void launchGameExe(
         );
     }
 
+    auto cmdUtf16 = convertUtf8ToUtf16(cmd);
     if (!CreateProcessW(
             nullptr,
-            convertUtf8ToUtf16(cmd).data(),
+            cmdUtf16.data(),
             nullptr,
             nullptr,
             TRUE, // 继承句柄
@@ -720,8 +740,11 @@ static void launchGameExe(
         CloseHandle(outWrite);
         CloseHandle(errRead);
         CloseHandle(errWrite);
+        CloseHandle(nullInput);
         throw std::runtime_error("CreateProcessA failed");
     }
+
+    CloseHandle(nullInput);
 
     DWORD pid = pi.dwProcessId;
     // 设置样式处理器PID
@@ -919,8 +942,7 @@ static void startGame(const nlohmann::json& config) {
         // 游戏 exe 路径无效，重新发现并选择版本
         if (mcdk::updateGamePath(gameExePath)) {
             mcdk::tryUpdateUserGamePath(gameExePath);
-            std::cout << "已更新配置文件中的游戏路径："
-                      << MCDevTool::Utils::pathToGenericUtf8(gameExePath) << "\n";
+            std::cout << "已更新配置文件中的游戏路径。\n";
         } else {
             throw std::runtime_error("未能找到有效的游戏exe文件。");
         }

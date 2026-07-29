@@ -22,22 +22,33 @@ add_subdirectory(libs/nbt)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
 add_subdirectory(libs/cpp-mcp)
 
+add_library(mcdevtool_utils STATIC src/utils.cpp)
+set_target_properties(mcdevtool_utils PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_features(mcdevtool_utils PRIVATE cxx_std_23)
+target_include_directories(mcdevtool_utils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+add_library(mcdevtool_game_discovery STATIC src/game_discovery.cpp)
+set_target_properties(mcdevtool_game_discovery PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_features(mcdevtool_game_discovery PRIVATE cxx_std_23)
+target_include_directories(mcdevtool_game_discovery PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(mcdevtool_game_discovery PUBLIC mcdevtool_utils)
+
 add_library(mcdevtool OBJECT
     src/env.cpp
     src/level.cpp
     src/addon.cpp
-    src/utils.cpp
     src/reload.cpp
     src/debug.cpp
     src/style.cpp
 )
+set_target_properties(mcdevtool PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(mcdevtool PRIVATE cxx_std_23)
 target_compile_definitions(mcdevtool PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
 # target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nbt/include)
-target_link_libraries(mcdevtool PUBLIC NBT)
+target_link_libraries(mcdevtool PUBLIC NBT mcdevtool_game_discovery)
 
 add_subdirectory(mods)
 add_subdirectory(tools)

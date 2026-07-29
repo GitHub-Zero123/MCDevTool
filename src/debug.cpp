@@ -539,16 +539,26 @@ namespace MCDevTool::Debug {
         if (fileWatcherThread.has_value() || processWatcherThread.has_value()) {
             throw std::runtime_error("Watcher threads already running");
         }
-        mStopFlag          = false;
-        bool mNeedUpdate   = false;
-        bool mIsForeground = false;
+        mStopFlag = false;
+        {
+            std::lock_guard<std::mutex> stateLock(mStateMutex);
+            mNeedUpdate   = false;
+            mIsForeground = false;
+        }
         fileWatcherThread  = MCDevTool::HotReload::watchAndReloadFiles(
             mModDirs,
             [this](const std::filesystem::path& path) {
-                this->mNeedUpdate = true;
                 this->onFileChanged(path);
-                if (this->mIsForeground) {
-                    this->mNeedUpdate = false;
+                bool shouldReload = false;
+                {
+                    std::lock_guard<std::mutex> stateLock(this->mStateMutex);
+                    this->mNeedUpdate = true;
+                    if (this->mIsForeground) {
+                        this->mNeedUpdate = false;
+                        shouldReload      = true;
+                    }
+                }
+                if (shouldReload) {
                     this->onHotReloadTriggered();
                 }
             },
@@ -564,9 +574,16 @@ namespace MCDevTool::Debug {
         processWatcherThread = MCDevTool::HotReload::watchProcessForegroundWindow(
             mProcessId,
             [this](bool isForeground) {
-                this->mIsForeground = isForeground;
-                if (isForeground && this->mNeedUpdate) {
-                    this->mNeedUpdate = false;
+                bool shouldReload = false;
+                {
+                    std::lock_guard<std::mutex> stateLock(this->mStateMutex);
+                    this->mIsForeground = isForeground;
+                    if (isForeground && this->mNeedUpdate) {
+                        this->mNeedUpdate = false;
+                        shouldReload      = true;
+                    }
+                }
+                if (shouldReload) {
                     this->onHotReloadTriggered();
                 }
             },
@@ -580,13 +597,7 @@ namespace MCDevTool::Debug {
     }
 
     void HotReloadWatcherTask::stop() {
-        // 实现停止逻辑
-        if (fileWatcherThread.has_value()) {
-            fileWatcherThread.reset();
-        }
-        if (processWatcherThread.has_value()) {
-            processWatcherThread.reset();
-        }
+        mStopFlag = true;
     }
 
     void HotReloadWatcherTask::join() {
