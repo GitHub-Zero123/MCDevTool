@@ -116,6 +116,7 @@ namespace MCDevTool::Debug {
     protected:
         virtual bool shouldWatchFile(const std::filesystem::path& filePath) const;
 
+        std::mutex mStateMutex;
         bool mNeedUpdate   = false;
         bool mIsForeground = false;
 

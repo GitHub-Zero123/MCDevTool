@@ -677,7 +677,26 @@ static void launchGameExe(
     si.dwFlags    |= STARTF_USESTDHANDLES;
     si.hStdOutput  = outWrite;
     si.hStdError   = errWrite;
-    si.hStdInput   = GetStdHandle(STD_INPUT_HANDLE);
+
+    // Do not expose MCDK's terminal as Minecraft stdin. A Mod calling input()
+    // would otherwise block the game thread while waiting for terminal input.
+    HANDLE nullInput = CreateFileW(
+        L"NUL",
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (nullInput == INVALID_HANDLE_VALUE) {
+        CloseHandle(outRead);
+        CloseHandle(outWrite);
+        CloseHandle(errRead);
+        CloseHandle(errWrite);
+        throw std::runtime_error("CreateFileW(NUL) failed");
+    }
+    si.hStdInput = nullInput;
 
     auto neteaseConfig = userConfig.value("netease_config", nlohmann::json::object());
 
@@ -719,8 +738,11 @@ static void launchGameExe(
         CloseHandle(outWrite);
         CloseHandle(errRead);
         CloseHandle(errWrite);
+        CloseHandle(nullInput);
         throw std::runtime_error("CreateProcessA failed");
     }
+
+    CloseHandle(nullInput);
 
     DWORD pid = pi.dwProcessId;
     // 设置样式处理器PID
