@@ -188,6 +188,29 @@ def _restore_records():
     state['last_restore'] = result
     return result
 
+def _restore_when_hud_ready(attempt=0):
+    state = _state()
+    records = state.get('records', [])
+    needs_hud = any(rec.get('kind') == 'create_ui' for rec in records)
+    hud_ready = False
+    if needs_hud:
+        try:
+            import gui
+            hud_ready = gui.get_layer('hud.hud_screen', '/variables_button_mappings_and_controls/main') != 0
+        except Exception:
+            pass
+    if not needs_hud or hud_ready or attempt >= 20:
+        if needs_hud and not hud_ready:
+            state['hud_ready_timeout'] = True
+        _restore_records()
+        return
+    try:
+        import client.extraClientApi as clientApi
+        comp = clientApi.GetEngineCompFactory().CreateGame(clientApi.GetLevelId())
+        comp.AddTimer(0.05, _restore_when_hud_ready, attempt + 1)
+    except Exception:
+        _restore_records()
+
 class _McdkUiReloadAfter(object):
     def UIDefReloadSceneStackAfter(self, args):
         try:
@@ -196,7 +219,7 @@ class _McdkUiReloadAfter(object):
         except Exception:
             pass
         try:
-            _restore_records()
+            _restore_when_hud_ready()
         except Exception as exc:
             _state()['last_restore'] = {'attempted': 0, 'created': 0, 'failed': [{'stage': 'restore', 'error': repr(exc)}]}
 
@@ -225,6 +248,7 @@ try:
     state['listener'] = listener
     state['last_prepare'] = {'records': len(records), 'user_screen_defs': len(user_screen_defs)}
     state.pop('last_restore', None)
+    state.pop('hud_ready_timeout', None)
     eventUtil.instance.ListenForEngineClient('UIDefReloadSceneStackAfter', listener, listener.UIDefReloadSceneStackAfter)
 
     clear_stack_ok = _safe_call(lambda: mgr.clear_stack(), None)

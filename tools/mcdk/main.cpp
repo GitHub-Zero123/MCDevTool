@@ -722,9 +722,10 @@ static void launchGameExe(
         );
     }
 
+    auto cmdUtf16 = convertUtf8ToUtf16(cmd);
     if (!CreateProcessW(
             nullptr,
-            convertUtf8ToUtf16(cmd).data(),
+            cmdUtf16.data(),
             nullptr,
             nullptr,
             TRUE, // 继承句柄
