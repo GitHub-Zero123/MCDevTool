@@ -435,6 +435,7 @@ Host 和 MCDK 都必须处理该请求。它用于心跳和连接活性检测，
 
 | 方法 | 模式 | 执行策略 | 现有能力来源 |
 | --- | --- | --- | --- |
+| `game/ipc/is-ready` | request | `inline` | `DebugIPCServer::getClientCount()` |
 | `game/ping` | request | `game_serial` | Game IPC `ping` |
 | `game/code/execute` | request、notification | `game_serial` | Game IPC `execute_code` 或旧消息 3/4 |
 | `game/reload` | request、notification | `game_serial` | 旧消息 5/8 |
@@ -442,7 +443,21 @@ Host 和 MCDK 都必须处理该请求。它用于心跳和连接活性检测，
 | `logs/latest` | request | `worker` | `LogBuffer` |
 | `logs/errors/latest` | request | `worker` | error `LogBuffer` |
 
-首版 MCDK 实现以下两个游戏方法：
+首版 MCDK 实现以下三个游戏方法：
+
+#### `game/ipc/is-ready`
+
+参数为空 object。该方法不声明游戏可用性前置条件，因此可以在尚未进入存档或未开启调试能力时调用。
+
+```json
+{
+  "ready": false,
+  "debugCapabilityEnabled": true,
+  "clientCount": 0
+}
+```
+
+`ready` 只在本次启动开启调试能力且 `DebugIPCServer::getClientCount() > 0` 时为 `true`。未开启调试能力时返回 `false`，不返回 `DEBUG_CAPABILITY_DISABLED`，以便 Host 在调用游戏方法前主动探测状态。
 
 #### `game/code/execute`
 
@@ -458,7 +473,9 @@ Host 和 MCDK 都必须处理该请求。它用于心跳和连接活性检测，
 - `code`：必填字符串。
 - `isClient`：可选布尔值，默认 `true`；`true` 转发到客户端侧，`false` 转发到服务端侧。
 - 通知模式使用现有 IPC 消息 `3/4`，成功写入后不返回响应。
-- 请求模式使用 Game IPC `execute_code` 并等待返回；成功时 `result` 是游戏 IPC 返回的完整 JSON object。
+- 请求模式使用 Game IPC `execute_code` 并等待返回；成功时 JSON-RPC `result` 只包含 Python 的返回值。MCDK 必须移除内部 IPC 的 `id`、`ok`、`side`、`return_repr`、`return_type` 等包装字段。
+- Python 返回值本身是合法 JSON 文本字符串时，MCDK 将其解析为对应 JSON 值；普通字符串保持字符串。
+- Python 编译或执行异常返回 `-32100/PYTHON_EXECUTION_FAILED`，只保留稳定错误码、简短消息、执行侧和游戏错误码，不向 Host 暴露内部 traceback。
 - 游戏 IPC 的真实等待超时返回 `HANDLER_TIMEOUT`；前置检查失败或检查后的竞争性断线返回 `GAME_WORLD_NOT_READY`。
 
 #### `game/reload`
@@ -531,6 +548,7 @@ Minecraft 已退出但 Host Bridge 尚未关闭的极短窗口也统一视为 `G
 | `-32011` | `GAME_WORLD_NOT_READY` | 调试能力已开启，但当前不在游戏存档内 |
 | `-32013` | `REQUEST_CANCELLED` | 请求已取消 |
 | `-32014` | `HANDLER_TIMEOUT` | MCDK handler 超时 |
+| `-32100` | `PYTHON_EXECUTION_FAILED` | Python 代码编译或执行失败 |
 
 业务方法可以在 `-32100..-32199` 范围增加错误，必须同时提供稳定的 `data.code`。
 
@@ -887,6 +905,8 @@ transport 层禁止相互调用，例如 Host Bridge 不应通过 HTTP 调用本
 ### 15.5 端到端测试
 
 复用或扩展现有 `tests/ipc_json_test.cpp`：Host 发起 `game/ping`，MCDK 通过 fake Game IPC 请求，再把结果返回 Host。测试至少覆盖成功、游戏 IPC 未连接、游戏 IPC 超时、Host 中途断线四条路径。
+
+仓库中的 `tests/host_bridge_e2e.py` 可作为真实游戏验收脚本：它先监听随机 loopback 端口并通过环境变量启动 MCDK，然后每隔 2 秒调用一次 `game/code/execute`，直到客户端和服务端均返回纯净值。成功或失败后，脚本关闭自己启动的 MCDK 进程树。
 
 ## 16. 版本兼容规则
 

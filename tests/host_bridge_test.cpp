@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -87,6 +88,15 @@ namespace {
 }
 
 int main() {
+    _putenv_s("MCDEV_HOST_PORT", "43123");
+    _putenv_s("MCDEV_HOST_TOKEN", std::string(64, 'b').c_str());
+    const auto& cachedEnvironment = mcdk::getEnvHostBridgeConfig();
+    _putenv_s("MCDEV_HOST_PORT", "43124");
+    const bool environmentCachePassed = cachedEnvironment.enabled && cachedEnvironment.port == 43123
+                                     && mcdk::getEnvHostBridgeConfig().port == 43123;
+    _putenv_s("MCDEV_HOST_PORT", "");
+    _putenv_s("MCDEV_HOST_TOKEN", "");
+
     WSADATA winsock{};
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) {
         return 1;
@@ -235,7 +245,7 @@ int main() {
     closesocket(listener);
     WSACleanup();
 
-    return hostPassed.load() && handlerCalls.load() == 0 ? 0 : 1;
+    return environmentCachePassed && hostPassed.load() && handlerCalls.load() == 0 ? 0 : 1;
 }
 #else
 int main() { return 0; }

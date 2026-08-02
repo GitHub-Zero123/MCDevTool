@@ -433,7 +433,7 @@ void mcdk::launchGameExe(
     const bool  autoHotReloadMaterials = userConfig.hotReload.materials;
     const bool  autoHotReloadParticles = userConfig.hotReload.particles;
     const auto& mcpServerConfig        = userConfig.mcpServer;
-    auto        hostBridgeConfig       = mcdk::loadHostBridgeConfigFromEnvironment();
+    auto        hostBridgeConfig       = mcdk::getEnvHostBridgeConfig();
     const bool  hostBridgeConfigured   = hostBridgeConfig.configured;
     auto        hotReloadDirs =
         modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList) : std::vector<std::filesystem::path>();
@@ -592,6 +592,7 @@ void mcdk::launchGameExe(
     mcdk::ParticleReloadWatcherTask particleReloadTask;
     mcdk::UserStyleProcessor        styleProcessor(0, userConfig.windowStyle);
     mcdk::HostBridgeTask            hostBridgeTask(std::move(hostBridgeConfig));
+    const bool                      debugCapabilityEnabled = userConfig.includeDebugMod && enableIPC;
 
     auto mustBindHostMethod = [](std::expected<void, mcdk::RpcBindError> result) {
         if (!result) {
@@ -613,6 +614,38 @@ void mcdk::launchGameExe(
         });
     };
 
+    mcdk::RpcMethodOptions ipcStatusOptions;
+    ipcStatusOptions.execution        = mcdk::RpcExecutionPolicy::Inline;
+    ipcStatusOptions.gameAvailability = mcdk::GameAvailability::None;
+    ipcStatusOptions.timeout          = std::chrono::seconds(2);
+    ipcStatusOptions.maxConcurrency   = 1;
+    mustBindHostMethod(hostBridgeTask.registry().bindRaw(
+        {
+            .name         = "game/ipc/is-ready",
+            .paramsSchema = {{"type", "object"}},
+            .resultSchema = {
+                {"type", "object"},
+                {"required", {"ready", "debugCapabilityEnabled", "clientCount"}},
+            },
+        },
+        ipcStatusOptions,
+        [ipcServer, debugCapabilityEnabled](const mcdk::RpcContext&, const nlohmann::json& params) -> mcdk::RpcResult {
+            if (!params.is_object()) {
+                return std::unexpected(mcdk::RpcError{
+                    .code    = -32602,
+                    .message = "Invalid params",
+                    .data    = {{"code", "INVALID_PARAMS"}, {"detail", "params must be an object"}},
+                });
+            }
+            const auto clientCount = ipcServer->getClientCount();
+            return nlohmann::json{
+                {"ready", debugCapabilityEnabled && clientCount > 0},
+                {"debugCapabilityEnabled", debugCapabilityEnabled},
+                {"clientCount", clientCount},
+            };
+        }
+    ));
+
     mcdk::RpcMethodOptions gameMethodOptions;
     gameMethodOptions.modes            = mcdk::RpcMode::Request | mcdk::RpcMode::Notification;
     gameMethodOptions.execution        = mcdk::RpcExecutionPolicy::GameSerial;
@@ -628,7 +661,7 @@ void mcdk::launchGameExe(
                 {"required", {"code"}},
                 {"properties", {{"code", {{"type", "string"}}}, {"isClient", {{"type", "boolean"}}}}},
             },
-            .resultSchema = {{"type", "object"}},
+            .resultSchema = nullptr,
         },
         gameMethodOptions,
         [ipcServer, invalidHostParams, gameWorldNotReady](
@@ -668,7 +701,7 @@ void mcdk::launchGameExe(
             }
 
             auto response = ipcResult.responseValue
-                          ? *ipcResult.responseValue
+                          ? std::move(*ipcResult.responseValue)
                           : nlohmann::json::parse(ipcResult.responseJson, nullptr, false);
             if (response.is_discarded() || !response.is_object()) {
                 return std::unexpected(mcdk::RpcError{
@@ -677,7 +710,43 @@ void mcdk::launchGameExe(
                     .data    = {{"code", "INTERNAL_ERROR"}},
                 });
             }
-            return response;
+            if (!response.value("ok", false)) {
+                std::string message  = "Python code execution failed";
+                std::string gameCode = "execute_code_error";
+                const auto  gameError = response.find("error");
+                if (gameError != response.end() && gameError->is_object()) {
+                    message  = gameError->value("message", message);
+                    gameCode = gameError->value("code", gameCode);
+                }
+                return std::unexpected(mcdk::RpcError{
+                    .code    = -32100,
+                    .message = std::move(message),
+                    .data    = {
+                        {"code", "PYTHON_EXECUTION_FAILED"},
+                        {"gameCode", std::move(gameCode)},
+                        {"side", isClient ? "client" : "server"},
+                    },
+                });
+            }
+
+            auto result = response.find("result");
+            if (result == response.end() || !result->is_object() || !result->contains("return_value")) {
+                return std::unexpected(mcdk::RpcError{
+                    .code    = -32603,
+                    .message = "Game IPC response has no return value",
+                    .data    = {{"code", "INTERNAL_ERROR"}},
+                });
+            }
+
+            auto cleanResult = std::move((*result)["return_value"]);
+            if (cleanResult.is_string()) {
+                const auto& serialized = cleanResult.get_ref<const std::string&>();
+                auto nested = nlohmann::json::parse(serialized, nullptr, false);
+                if (!nested.is_discarded()) {
+                    return nested;
+                }
+            }
+            return cleanResult;
         }
     ));
 
@@ -999,7 +1068,6 @@ void mcdk::launchGameExe(
     mcpServer.setMinecraftProcessId(pid);
 
     if (hostBridgeTask.enabled()) {
-        const bool debugCapabilityEnabled = userConfig.includeDebugMod && enableIPC;
         hostBridgeTask.setGameStateProvider([ipcServer, debugCapabilityEnabled] {
             return mcdk::HostBridgeGameState{
                 .debugCapabilityEnabled = debugCapabilityEnabled,

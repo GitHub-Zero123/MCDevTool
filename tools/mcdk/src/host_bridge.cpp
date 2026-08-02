@@ -3,11 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <charconv>
 #include <chrono>
 #include <condition_variable>
-#include <cctype>
-#include <cstdlib>
 #include <ctime>
 #include <deque>
 #include <iomanip>
@@ -42,12 +39,6 @@ namespace mcdk {
         constexpr auto        HandshakeTimeout    = 3s;
         constexpr auto        HeartbeatInterval   = 10s;
         constexpr auto        HeartbeatTimeout    = 30s;
-
-        [[nodiscard]] bool isHexToken(std::string_view token) {
-            return token.size() == 64 && std::ranges::all_of(token, [](const unsigned char character) {
-                return std::isxdigit(character) != 0;
-            });
-        }
 
         [[nodiscard]] std::string makeUuid() {
             std::array<std::uint8_t, 16> bytes{};
@@ -145,34 +136,6 @@ namespace mcdk {
             return wasInWorld ? "game_unavailable" : "process_started";
         }
     } // namespace
-
-    HostBridgeConfig loadHostBridgeConfigFromEnvironment() {
-        HostBridgeConfig config;
-        const auto*      portValue = std::getenv("MCDEV_HOST_PORT");
-        if (portValue == nullptr || *portValue == '\0') {
-            return config;
-        }
-        config.configured = true;
-
-        int parsedPort = 0;
-        const auto* end = portValue + std::char_traits<char>::length(portValue);
-        const auto  parseResult = std::from_chars(portValue, end, parsedPort);
-        if (parseResult.ec != std::errc{} || parseResult.ptr != end || parsedPort <= 0 || parsedPort > 65535) {
-            config.errorMessage = "MCDEV_HOST_PORT must be an integer in 1..65535";
-            return config;
-        }
-
-        const auto* tokenValue = std::getenv("MCDEV_HOST_TOKEN");
-        if (tokenValue == nullptr || !isHexToken(tokenValue)) {
-            config.errorMessage = "MCDEV_HOST_TOKEN must contain exactly 64 hexadecimal characters";
-            return config;
-        }
-
-        config.enabled = true;
-        config.port    = static_cast<std::uint16_t>(parsedPort);
-        config.token   = tokenValue;
-        return config;
-    }
 
     class HostBridgeTask::Impl {
     public:

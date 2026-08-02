@@ -8,19 +8,10 @@
 #include <string>
 
 #include "console.hpp"
+#include "env.hpp"
 #include "rpc_registry.hpp"
 
 namespace mcdk {
-
-    struct HostBridgeConfig {
-        bool          configured = false;
-        bool          enabled = false;
-        std::uint16_t port    = 0;
-        std::string   token;
-        std::string   errorMessage;
-    };
-
-    [[nodiscard]] HostBridgeConfig loadHostBridgeConfigFromEnvironment();
 
     struct HostBridgeSessionInfo {
         std::string           sessionId;
