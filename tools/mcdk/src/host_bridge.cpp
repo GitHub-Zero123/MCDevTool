@@ -857,7 +857,8 @@ namespace mcdk {
                 if (handshakeResult == HandshakeResult::Success) {
                     activeGeneration.store(generation, std::memory_order_release);
                     connected.store(true, std::memory_order_release);
-                    output(ConsoleColor::Green, "[HostBridge] Connected to Host");
+                    // 静默处理
+                    // output(ConsoleColor::Green, "[HostBridge] Connected to Host");
                     announcedWaiting = false;
                     retryIndex       = 0;
                     (void)activeLoop(socket, generation, receiveBuffer);
