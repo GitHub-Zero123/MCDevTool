@@ -25,6 +25,17 @@ add_executable(py_hot_reload_filter_test py_hot_reload_filter_test.cpp)
 target_compile_features(py_hot_reload_filter_test PRIVATE cxx_std_23)
 target_link_libraries(py_hot_reload_filter_test PRIVATE mcdk_core)
 
+add_executable(rpc_registry_test rpc_registry_test.cpp)
+target_compile_features(rpc_registry_test PRIVATE cxx_std_23)
+target_link_libraries(rpc_registry_test PRIVATE mcdk_core)
+
+add_executable(host_bridge_test host_bridge_test.cpp)
+target_compile_features(host_bridge_test PRIVATE cxx_std_23)
+target_link_libraries(host_bridge_test PRIVATE mcdk_runtime)
+if(WIN32)
+    target_link_libraries(host_bridge_test PRIVATE ws2_32)
+endif()
+
 if(TARGET mcdk-api)
     add_executable(mcdk_api_test mcdk_api_test.c)
     target_link_libraries(mcdk_api_test PRIVATE mcdk-api)

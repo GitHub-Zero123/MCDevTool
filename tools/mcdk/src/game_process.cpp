@@ -3,6 +3,7 @@
 #include <game_process.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <sstream>
 #include <cstdint>
 #include <filesystem>
@@ -27,6 +28,7 @@
 #include <console.hpp>
 #include <env.hpp>
 #include <hotreload.hpp>
+#include <host_bridge.hpp>
 #include <ipc_code_execution.hpp>
 #include <jsonui_reload_support.hpp>
 #include <level.hpp>
@@ -366,6 +368,21 @@ static std::wstring convertUtf8ToUtf16(const std::string& utf8Str) {
 }
 
 // 生成新的环境变量w字符串（继承当前环境变量并添加新变量）
+static bool environmentVariableNameEquals(std::wstring_view entry, std::wstring_view expectedName) {
+    const auto separator = entry.find(L'=');
+    if (separator == std::wstring_view::npos || separator == 0) {
+        return false;
+    }
+    const auto name = entry.substr(0, separator);
+    return CompareStringOrdinal(
+               name.data(),
+               static_cast<int>(name.size()),
+               expectedName.data(),
+               static_cast<int>(expectedName.size()),
+               TRUE
+           ) == CSTR_EQUAL;
+}
+
 static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const std::wstring& newValue) {
     // 获取当前环境变量块
     auto envBlock = std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)>(
@@ -382,12 +399,19 @@ static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const 
     LPWCH current = envBlock.get();
     while (*current) {
         std::wstring varLine(current);
-        newEnvBlock += varLine + L'\0';
+        const bool isHostBridgeSecret = environmentVariableNameEquals(varLine, L"MCDEV_HOST_PORT")
+                                     || environmentVariableNameEquals(varLine, L"MCDEV_HOST_TOKEN");
+        const bool isReplacedVariable = !newVar.empty() && environmentVariableNameEquals(varLine, newVar);
+        if (!isHostBridgeSecret && !isReplacedVariable) {
+            newEnvBlock += varLine + L'\0';
+        }
         current     += varLine.size() + 1;
     }
 
     // 添加新的环境变量
-    newEnvBlock += newVar + L'=' + newValue + L'\0';
+    if (!newVar.empty()) {
+        newEnvBlock += newVar + L'=' + newValue + L'\0';
+    }
 
     // 结束环境变量块
     newEnvBlock += L'\0';
@@ -409,6 +433,8 @@ void mcdk::launchGameExe(
     const bool  autoHotReloadMaterials = userConfig.hotReload.materials;
     const bool  autoHotReloadParticles = userConfig.hotReload.particles;
     const auto& mcpServerConfig        = userConfig.mcpServer;
+    auto        hostBridgeConfig       = mcdk::loadHostBridgeConfigFromEnvironment();
+    const bool  hostBridgeConfigured   = hostBridgeConfig.configured;
     auto        hotReloadDirs =
         modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList) : std::vector<std::filesystem::path>();
     auto hotReloadUiDirs         = autoHotReloadUi && linkedPacks != nullptr
@@ -430,7 +456,7 @@ void mcdk::launchGameExe(
     bool enableParticleHotReload = autoHotReloadParticles && !hotReloadParticleDirs.empty();
     bool enableAnyHotReload = enablePyHotReload || enableUiHotReload || enableShaderHotReload || enableMaterialHotReload
                            || enableParticleHotReload;
-    bool  enableIPC     = mcpServerConfig.enabled || enableAnyHotReload;
+    bool  enableIPC     = mcpServerConfig.enabled || enableAnyHotReload || hostBridgeConfig.enabled;
     bool  needLogBuffer = false;
     void* lpEnvironment = nullptr;
 
@@ -565,6 +591,122 @@ void mcdk::launchGameExe(
     mcdk::MaterialReloadWatcherTask materialReloadTask;
     mcdk::ParticleReloadWatcherTask particleReloadTask;
     mcdk::UserStyleProcessor        styleProcessor(0, userConfig.windowStyle);
+    mcdk::HostBridgeTask            hostBridgeTask(std::move(hostBridgeConfig));
+
+    auto mustBindHostMethod = [](std::expected<void, mcdk::RpcBindError> result) {
+        if (!result) {
+            throw std::runtime_error("Failed to register Host Bridge game RPC method");
+        }
+    };
+    auto invalidHostParams = [](std::string detail) -> mcdk::RpcResult {
+        return std::unexpected(mcdk::RpcError{
+            .code    = -32602,
+            .message = "Invalid params",
+            .data    = {{"code", "INVALID_PARAMS"}, {"detail", std::move(detail)}},
+        });
+    };
+    auto gameWorldNotReady = []() -> mcdk::RpcResult {
+        return std::unexpected(mcdk::RpcError{
+            .code    = -32011,
+            .message = "Minecraft has not entered a world",
+            .data    = {{"code", "GAME_WORLD_NOT_READY"}, {"retryable", true}},
+        });
+    };
+
+    mcdk::RpcMethodOptions gameMethodOptions;
+    gameMethodOptions.modes            = mcdk::RpcMode::Request | mcdk::RpcMode::Notification;
+    gameMethodOptions.execution        = mcdk::RpcExecutionPolicy::GameSerial;
+    gameMethodOptions.gameAvailability = mcdk::GameAvailability::InWorld;
+    gameMethodOptions.timeout          = std::chrono::seconds(10);
+    gameMethodOptions.maxConcurrency   = 1;
+
+    mustBindHostMethod(hostBridgeTask.registry().bindRaw(
+        {
+            .name = "game/code/execute",
+            .paramsSchema = {
+                {"type", "object"},
+                {"required", {"code"}},
+                {"properties", {{"code", {{"type", "string"}}}, {"isClient", {{"type", "boolean"}}}}},
+            },
+            .resultSchema = {{"type", "object"}},
+        },
+        gameMethodOptions,
+        [ipcServer, invalidHostParams, gameWorldNotReady](
+            const mcdk::RpcContext& context,
+            const nlohmann::json&   params
+        ) -> mcdk::RpcResult {
+            if (!params.is_object() || !params.contains("code") || !params["code"].is_string()) {
+                return invalidHostParams("code must be a string");
+            }
+            if (params.contains("isClient") && !params["isClient"].is_boolean()) {
+                return invalidHostParams("isClient must be a boolean");
+            }
+
+            const auto& code     = params["code"].get_ref<const std::string&>();
+            const bool  isClient = params.value("isClient", true);
+            if (context.notification) {
+                if (!ipcServer->sendMessage(isClient ? 3 : 4, code)) {
+                    return gameWorldNotReady();
+                }
+                return nlohmann::json{{"accepted", true}};
+            }
+
+            auto ipcResult = ipcServer->requestJsonValue(
+                "execute_code",
+                {{"code", code}, {"is_client", isClient}},
+                10000
+            );
+            if (!ipcResult.success) {
+                if (ipcResult.timeout) {
+                    return std::unexpected(mcdk::RpcError{
+                        .code    = -32014,
+                        .message = "Game IPC handler timed out",
+                        .data    = {{"code", "HANDLER_TIMEOUT"}},
+                    });
+                }
+                return gameWorldNotReady();
+            }
+
+            auto response = ipcResult.responseValue
+                          ? *ipcResult.responseValue
+                          : nlohmann::json::parse(ipcResult.responseJson, nullptr, false);
+            if (response.is_discarded() || !response.is_object()) {
+                return std::unexpected(mcdk::RpcError{
+                    .code    = -32603,
+                    .message = "Game IPC returned invalid JSON",
+                    .data    = {{"code", "INTERNAL_ERROR"}},
+                });
+            }
+            return response;
+        }
+    ));
+
+    mustBindHostMethod(hostBridgeTask.registry().bindRaw(
+        {
+            .name = "game/reload",
+            .paramsSchema = {
+                {"type", "object"},
+                {"properties", {{"addons", {{"type", "boolean"}}}}},
+            },
+            .resultSchema = {{"type", "object"}},
+        },
+        gameMethodOptions,
+        [ipcServer, logBuffer, errBuffer, invalidHostParams, gameWorldNotReady](
+            const mcdk::RpcContext&,
+            const nlohmann::json& params
+        ) -> mcdk::RpcResult {
+            if (!params.is_object() || (params.contains("addons") && !params["addons"].is_boolean())) {
+                return invalidHostParams("addons must be a boolean");
+            }
+            const bool reloadAddons = params.value("addons", false);
+            if (!ipcServer->sendMessage(reloadAddons ? 8 : 5)) {
+                return gameWorldNotReady();
+            }
+            logBuffer->clear();
+            errBuffer->clear();
+            return nlohmann::json{{"accepted", true}, {"addons", reloadAddons}};
+        }
+    ));
     pyReloadTask.setHotReloadAction([ipcServer](const mcdk::ReloadNames& targetPaths) {
         ipcServer->sendMessage(2, nlohmann::json(targetPaths).dump()); // FAST RELOAD
     });
@@ -740,14 +882,20 @@ void mcdk::launchGameExe(
     materialReloadTask.setOutputCallback(printColoredAtomic);
     particleReloadTask.setOutputCallback(printColoredAtomic);
     styleProcessor.setOutputCallback(printColoredAtomic);
+    hostBridgeTask.setOutputCallback(printColoredAtomic);
 
     std::wstring newEnv;
     if (enableIPC) {
         ipcServer->start();
         int port = ipcServer->getPort();
         printColoredAtomic("[MCDK] IPC Bridge listening on port " + std::to_string(port), ConsoleColor::Green);
-        newEnv        = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
-        lpEnvironment = (void*)newEnv.data();
+        newEnv = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
+    } else if (hostBridgeConfigured) {
+        // A configured but invalid bridge is disabled, but its token must still not reach Minecraft.
+        newEnv = createNewEnvironmentBlock(L"", L"");
+    }
+    if (!newEnv.empty()) {
+        lpEnvironment = static_cast<void*>(newEnv.data());
     }
 
     STARTUPINFOW        si = {sizeof(si)};
@@ -849,6 +997,29 @@ void mcdk::launchGameExe(
     // 设置样式处理器PID
     styleProcessor.setPid(pid);
     mcpServer.setMinecraftProcessId(pid);
+
+    if (hostBridgeTask.enabled()) {
+        const bool debugCapabilityEnabled = userConfig.includeDebugMod && enableIPC;
+        hostBridgeTask.setGameStateProvider([ipcServer, debugCapabilityEnabled] {
+            return mcdk::HostBridgeGameState{
+                .debugCapabilityEnabled = debugCapabilityEnabled,
+                .gameIpcClientCount      = ipcServer->getClientCount(),
+            };
+        });
+        hostBridgeTask.setSessionInfo({
+            .mcdkPid                = GetCurrentProcessId(),
+            .minecraftPid           = pid,
+            .gameIpcPort            = enableIPC ? ipcServer->getPort() : std::uint16_t{0},
+            .debugCapabilityEnabled = debugCapabilityEnabled,
+            .projectRoot            = std::filesystem::current_path(),
+            .worldName              = userConfig.world.name,
+            .worldFolderName        = userConfig.world.folderName,
+            .worldRuntimePath       = MCDevTool::getMinecraftWorldsPath()
+                                    / std::filesystem::u8path(userConfig.world.folderName),
+            .worldSourcePath        = mcdk::resolveWorldSourcePath(userConfig.world.source),
+        });
+    }
+    hostBridgeTask.start();
 
     // 父进程不需要写端
     outWrite.reset();
@@ -1001,6 +1172,12 @@ void mcdk::launchGameExe(
     // ERROR_BROKEN_PIPE）
     WaitForSingleObject(processHandle.get(), INFINITE);
 
+    DWORD minecraftExitCode = 0;
+    if (!GetExitCodeProcess(processHandle.get(), &minecraftExitCode)) {
+        minecraftExitCode = static_cast<DWORD>(-1);
+    }
+    hostBridgeTask.notifyMinecraftExited(minecraftExitCode);
+
     // 停止热更新任务
     pyReloadTask.safeExit();
     uiReloadTask.safeExit();
@@ -1009,6 +1186,7 @@ void mcdk::launchGameExe(
     particleReloadTask.safeExit();
     // 停止IPC服务器 如果已启用
     ipcServer->safeExit();
+    hostBridgeTask.safeExit();
     // 停止样式处理器
     styleProcessor.safeExit();
     // 安全的关闭MCP服务器(如果已启用)

@@ -1,6 +1,6 @@
 # MCDK Host Bridge Protocol v1
 
-状态：Draft v1
+状态：Draft v1，MCDK C++ 首版实现
 
 本文定义 VSCode 扩展或其他桌面客户端与 MCDK 之间的本地双向通信协议，以及 MCDK 内部用于注册远程可调用函数的 C++ 接口。客户端负责监听，MCDK 负责主动连接。
 
@@ -441,6 +441,39 @@ Host 和 MCDK 都必须处理该请求。它用于心跳和连接活性检测，
 | `game/ui/reload` | request、notification | `worker` | Minecraft 窗口 UI reload shortcut |
 | `logs/latest` | request | `worker` | `LogBuffer` |
 | `logs/errors/latest` | request | `worker` | error `LogBuffer` |
+
+首版 MCDK 实现以下两个游戏方法：
+
+#### `game/code/execute`
+
+参数：
+
+```json
+{
+  "code": "print('hello')",
+  "isClient": true
+}
+```
+
+- `code`：必填字符串。
+- `isClient`：可选布尔值，默认 `true`；`true` 转发到客户端侧，`false` 转发到服务端侧。
+- 通知模式使用现有 IPC 消息 `3/4`，成功写入后不返回响应。
+- 请求模式使用 Game IPC `execute_code` 并等待返回；成功时 `result` 是游戏 IPC 返回的完整 JSON object。
+- 游戏 IPC 的真实等待超时返回 `HANDLER_TIMEOUT`；前置检查失败或检查后的竞争性断线返回 `GAME_WORLD_NOT_READY`。
+
+#### `game/reload`
+
+参数：
+
+```json
+{
+  "addons": false
+}
+```
+
+- `addons`：可选布尔值，默认 `false`。
+- `false` 转发现有 IPC 消息 `5`，`true` 转发消息 `8`。
+- 请求成功返回 `{"accepted":true,"addons":<实际值>}`；通知模式执行相同操作但不返回响应。
 
 ### 9.6 游戏转发方法的存档就绪判定
 

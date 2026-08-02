@@ -16,6 +16,7 @@ add_library(mcdk_core STATIC
     src/mod_dir_config.cpp
     src/mod_register.cpp
     src/reload_code.cpp
+    src/rpc_registry.cpp
     src/style_processor.cpp
     src/utils.cpp
     src/world_project.cpp
@@ -27,10 +28,14 @@ target_link_libraries(mcdk_core PUBLIC mcdevtool PRIVATE mcp MCDEV_MOD_RESOURCE)
 add_library(mcdk_runtime STATIC
     src/application.cpp
     src/game_process.cpp
+    src/host_bridge.cpp
     src/mcp_server.cpp
 )
 target_compile_features(mcdk_runtime PUBLIC cxx_std_23)
 target_link_libraries(mcdk_runtime PUBLIC mcdk_core PRIVATE mcp)
+if(WIN32)
+    target_link_libraries(mcdk_runtime PRIVATE ws2_32)
+endif()
 
 add_executable(mcdk main.cpp)
 target_compile_features(mcdk PRIVATE cxx_std_23)

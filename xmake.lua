@@ -157,6 +157,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/mod_dir_config.cpp",
             "tools/mcdk/src/mod_register.cpp",
             "tools/mcdk/src/reload_code.cpp",
+            "tools/mcdk/src/rpc_registry.cpp",
             "tools/mcdk/src/style_processor.cpp",
             "tools/mcdk/src/utils.cpp",
             "tools/mcdk/src/world_project.cpp"
@@ -171,9 +172,13 @@ if has_config("build_mcdk") then
         add_files(
             "tools/mcdk/src/application.cpp",
             "tools/mcdk/src/game_process.cpp",
+            "tools/mcdk/src/host_bridge.cpp",
             "tools/mcdk/src/mcp_server.cpp"
         )
         add_deps("mcdk_core", "mcp")
+        if is_plat("windows") then
+            add_syslinks("ws2_32")
+        end
     target_end()
 
     target("mcdk")
@@ -215,5 +220,24 @@ if has_config("build_test") then
         set_kind("binary")
         add_files("tests/test3.cpp")
     target_end()
+
+    if has_config("build_mcdk") then
+        target("rpc_registry_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/rpc_registry_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("host_bridge_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/host_bridge_test.cpp")
+            add_deps("mcdk_runtime")
+            if is_plat("windows") then
+                add_syslinks("ws2_32")
+            end
+        target_end()
+    end
 
 end
