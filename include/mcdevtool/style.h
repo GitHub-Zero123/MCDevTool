@@ -7,6 +7,35 @@
 #include <cstdint>
 
 namespace MCDevTool::Style {
+    struct RgbColor {
+        uint8_t red   = 0;
+        uint8_t green = 0;
+        uint8_t blue  = 0;
+
+        bool operator==(const RgbColor&) const = default;
+    };
+
+    struct WindowSize {
+        int width  = 0;
+        int height = 0;
+
+        bool operator==(const WindowSize&) const = default;
+    };
+
+    struct WindowPosition {
+        int x = 0;
+        int y = 0;
+
+        bool operator==(const WindowPosition&) const = default;
+    };
+
+    enum class WindowCorner : int {
+        TopLeft     = 1,
+        TopRight    = 2,
+        BottomLeft  = 3,
+        BottomRight = 4,
+    };
+
     struct StyleConfig {
         // 悬浮置顶
         bool alwaysOnTop = false;
@@ -15,15 +44,15 @@ namespace MCDevTool::Style {
         // 隐藏任务栏图标
         bool hideTaskbarIcon = false;
         // 自定义标题栏颜色 null | int[R,G,B] (0-255)
-        std::optional<std::vector<uint8_t>> titleBarColor = std::nullopt; // RGB
+        std::optional<RgbColor> titleBarColor = std::nullopt;
         // 窗口整体不透明度 null | int (0-255)
         std::optional<uint8_t> windowOpacity = std::nullopt;
         // 锁定大小 null | int[w, h]
-        std::optional<std::vector<int>> fixedSize = std::nullopt; // [w, h]
+        std::optional<WindowSize> fixedSize = std::nullopt;
         // 锁定屏幕位置 null | int[x, y]
-        std::optional<std::vector<int>> fixedPosition = std::nullopt; // [x, y]
+        std::optional<WindowPosition> fixedPosition = std::nullopt;
         // 锁定在屏幕四个脚落（覆盖fixed_position）1. 左上 2. 右上 3. 左下 4. 右下 null | int
-        std::optional<int> lockCorner = std::nullopt;
+        std::optional<WindowCorner> lockCorner = std::nullopt;
     };
 
     // 设置指定pid的Minecraft窗口样式

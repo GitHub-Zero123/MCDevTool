@@ -12,7 +12,7 @@
 #include <io.h>
 #endif
 
-#include "../mcdk/modules/mcp_tool_definitions.hpp"
+#include <mcp_tool_definitions.hpp>
 
 #include <httplib.h>
 #include <mcp_message.h>
@@ -92,8 +92,8 @@ namespace {
     BridgeConfig parseArgs(int argc, char** argv) {
         BridgeConfig config;
         for (int i = 1; i < argc; ++i) {
-            std::string arg = argv[i] ? argv[i] : "";
-            auto readNext = [&](std::string& target) {
+            std::string arg      = argv[i] ? argv[i] : "";
+            auto        readNext = [&](std::string& target) {
                 if (i + 1 < argc) {
                     target = argv[++i] ? argv[i] : "";
                 }
@@ -128,16 +128,18 @@ namespace {
         return config;
     }
 
-    json makeTextContent(const std::string& text) {
-        return json::array({{{"type", "text"}, {"text", text}}});
-    }
+    json makeTextContent(const std::string& text) { return json::array({{{"type", "text"}, {"text", text}}}); }
 
     json makeToolErrorResult(const std::string& text) {
         return json{{"isError", true}, {"content", makeTextContent(text)}};
     }
 
     json makeErrorResponse(const json& id, mcp::error_code code, const std::string& message) {
-        return json{{"jsonrpc", "2.0"}, {"id", id}, {"error", {{"code", static_cast<int>(code)}, {"message", message}}}};
+        return json{
+            {"jsonrpc", "2.0"},
+            {"id", id},
+            {"error", {{"code", static_cast<int>(code)}, {"message", message}}}
+        };
     }
 
     json makeSuccessResponse(const json& id, const json& result) {
@@ -175,7 +177,8 @@ namespace {
 
                 size_t contentLength = 0;
                 try {
-                    contentLength = static_cast<size_t>(std::stoull(trim(std::string_view(firstLine).substr(colon + 1))));
+                    contentLength =
+                        static_cast<size_t>(std::stoull(trim(std::string_view(firstLine).substr(colon + 1))));
                 } catch (...) {
                     return std::nullopt;
                 }
@@ -222,13 +225,31 @@ namespace {
             }
 
             json response;
-            if (!postJson(json{{"jsonrpc", "2.0"}, {"id", nextId_++}, {"method", "tools/call"}, {"params", {{"name", name}, {"arguments", arguments}}}}, response, error)) {
+            if (!postJson(
+                    json{
+                        {"jsonrpc", "2.0"},
+                        {"id", nextId_++},
+                        {"method", "tools/call"},
+                        {"params", {{"name", name}, {"arguments", arguments}}}
+                    },
+                    response,
+                    error
+                )) {
                 connected_ = false;
                 sessionId_.clear();
                 if (!ensureConnected(error)) {
                     return makeToolErrorResult(error);
                 }
-                if (!postJson(json{{"jsonrpc", "2.0"}, {"id", nextId_++}, {"method", "tools/call"}, {"params", {{"name", name}, {"arguments", arguments}}}}, response, error)) {
+                if (!postJson(
+                        json{
+                            {"jsonrpc", "2.0"},
+                            {"id", nextId_++},
+                            {"method", "tools/call"},
+                            {"params", {{"name", name}, {"arguments", arguments}}}
+                        },
+                        response,
+                        error
+                    )) {
                     connected_ = false;
                     sessionId_.clear();
                     return makeToolErrorResult(error);
@@ -298,8 +319,8 @@ namespace {
             sessionId_ = sessionHeader->second;
             connected_ = true;
 
-            json initializedNotification = {{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}};
-            json ignored;
+            json        initializedNotification = {{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}};
+            json        ignored;
             std::string ignoredError;
             postJson(initializedNotification, ignored, ignoredError);
             return true;
@@ -308,7 +329,7 @@ namespace {
         bool ping() {
             json        response;
             std::string error;
-            bool ok = postJson(json{{"jsonrpc", "2.0"}, {"id", nextId_++}, {"method", "ping"}}, response, error);
+            bool        ok = postJson(json{{"jsonrpc", "2.0"}, {"id", nextId_++}, {"method", "ping"}}, response, error);
             return ok && !response.contains("error");
         }
 
@@ -355,7 +376,7 @@ namespace {
         std::string notReadyMessage(const std::string& detail) const {
             return "Minecraft has not been launched through MCDK, or MCDK MCP is not enabled/configured. "
                    "Please start the game with MCDK and enable mcp_server_config first. Target endpoint: "
-                + baseUrl() + StreamableEndpoint + ". Detail: " + detail;
+                 + baseUrl() + StreamableEndpoint + ". Detail: " + detail;
         }
 
         BridgeConfig config_;
@@ -392,8 +413,8 @@ namespace {
                 return makeErrorResponse(id, mcp::error_code::invalid_request, "Invalid JSON-RPC request");
             }
 
-            const bool isNotification = !message.contains("id") || message["id"].is_null();
-            json       id             = isNotification ? nullptr : message["id"];
+            const bool  isNotification = !message.contains("id") || message["id"].is_null();
+            json        id             = isNotification ? nullptr : message["id"];
             std::string method         = message.value("method", "");
             json        params         = message.value("params", json::object());
 

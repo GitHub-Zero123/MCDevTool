@@ -69,12 +69,7 @@ namespace MCDevTool::Style {
         }
 
         ITaskbarList* taskbarList = nullptr;
-        if (SUCCEEDED(CoCreateInstance(
-                CLSID_TaskbarList,
-                nullptr,
-                CLSCTX_INPROC_SERVER,
-                IID_PPV_ARGS(&taskbarList)
-            ))) {
+        if (SUCCEEDED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&taskbarList)))) {
             if (SUCCEEDED(taskbarList->HrInit())) {
                 taskbarList->DeleteTab(hwnd);
             }
@@ -148,12 +143,10 @@ namespace MCDevTool::Style {
 
         // 标题栏颜色
         if (config.titleBarColor.has_value()) {
-            const auto& colorVec = config.titleBarColor.value();
-            if (colorVec.size() >= 3) {
-                COLORREF captionColor =
-                    RGB(static_cast<BYTE>(colorVec[0]), static_cast<BYTE>(colorVec[1]), static_cast<BYTE>(colorVec[2]));
-                DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &captionColor, sizeof(captionColor));
-            }
+            const auto& color = config.titleBarColor.value();
+            COLORREF    captionColor =
+                RGB(static_cast<BYTE>(color.red), static_cast<BYTE>(color.green), static_cast<BYTE>(color.blue));
+            DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &captionColor, sizeof(captionColor));
         }
 
         // 窗口整体不透明度（包括客户区和标题栏）
@@ -167,27 +160,22 @@ namespace MCDevTool::Style {
 
         // 固定大小：配置视为“客户区物理像素”，按 DPI 反推需要设置的窗口外框尺寸
         if (config.fixedSize.has_value()) {
-            const auto& sizeVec = config.fixedSize.value();
-            if (sizeVec.size() >= 2) {
-                int clientPhysicalW = sizeVec[0];
-                int clientPhysicalH = sizeVec[1];
+            const auto& size = config.fixedSize.value();
+            // 物理客户区 -> 逻辑客户区
+            int clientLogicalW = static_cast<int>(size.width / dpiScale + 0.5);
+            int clientLogicalH = static_cast<int>(size.height / dpiScale + 0.5);
 
-                // 物理客户区 -> 逻辑客户区
-                int clientLogicalW = static_cast<int>(clientPhysicalW / dpiScale + 0.5);
-                int clientLogicalH = static_cast<int>(clientPhysicalH / dpiScale + 0.5);
-
-                LONG style   = GetWindowLongW(hwnd, GWL_STYLE);
-                LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
-                RECT rc      = {0, 0, clientLogicalW, clientLogicalH};
-                if (AdjustWindowRectEx(&rc, static_cast<DWORD>(style), FALSE, static_cast<DWORD>(exStyle))) {
-                    targetW = rc.right - rc.left;
-                    targetH = rc.bottom - rc.top;
-                } else {
-                    targetW = clientLogicalW;
-                    targetH = clientLogicalH;
-                }
-                needSize = true;
+            LONG style   = GetWindowLongW(hwnd, GWL_STYLE);
+            LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            RECT rc      = {0, 0, clientLogicalW, clientLogicalH};
+            if (AdjustWindowRectEx(&rc, static_cast<DWORD>(style), FALSE, static_cast<DWORD>(exStyle))) {
+                targetW = rc.right - rc.left;
+                targetH = rc.bottom - rc.top;
+            } else {
+                targetW = clientLogicalW;
+                targetH = clientLogicalH;
             }
+            needSize = true;
         }
 
         if (needStyle || needSize || config.alwaysOnTop) {
@@ -216,12 +204,10 @@ namespace MCDevTool::Style {
 
         // 固定位置
         if (config.fixedPosition.has_value()) {
-            const auto& posVec = config.fixedPosition.value();
-            if (posVec.size() >= 2) {
-                targetX  = posVec[0];
-                targetY  = posVec[1];
-                needMove = true;
-            }
+            const auto& position = config.fixedPosition.value();
+            targetX              = position.x;
+            targetY              = position.y;
+            needMove             = true;
         }
 
         // 锁定角落（优先级高于 fixedPosition）
@@ -234,19 +220,19 @@ namespace MCDevTool::Style {
             int workTop    = workArea.top;
 
             switch (config.lockCorner.value()) {
-            case 1: // 左上
+            case WindowCorner::TopLeft:
                 targetX = workLeft;
                 targetY = workTop;
                 break;
-            case 2: // 右上
+            case WindowCorner::TopRight:
                 targetX = workLeft + workWidth - w;
                 targetY = workTop;
                 break;
-            case 3: // 左下
+            case WindowCorner::BottomLeft:
                 targetX = workLeft;
                 targetY = workTop + workHeight - h;
                 break;
-            case 4: // 右下
+            case WindowCorner::BottomRight:
                 targetX = workLeft + workWidth - w;
                 targetY = workTop + workHeight - h;
                 break;
@@ -621,7 +607,7 @@ namespace MCDevTool::Style {
     bool triggerMinecraftUiReloadShortcut(int pid) {
 #ifdef _WIN32
         static const std::wstring keyword = L"Minecraft";
-        HWND hwnd = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
+        HWND                      hwnd    = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
         if (!hwnd) {
             return false;
         }
@@ -631,7 +617,7 @@ namespace MCDevTool::Style {
         }
 
         auto makeKeyLParam = [](UINT vk, bool keyUp) -> LPARAM {
-            UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+            UINT   scan   = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
             LPARAM lParam = 1 | (static_cast<LPARAM>(scan) << 16);
             if (keyUp) {
                 lParam |= (1LL << 30) | (1LL << 31);
@@ -639,11 +625,10 @@ namespace MCDevTool::Style {
             return lParam;
         };
 
-        const bool ok =
-            PostMessageW(hwnd, WM_KEYDOWN, VK_CONTROL, makeKeyLParam(VK_CONTROL, false)) &&
-            PostMessageW(hwnd, WM_KEYDOWN, 'R', makeKeyLParam('R', false)) &&
-            PostMessageW(hwnd, WM_KEYUP, 'R', makeKeyLParam('R', true)) &&
-            PostMessageW(hwnd, WM_KEYUP, VK_CONTROL, makeKeyLParam(VK_CONTROL, true));
+        const bool ok = PostMessageW(hwnd, WM_KEYDOWN, VK_CONTROL, makeKeyLParam(VK_CONTROL, false))
+                     && PostMessageW(hwnd, WM_KEYDOWN, 'R', makeKeyLParam('R', false))
+                     && PostMessageW(hwnd, WM_KEYUP, 'R', makeKeyLParam('R', true))
+                     && PostMessageW(hwnd, WM_KEYUP, VK_CONTROL, makeKeyLParam(VK_CONTROL, true));
         return ok;
 #else
         (void)pid;

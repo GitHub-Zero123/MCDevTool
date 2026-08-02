@@ -16,11 +16,13 @@ namespace MCDevTool::Addon {
             // 解析失败
             return;
         }
-        auto header = manifestJson.value("header", json::object());
-        out.name    = header.value("name", "");
-        out.uuid    = header.value("uuid", "");
-        // 对于版本号 通常是[]数组 此处保存为字符串避免引入额外的类型依赖
-        out.version  = header.value("version", json::array()).dump();
+        auto header        = manifestJson.value("header", json::object());
+        out.name           = header.value("name", "");
+        out.uuid           = header.value("uuid", "");
+        const auto version = header.value("version", json::array());
+        if (version.is_array()) {
+            out.version = version.get<std::vector<uint32_t>>();
+        }
         auto modules = manifestJson.value("modules", json::array());
         // 包类型判定依据需要通过遍历modules数组匹配
         for (const auto& module : modules) {

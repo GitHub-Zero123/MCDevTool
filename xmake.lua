@@ -65,6 +65,20 @@ end
 
 includes("libs/nbt")
 
+target("mcp")
+    set_kind("static")
+    set_languages("c++17")
+    add_files("libs/cpp-mcp/src/*.cpp")
+    add_includedirs(
+        "libs/cpp-mcp/include",
+        "libs/cpp-mcp/common",
+        {public = true}
+    )
+    if is_plat("windows") then
+        add_syslinks("ws2_32", {public = true})
+    end
+target_end()
+
 target("mcdevtool")
     set_kind("object")
     add_files(
@@ -74,7 +88,8 @@ target("mcdevtool")
         "src/utils.cpp",
         "src/reload.cpp",
         "src/debug.cpp",
-        "src/style.cpp"
+        "src/style.cpp",
+        "src/game_discovery.cpp"
     )
     add_includedirs("include", {public = true})
     add_includedirs("libs/nlohmann", {public = true})
@@ -125,17 +140,54 @@ target("mcdev_mod_resource")
 target_end()
 
 if has_config("build_mcdk") then
+    target("mcdk_core")
+        set_kind("static")
+        set_languages("c++23")
+        add_files(
+            "tools/mcdk/src/config.cpp",
+            "tools/mcdk/src/env.cpp",
+            "tools/mcdk/src/hotreload.cpp",
+            "tools/mcdk/src/ipc_code_execution.cpp",
+            "tools/mcdk/src/json_diagnostics.cpp",
+            "tools/mcdk/src/jsonui_debugger.cpp",
+            "tools/mcdk/src/jsonui_reload_support.cpp",
+            "tools/mcdk/src/level.cpp",
+            "tools/mcdk/src/log_buffer.cpp",
+            "tools/mcdk/src/mcp_tool_definitions.cpp",
+            "tools/mcdk/src/mod_dir_config.cpp",
+            "tools/mcdk/src/mod_register.cpp",
+            "tools/mcdk/src/reload_code.cpp",
+            "tools/mcdk/src/style_processor.cpp",
+            "tools/mcdk/src/utils.cpp",
+            "tools/mcdk/src/world_project.cpp"
+        )
+        add_includedirs("tools/mcdk/include", {public = true})
+        add_deps("mcdevtool", "mcp", "mcdev_mod_resource")
+    target_end()
+
+    target("mcdk_runtime")
+        set_kind("static")
+        set_languages("c++23")
+        add_files(
+            "tools/mcdk/src/application.cpp",
+            "tools/mcdk/src/game_process.cpp",
+            "tools/mcdk/src/mcp_server.cpp"
+        )
+        add_deps("mcdk_core", "mcp")
+    target_end()
+
     target("mcdk")
         set_kind("binary")
+        set_languages("c++23")
         add_files("tools/mcdk/main.cpp")
-        add_deps("mcdevtool", "mcdev_mod_resource")
-        add_includedirs("mods/Resource")
-        
+        add_deps("mcdk_runtime")
+        add_includedirs("tools/mcdk/libs")
+
         if has_config("mcdk_enable_cli") then
             add_defines("MCDK_ENABLE_CLI")
-            add_files("tools/mcdk/cli.cpp")
+            add_files("tools/mcdk/src/cli.cpp")
         end
-        
+
         if is_plat("windows") then
             on_load(function (target)
                 if target:toolchain("clang") or target:toolchain("clang-cl") then
@@ -163,4 +215,5 @@ if has_config("build_test") then
         set_kind("binary")
         add_files("tests/test3.cpp")
     target_end()
+
 end

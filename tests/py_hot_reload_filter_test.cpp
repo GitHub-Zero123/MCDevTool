@@ -1,4 +1,4 @@
-#include "../tools/mcdk/modules/hotreload.hpp"
+#include <hotreload.hpp>
 
 #include <chrono>
 #include <filesystem>

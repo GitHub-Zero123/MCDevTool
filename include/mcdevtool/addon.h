@@ -1,10 +1,10 @@
 #pragma once
+#include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-#include <cstdint>
-#include <filesystem>
 
 namespace MCDevTool::Addon {
     enum class PackType { BEHAVIOR, RESOURCE, UNKNOWN };
@@ -12,7 +12,7 @@ namespace MCDevTool::Addon {
     struct PackInfo {
         std::string           name;
         std::string           uuid;
-        std::string           version;
+        std::vector<uint32_t> version;
         std::filesystem::path path;
         std::filesystem::path srcPath;
         PackType              type = PackType::UNKNOWN;
