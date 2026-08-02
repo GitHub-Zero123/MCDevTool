@@ -75,8 +75,8 @@
 ```
 
 ## vscode断点调试
-您可以通过配置**launch.json**以便在**vscode**中调试Mod代码，例如：
-
+使用插件扩展可直接提供可视化的断点能力支持。
+<!-- 
 ```jsonc
 // .vscode/launch.json
 // 注：断点支持依赖mcdbg后端，需要在mcdev.json文件中配置启用，另见debugger/README.md
@@ -109,7 +109,7 @@
 1. 点击菜单栏中的 `Run → Edit Configurations`
 2. 打开`创建 Run Configuration`
 3. 创建新的配置项
-4. 配置`Shell Script`执行`mcdk`
+4. 配置`Shell Script`执行`mcdk` -->
 
 <!-- ## 在pycharm中调试
 
