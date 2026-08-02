@@ -14,7 +14,9 @@ namespace mcdk {
         mBuffer.push_back(std::move(line));
         if (mBuffer.size() > mCapacity) {
             const auto count = std::min(mClearBatchSize, mBuffer.size());
-            mBuffer.erase(mBuffer.begin(), mBuffer.begin() + static_cast<std::ptrdiff_t>(count));
+            for (std::size_t index = 0; index < count; ++index) {
+                mBuffer.pop_front();
+            }
         }
     }
 
@@ -26,9 +28,13 @@ namespace mcdk {
     std::vector<std::string> LogBuffer::getLatest(std::size_t maxCount) {
         std::lock_guard lock(mMutex);
         if (maxCount >= mBuffer.size()) {
-            return mBuffer;
+            // Keep deque as the internal eviction-friendly storage while preserving the vector-based public API.
+            return std::vector<std::string>(mBuffer.begin(), mBuffer.end());
         }
-        return {mBuffer.end() - static_cast<std::ptrdiff_t>(maxCount), mBuffer.end()};
+        return std::vector<std::string>(
+            mBuffer.end() - static_cast<std::ptrdiff_t>(maxCount),
+            mBuffer.end()
+        );
     }
 
     std::vector<std::string> LogBuffer::getLatestReversed(std::size_t maxCount) {
@@ -42,10 +48,10 @@ namespace mcdk {
         if (mBuffer.empty() || index >= mBuffer.size() || endIndex > mBuffer.size() || index >= endIndex) {
             return {};
         }
-        return {
+        return std::vector<std::string>(
             mBuffer.end() - static_cast<std::ptrdiff_t>(endIndex),
-            mBuffer.end() - static_cast<std::ptrdiff_t>(index),
-        };
+            mBuffer.end() - static_cast<std::ptrdiff_t>(index)
+        );
     }
 
     std::vector<std::string> LogBuffer::getRangeReversed(std::size_t index, std::size_t endIndex) {

@@ -65,7 +65,7 @@ namespace MCDevTool::Style {
         MinecraftWindowStyler(int pid, StyleConfig&& config);
         MinecraftWindowStyler(int pid);
         MinecraftWindowStyler()          = default;
-        virtual ~MinecraftWindowStyler() = default;
+        virtual ~MinecraftWindowStyler();
 
         virtual void onStyleApplied();
 

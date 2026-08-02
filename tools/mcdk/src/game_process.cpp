@@ -10,6 +10,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <regex>
@@ -64,6 +65,50 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+namespace {
+    class UniqueHandle {
+    public:
+        UniqueHandle() = default;
+        explicit UniqueHandle(HANDLE handle) noexcept : mHandle(handle) {}
+        ~UniqueHandle() { reset(); }
+
+        UniqueHandle(const UniqueHandle&)            = delete;
+        UniqueHandle& operator=(const UniqueHandle&) = delete;
+
+        UniqueHandle(UniqueHandle&& other) noexcept : mHandle(other.release()) {}
+
+        UniqueHandle& operator=(UniqueHandle&& other) noexcept {
+            if (this != &other) {
+                reset(other.release());
+            }
+            return *this;
+        }
+
+        [[nodiscard]] HANDLE get() const noexcept { return mHandle; }
+
+        HANDLE* receive() noexcept {
+            reset();
+            return &mHandle;
+        }
+
+        HANDLE release() noexcept {
+            const HANDLE handle = mHandle;
+            mHandle             = nullptr;
+            return handle;
+        }
+
+        void reset(HANDLE handle = nullptr) noexcept {
+            if (mHandle != nullptr && mHandle != INVALID_HANDLE_VALUE) {
+                CloseHandle(mHandle);
+            }
+            mHandle = handle;
+        }
+
+    private:
+        HANDLE mHandle = nullptr;
+    };
+} // namespace
 #endif
 
 using mcdk::printColoredAtomic;
@@ -164,14 +209,15 @@ static void processBufferAppend(
     const char*                                    buf,
     size_t                                         len,
     bool                                           filterPython,
-    const std::function<void(const std::string&)>& processLine
+    const std::function<void(std::string)>&        processLine
 ) {
     lineBuf.append(buf, len);
 
-    size_t pos = 0;
-    while ((pos = lineBuf.find('\n')) != std::string::npos) {
-        std::string line = lineBuf.substr(0, pos);
-        lineBuf.erase(0, pos + 1);
+    size_t consumed = 0;
+    size_t pos      = 0;
+    while ((pos = lineBuf.find('\n', consumed)) != std::string::npos) {
+        std::string line = lineBuf.substr(consumed, pos - consumed);
+        consumed         = pos + 1;
 
         // 去除行尾可能存在的 '\r'
         if (!line.empty() && line.back() == '\r') {
@@ -181,7 +227,11 @@ static void processBufferAppend(
         // 过滤：若启用只保留 [Python] 则丢弃其它
         if (filterPython && line.find("[Python] ") == std::string::npos) continue;
 
-        processLine(line);
+        processLine(std::move(line));
+    }
+    if (consumed != 0) {
+        // Remove all completed lines once instead of shifting the string after every newline.
+        lineBuf.erase(0, consumed);
     }
 }
 
@@ -189,7 +239,7 @@ static void processBufferAppend(
 
 // pipe线程处理函数
 static void
-readPipeThread(HANDLE hPipe, bool filterPython, const std::function<void(const std::string&)>& processLine) {
+readPipeThread(HANDLE hPipe, bool filterPython, const std::function<void(std::string)>& processLine) {
     constexpr DWORD   BUFSZ = 4096;
     std::string       lineBuf;
     std::vector<char> buffer(BUFSZ);
@@ -206,7 +256,9 @@ readPipeThread(HANDLE hPipe, bool filterPython, const std::function<void(const s
                     // 没有换行但还有内容，作为最后一行处理
                     std::string lastLine = lineBuf;
                     if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
-                    if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) processLine(lastLine);
+                    if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) {
+                        processLine(std::move(lastLine));
+                    }
                     lineBuf.clear();
                 }
                 break;
@@ -222,7 +274,9 @@ readPipeThread(HANDLE hPipe, bool filterPython, const std::function<void(const s
             if (!lineBuf.empty()) {
                 std::string lastLine = lineBuf;
                 if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
-                if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) processLine(lastLine);
+                if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) {
+                    processLine(std::move(lastLine));
+                }
                 lineBuf.clear();
             }
             break;
@@ -232,6 +286,48 @@ readPipeThread(HANDLE hPipe, bool filterPython, const std::function<void(const s
         processBufferAppend(lineBuf, buffer.data(), bytesRead, filterPython, processLine);
     }
 }
+
+namespace {
+    class PipeReaderThreads {
+    public:
+        ~PipeReaderThreads() {
+            // On exceptional exit, cancel blocking ReadFile calls before joining so thread destruction cannot terminate.
+            cancelAndJoin(mStdout);
+            cancelAndJoin(mStderr);
+        }
+
+        void start(
+            HANDLE                                  stdoutPipe,
+            HANDLE                                  stderrPipe,
+            bool                                    filterPython,
+            const std::function<void(std::string)>& stdoutCallback,
+            const std::function<void(std::string)>& stderrCallback
+        ) {
+            mStdout = std::thread(readPipeThread, stdoutPipe, filterPython, stdoutCallback);
+            mStderr = std::thread(readPipeThread, stderrPipe, filterPython, stderrCallback);
+        }
+
+        void join() {
+            if (mStdout.joinable()) mStdout.join();
+            if (mStderr.joinable()) mStderr.join();
+        }
+
+    private:
+        static void cancelAndJoin(std::thread& thread) noexcept {
+            if (!thread.joinable()) return;
+            CancelSynchronousIo(thread.native_handle());
+            try {
+                thread.join();
+            } catch (...) {
+                // A destructor must not terminate while unwinding; detaching is the last-resort valid thread state.
+                thread.detach();
+            }
+        }
+
+        std::thread mStdout;
+        std::thread mStderr;
+    };
+} // namespace
 
 // 尝试附加调试器到指定进程
 static void debuggerAttachToProcess(DWORD pid, int port) {
@@ -249,6 +345,9 @@ static void debuggerAttachToProcess(DWORD pid, int port) {
         std::cerr << "警告：无法启动mcdbg.exe附加调试器，请确保其在环境变量路径中。" << _MCDEV_LOG_OUTPUT_ENDL;
         return;
     }
+    // The debugger process continues independently; only its duplicated handles belong to this launcher.
+    UniqueHandle debuggerProcess(pi.hProcess);
+    UniqueHandle debuggerThread(pi.hThread);
     std::cout << "调试器已启动，正在附加到进程PID：" << pid << " 端口：" << port << " ..." << _MCDEV_LOG_OUTPUT_ENDL;
 }
 
@@ -269,14 +368,18 @@ static std::wstring convertUtf8ToUtf16(const std::string& utf8Str) {
 // 生成新的环境变量w字符串（继承当前环境变量并添加新变量）
 static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const std::wstring& newValue) {
     // 获取当前环境变量块
-    LPWCH envBlock = GetEnvironmentStringsW();
-    if (envBlock == nullptr) {
+    auto envBlock = std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)>(
+        GetEnvironmentStringsW(),
+        FreeEnvironmentStringsW
+    );
+    if (!envBlock) {
         throw std::runtime_error("Failed to get current environment strings.");
     }
 
     std::wstring newEnvBlock;
     // 复制现有环境变量
-    LPWCH current = envBlock;
+    // The API block now releases automatically even if growing newEnvBlock throws.
+    LPWCH current = envBlock.get();
     while (*current) {
         std::wstring varLine(current);
         newEnvBlock += varLine + L'\0';
@@ -289,7 +392,6 @@ static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const 
     // 结束环境变量块
     newEnvBlock += L'\0';
 
-    FreeEnvironmentStringsW(envBlock);
     return newEnvBlock;
 }
 
@@ -344,7 +446,6 @@ void mcdk::launchGameExe(
             "[MCDK] MCP Server " + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
             ConsoleColor::Green
         );
-        mcpServer.start();
         mcpServer.setLogBuffer(logBuffer);
         mcpServer.setErrBuffer(errBuffer);
 
@@ -384,15 +485,20 @@ void mcdk::launchGameExe(
                 }
 
                 nlohmann::json params = {{"code", code}, {"is_client", isClient}};
-                auto           result = ipcServer->requestJson("execute_code", params.dump(), 10000);
+                auto           result = ipcServer->requestJsonValue("execute_code", std::move(params), 10000);
                 if (!result.success) {
                     return makeTextResult(true, "Code execution failed: " + result.errorMessage);
                 }
 
-                auto response = nlohmann::json::parse(result.responseJson, nullptr, false);
+                // Reuse the response DOM parsed for IPC id routing and avoid parsing large return values twice.
+                auto response = result.responseValue
+                              ? std::move(*result.responseValue)
+                              : nlohmann::json::parse(result.responseJson, nullptr, false);
                 if (response.is_discarded() || !response.is_object()) {
                     return makeTextResult(true, "Code execution returned invalid JSON: " + result.responseJson);
                 }
+                // The response DOM is retained, so release the duplicate wire payload before formatting its result.
+                result.responseJson.clear();
                 if (!response.value("ok", false)) {
                     std::string message = response.dump();
                     if (response.contains("error")) {
@@ -406,7 +512,8 @@ void mcdk::launchGameExe(
 
                 nlohmann::json payload = nlohmann::json::object();
                 if (response.contains("result")) {
-                    payload = response["result"];
+                    // This response DOM is exclusively owned here, so move a potentially large result subtree.
+                    payload = std::move(response["result"]);
                 }
                 std::ostringstream text;
                 text << "Code executed successfully on " << (isClient ? "client" : "server") << ".";
@@ -449,6 +556,8 @@ void mcdk::launchGameExe(
             }
             return MCDevTool::Style::triggerMinecraftUiReloadShortcut(pid);
         });
+        // Publish the MCP server only after every buffer and callback has been configured.
+        mcpServer.start();
     }
     mcdk::PyReloadWatcherTask       pyReloadTask;
     mcdk::UiReloadWatcherTask       uiReloadTask;
@@ -650,48 +759,49 @@ void mcdk::launchGameExe(
     sa.lpSecurityDescriptor = nullptr;
 
     // 创建 stdout/stderr 分开管道
-    HANDLE outRead = NULL, outWrite = NULL;
-    HANDLE errRead = NULL, errWrite = NULL;
+    // Every launch handle is owned immediately so all intermediate failures close already-created resources.
+    UniqueHandle outRead;
+    UniqueHandle outWrite;
+    UniqueHandle errRead;
+    UniqueHandle errWrite;
 
-    if (!CreatePipe(&outRead, &outWrite, &sa, 0)) {
+    if (!CreatePipe(outRead.receive(), outWrite.receive(), &sa, 0)) {
         throw std::runtime_error("CreatePipe(stdout) failed");
     }
 
-    if (!SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0)) {
+    if (!SetHandleInformation(outRead.get(), HANDLE_FLAG_INHERIT, 0)) {
         throw std::runtime_error("SetHandleInformation(stdout) failed");
     }
 
-    if (!CreatePipe(&errRead, &errWrite, &sa, 0)) {
+    if (!CreatePipe(errRead.receive(), errWrite.receive(), &sa, 0)) {
         throw std::runtime_error("CreatePipe(stderr) failed");
     }
 
-    if (!SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0)) {
+    if (!SetHandleInformation(errRead.get(), HANDLE_FLAG_INHERIT, 0)) {
         throw std::runtime_error("SetHandleInformation(stderr) failed");
     }
 
     si.dwFlags    |= STARTF_USESTDHANDLES;
-    si.hStdOutput  = outWrite;
-    si.hStdError   = errWrite;
+    si.hStdOutput  = outWrite.get();
+    si.hStdError   = errWrite.get();
 
     // Do not expose MCDK's terminal as Minecraft stdin. A Mod calling input()
     // would otherwise block the game thread while waiting for terminal input.
-    HANDLE nullInput = CreateFileW(
-        L"NUL",
-        GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        &sa,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr
+    UniqueHandle nullInput(
+        CreateFileW(
+            L"NUL",
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            &sa,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr
+        )
     );
-    if (nullInput == INVALID_HANDLE_VALUE) {
-        CloseHandle(outRead);
-        CloseHandle(outWrite);
-        CloseHandle(errRead);
-        CloseHandle(errWrite);
+    if (nullInput.get() == INVALID_HANDLE_VALUE) {
         throw std::runtime_error("CreateFileW(NUL) failed");
     }
-    si.hStdInput = nullInput;
+    si.hStdInput = nullInput.get();
 
     // Build command
     std::string cmd = "\"" + MCDevTool::Utils::pathToUtf8(exePath) + "\"";
@@ -728,15 +838,12 @@ void mcdk::launchGameExe(
             &si,
             &pi
         )) {
-        CloseHandle(outRead);
-        CloseHandle(outWrite);
-        CloseHandle(errRead);
-        CloseHandle(errWrite);
-        CloseHandle(nullInput);
-        throw std::runtime_error("CreateProcessA failed");
+        throw std::runtime_error("CreateProcessW failed");
     }
 
-    CloseHandle(nullInput);
+    UniqueHandle processHandle(pi.hProcess);
+    UniqueHandle primaryThreadHandle(pi.hThread);
+    nullInput.reset();
 
     DWORD pid = pi.dwProcessId;
     // 设置样式处理器PID
@@ -744,11 +851,11 @@ void mcdk::launchGameExe(
     mcpServer.setMinecraftProcessId(pid);
 
     // 父进程不需要写端
-    CloseHandle(outWrite);
-    CloseHandle(errWrite);
+    outWrite.reset();
+    errWrite.reset();
 
     // 输出处理回调
-    auto processStdout = [needLogBuffer, logBuffer](const std::string& line) {
+    auto processStdout = [needLogBuffer, logBuffer](std::string line) {
         // 屏蔽 Engine 噪音行
         if (line.find(" [INFO][Engine] ") != std::string::npos) {
             return;
@@ -772,12 +879,13 @@ void mcdk::launchGameExe(
         }
         printColoredAtomic(line, ConsoleColor::Default);
         if (needLogBuffer) {
+            // The callback owns the line, so transfer it into the log buffer without an extra string copy.
             logBuffer->add(std::move(line));
         }
     };
 
     // stderr 处理回调
-    auto processStderr = [needLogBuffer, logBuffer, errBuffer](const std::string& line) {
+    auto processStderr = [needLogBuffer, logBuffer, errBuffer](std::string line) {
         static std::regex fileRe(R"(File \"([A-Za-z0-9_\.]+)\", line (\d+))");
 
         std::string out;
@@ -827,9 +935,8 @@ void mcdk::launchGameExe(
     }
 
     // 启动两个线程并行读取（避免任何死锁）
-    std::thread tOut(readPipeThread, outRead, filterPython, std::function<void(const std::string&)>(processStdout));
-
-    std::thread tErr(readPipeThread, errRead, filterPython, std::function<void(const std::string&)>(processStderr));
+    PipeReaderThreads pipeReaders;
+    pipeReaders.start(outRead.get(), errRead.get(), filterPython, processStdout, processStderr);
 
     if (debuggerPort > 0) {
         // 尝试启动mcdbg调试器附加（在官方调试器之前的历史产物）
@@ -892,7 +999,7 @@ void mcdk::launchGameExe(
 
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
     // ERROR_BROKEN_PIPE）
-    WaitForSingleObject(pi.hProcess, INFINITE);
+    WaitForSingleObject(processHandle.get(), INFINITE);
 
     // 停止热更新任务
     pyReloadTask.safeExit();
@@ -908,14 +1015,7 @@ void mcdk::launchGameExe(
     mcpServer.stop();
 
     // 等待读线程退出并关闭读端句柄
-    tOut.join();
-    tErr.join();
-
-    CloseHandle(outRead);
-    CloseHandle(errRead);
-
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
+    pipeReaders.join();
 }
 
 #endif

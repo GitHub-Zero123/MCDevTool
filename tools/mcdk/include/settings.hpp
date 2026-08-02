@@ -1,12 +1,8 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
 #include <filesystem>
-#include <map>
 #include <optional>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include <mcdevtool/level.h>
@@ -65,22 +61,9 @@ namespace mcdk {
         int         port    = 56788;
     };
 
-    struct DebugOptionValue {
-        using Array  = std::vector<DebugOptionValue>;
-        using Object = std::map<std::string, DebugOptionValue>;
-        using Storage =
-            std::variant<std::nullptr_t, bool, int64_t, uint64_t, double, std::string, Array, Object>;
-
-        Storage value = nullptr;
-    };
-
     struct DebugModOptions {
-        std::optional<DebugOptionValue> reloadKey;
-        std::optional<DebugOptionValue> reloadWorldKey;
-        std::optional<DebugOptionValue> reloadAddonKey;
-        std::optional<DebugOptionValue> reloadShadersKey;
-        std::optional<DebugOptionValue> reloadKeyGlobal;
-        DebugOptionValue::Object        additionalOptions;
+        // debug_options is pass-through data for Python; keep one serialized form instead of rebuilding its JSON tree.
+        std::string serializedJson = "{}";
     };
 
     struct NeteaseConfig {

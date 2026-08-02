@@ -92,18 +92,21 @@ namespace mcdk {
     }
 
     void PyReloadWatcherTask::onHotReloadTriggered() {
-        ReloadNames targetModules;
+        std::unordered_set<std::filesystem::path> changedPaths;
         {
             std::lock_guard lock(mMutex);
-            targetModules.reserve(mCachedPyModulePaths.size());
-            for (const auto& modulePath : mCachedPyModulePaths) {
-                std::string moduleName;
-                pyPathToModuleName(modulePath, moduleName);
-                if (!moduleName.empty()) {
-                    targetModules.push_back(std::move(moduleName));
-                }
+            // Swap in O(1) so filesystem traversal never blocks the file-change producer under this mutex.
+            changedPaths.swap(mCachedPyModulePaths);
+        }
+
+        ReloadNames targetModules;
+        targetModules.reserve(changedPaths.size());
+        for (const auto& modulePath : changedPaths) {
+            std::string moduleName;
+            pyPathToModuleName(modulePath, moduleName);
+            if (!moduleName.empty()) {
+                targetModules.push_back(std::move(moduleName));
             }
-            mCachedPyModulePaths.clear();
         }
         if (targetModules.empty()) {
             return;

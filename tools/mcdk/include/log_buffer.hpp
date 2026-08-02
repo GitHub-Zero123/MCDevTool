@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -20,7 +21,8 @@ namespace mcdk {
         [[nodiscard]] std::vector<std::string> getRangeReversed(std::size_t index, std::size_t endIndex);
 
     private:
-        std::vector<std::string> mBuffer;
+        // A deque keeps batched front eviction O(k) without moving every retained log line.
+        std::deque<std::string>  mBuffer;
         std::size_t              mCapacity;
         std::size_t              mClearBatchSize;
         std::mutex               mMutex;

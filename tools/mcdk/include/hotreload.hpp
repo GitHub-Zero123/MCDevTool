@@ -40,6 +40,8 @@ namespace mcdk {
     public:
         using HotReloadAction = ReloadAction;
         using ConsoleWatcherTask::ConsoleWatcherTask;
+        // Stop callbacks while this class's path caches still exist.
+        ~PyReloadWatcherTask() override { safeExit(); }
 
         void setHotReloadAction(HotReloadAction action);
         void setModDirs(std::vector<std::filesystem::path>&& modDirectories);
@@ -62,6 +64,7 @@ namespace mcdk {
     public:
         using UiHotReloadAction = std::function<void()>;
         using ConsoleWatcherTask::ConsoleWatcherTask;
+        ~UiReloadWatcherTask() override { safeExit(); }
 
         void setUiHotReloadAction(UiHotReloadAction action);
         void setModDirs(std::vector<std::filesystem::path>&& modDirectories);
@@ -109,6 +112,7 @@ namespace mcdk {
     public:
         using ShaderHotReloadAction = ReloadAction;
         using IncrementalReloadWatcherTask::IncrementalReloadWatcherTask;
+        ~ShaderReloadWatcherTask() override { safeExit(); }
 
         void               setShaderHotReloadAction(ShaderHotReloadAction action);
         [[nodiscard]] bool shouldWatchFile(const std::filesystem::path& filePath) const override;
@@ -121,6 +125,7 @@ namespace mcdk {
     public:
         using MaterialHotReloadAction = ReloadAction;
         using IncrementalReloadWatcherTask::IncrementalReloadWatcherTask;
+        ~MaterialReloadWatcherTask() override { safeExit(); }
 
         void               setMaterialHotReloadAction(MaterialHotReloadAction action);
         [[nodiscard]] bool shouldWatchFile(const std::filesystem::path& filePath) const override;
@@ -135,6 +140,7 @@ namespace mcdk {
     public:
         using ParticleHotReloadAction = ReloadAction;
         using IncrementalReloadWatcherTask::IncrementalReloadWatcherTask;
+        ~ParticleReloadWatcherTask() override { safeExit(); }
 
         void               setParticleHotReloadAction(ParticleHotReloadAction action);
         [[nodiscard]] bool shouldWatchFile(const std::filesystem::path& filePath) const override;

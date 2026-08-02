@@ -1,6 +1,7 @@
 #include <mcp_server.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -76,7 +77,8 @@ namespace mcdk {
         CodeExecuteHandler           codeExecuteHandler; // 代码执行处理器
         BoolParamHandler             reloadGameHandler;  // 重载游戏/Addon处理器
         SimpleHandler                reloadUiHandler;    // 重载 UI definition 处理器
-        int                          mcPid = 0;          // 存储Minecraft进程ID以供后续使用
+        // The process id is published after server startup and read by HTTP worker threads.
+        std::atomic<int>             mcPid = 0;
 
     public:
         explicit Impl(const McpServerConfig& cfg) : config(cfg) {}
@@ -87,8 +89,8 @@ namespace mcdk {
         void setCodeExecuteHandler(CodeExecuteHandler handler) { codeExecuteHandler = std::move(handler); }
         void setReloadGameHandler(BoolParamHandler handler) { reloadGameHandler = std::move(handler); }
         void setReloadUiHandler(SimpleHandler handler) { reloadUiHandler = std::move(handler); }
-        void setMinecraftProcessId(int pid) { mcPid = pid; }
-        int  getMinecraftProcessId() const { return mcPid; }
+        void setMinecraftProcessId(int pid) { mcPid.store(pid, std::memory_order_relaxed); }
+        int  getMinecraftProcessId() const { return mcPid.load(std::memory_order_relaxed); }
 
         static nlohmann::json _logVectorToJson(const std::vector<std::string>& logVector) {
             nlohmann::json jsonArray = nlohmann::json::array();
@@ -460,7 +462,8 @@ namespace mcdk {
             server->register_tool(
                 captureTool,
                 [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
-                    if (mcPid <= 0) {
+                    const int pid = mcPid.load(std::memory_order_relaxed);
+                    if (pid <= 0) {
                         return nlohmann::json{
                             {"isError", true},
                             {"content",
@@ -471,7 +474,7 @@ namespace mcdk {
                         };
                     }
 
-                    auto result = MCDevTool::Style::captureMinecraftWindow480p(mcPid);
+                    auto result = MCDevTool::Style::captureMinecraftWindow480p(pid);
                     if (!result.has_value() || result->empty()) {
                         return nlohmann::json{
                             {"isError", true},
@@ -502,7 +505,8 @@ namespace mcdk {
             server->register_tool(
                 clickTool,
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
-                    if (mcPid <= 0) {
+                    const int pid = mcPid.load(std::memory_order_relaxed);
+                    if (pid <= 0) {
                         return nlohmann::json{
                             {"isError", true},
                             {"content",
@@ -527,7 +531,7 @@ namespace mcdk {
                         };
                     }
 
-                    bool success = MCDevTool::Style::clickMinecraftWindowAt(mcPid, x, y);
+                    bool success = MCDevTool::Style::clickMinecraftWindowAt(pid, x, y);
                     if (!success) {
                         return nlohmann::json{
                             {"isError", true},
@@ -593,11 +597,31 @@ namespace mcdk {
 
     MCPServer::MCPServer(McpServerConfig&& config) : mImpl(std::make_unique<Impl>(std::move(config))) {}
 
-    MCPServer::~MCPServer() = default;
+    MCPServer::~MCPServer() {
+        // Keep exceptional exits symmetric with explicit shutdown so the non-blocking server cannot outlive its state.
+        if (!mImpl) return;
+        try {
+            mImpl->stop();
+        } catch (...) {
+            // Destruction must remain noexcept even if the underlying server reports a shutdown failure.
+        }
+    }
 
     MCPServer::MCPServer(MCPServer&&) noexcept = default;
 
-    MCPServer& MCPServer::operator=(MCPServer&&) noexcept = default;
+    MCPServer& MCPServer::operator=(MCPServer&& other) noexcept {
+        if (this == &other) return *this;
+        // Moving over a live instance must stop its background server before releasing the old implementation.
+        if (mImpl) {
+            try {
+                mImpl->stop();
+            } catch (...) {
+                // Preserve the declared noexcept move contract while releasing the old server state.
+            }
+        }
+        mImpl = std::move(other.mImpl);
+        return *this;
+    }
 
     void MCPServer::setLogBuffer(std::shared_ptr<LogBuffer> buffer) { mImpl->setLogBuffer(std::move(buffer)); }
 

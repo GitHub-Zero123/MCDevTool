@@ -90,65 +90,13 @@ namespace mcdk {
             options.deferredTechnicalPreview   = experiments->value("deferred_technical_preview", false);
         }
 
-        DebugOptionValue parseDebugOptionValue(const Json& value) {
-            if (value.is_null()) {
-                return {};
-            }
-            if (value.is_boolean()) {
-                return {.value = value.get<bool>()};
-            }
-            if (value.is_number_unsigned()) {
-                return {.value = value.get<uint64_t>()};
-            }
-            if (value.is_number_integer()) {
-                return {.value = value.get<int64_t>()};
-            }
-            if (value.is_number_float()) {
-                return {.value = value.get<double>()};
-            }
-            if (value.is_string()) {
-                return {.value = value.get<std::string>()};
-            }
-            if (value.is_array()) {
-                DebugOptionValue::Array result;
-                result.reserve(value.size());
-                for (const auto& item : value) {
-                    result.push_back(parseDebugOptionValue(item));
-                }
-                return {.value = std::move(result)};
-            }
-            if (value.is_object()) {
-                DebugOptionValue::Object result;
-                for (auto item = value.begin(); item != value.end(); ++item) {
-                    result.emplace(item.key(), parseDebugOptionValue(item.value()));
-                }
-                return {.value = std::move(result)};
-            }
-            throw std::runtime_error("Unsupported debug option value.");
-        }
-
         void parseDebugOptions(const Json& root, DebugModOptions& options) {
             const auto value = root.find("debug_options");
             if (value == root.end() || !value->is_object()) {
                 return;
             }
-
-            for (auto item = value->begin(); item != value->end(); ++item) {
-                auto parsed = parseDebugOptionValue(item.value());
-                if (item.key() == "reload_key") {
-                    options.reloadKey = std::move(parsed);
-                } else if (item.key() == "reload_world_key") {
-                    options.reloadWorldKey = std::move(parsed);
-                } else if (item.key() == "reload_addon_key") {
-                    options.reloadAddonKey = std::move(parsed);
-                } else if (item.key() == "reload_shaders_key") {
-                    options.reloadShadersKey = std::move(parsed);
-                } else if (item.key() == "reload_key_global") {
-                    options.reloadKeyGlobal = std::move(parsed);
-                } else {
-                    options.additionalOptions.emplace(item.key(), std::move(parsed));
-                }
-            }
+            // Serialize the README-defined object once; the embedded Python module is the only consumer of this data.
+            options.serializedJson = value->dump();
         }
 
         void parseWindowStyle(const Json& root, MCDevTool::Style::StyleConfig& style) {

@@ -13,6 +13,8 @@
 #include <functional>
 #include <map>
 
+#include <nlohmann/json_fwd.hpp>
+
 namespace MCDevTool::Debug {
     inline constexpr uint16_t IPC_JSON_REQUEST_TYPE  = 100;
     inline constexpr uint16_t IPC_JSON_RESPONSE_TYPE = 101;
@@ -23,6 +25,8 @@ namespace MCDevTool::Debug {
         uint64_t    requestId = 0;
         std::string responseJson;
         std::string errorMessage;
+        // Reuse the DOM parsed for response routing so callers do not parse a large response a second time.
+        std::shared_ptr<nlohmann::json> responseValue;
     };
 
     class DebugIPCServer {
@@ -52,6 +56,7 @@ namespace MCDevTool::Debug {
 
         // 发送 JSON request 到一个已连接客户端并等待同 id 的 JSON response；默认 10 秒超时；API 内部吞掉异常并返回错误信息
         IPCJsonResult requestJson(std::string_view method, std::string_view paramsJson = "{}", uint32_t timeoutMs = 10000);
+        IPCJsonResult requestJsonValue(std::string_view method, nlohmann::json params, uint32_t timeoutMs = 10000);
         IPCJsonResult requestJsonRaw(std::string_view requestJson, uint32_t timeoutMs = 10000);
 
         // 获取链接的客户端数量
@@ -63,10 +68,12 @@ namespace MCDevTool::Debug {
 
     private:
         struct PendingJsonRequest {
-            std::mutex              mutex;
-            std::condition_variable cv;
-            bool                    completed = false;
-            std::string             responseJson;
+            std::mutex                     mutex;
+            std::condition_variable        cv;
+            bool                           completed = false;
+            bool                           retainResponseValue = false;
+            std::string                    responseJson;
+            std::shared_ptr<nlohmann::json> responseValue;
         };
 
         unsigned short                                      mPort      = 0;
@@ -83,6 +90,12 @@ namespace MCDevTool::Debug {
         std::atomic<bool>                                   mStopFlag = false;
         bool sendMessageToOneClient(uint16_t messageType, const uint8_t* data, size_t length);
         bool sendBufferToSocket(void* socketPtr, const uint8_t* data, size_t length);
+        IPCJsonResult requestJsonRawWithId(
+            std::string_view requestJson,
+            uint64_t         requestId,
+            uint32_t         timeoutMs,
+            bool             retainResponseValue
+        );
         void clientReadLoop(void* socketPtr);
         void handleJsonResponsePacket(const uint8_t* data, size_t length);
         void eraseClient(void* socketPtr, bool closeSocket);
@@ -97,7 +110,7 @@ namespace MCDevTool::Debug {
         HotReloadWatcherTask(int processId, const std::vector<std::filesystem::path>& modDirs);
         HotReloadWatcherTask(int processId, std::vector<std::filesystem::path>&& modDirs);
 
-        virtual ~HotReloadWatcherTask() = default;
+        virtual ~HotReloadWatcherTask();
 
         void start();
         void stop();

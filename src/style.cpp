@@ -278,6 +278,8 @@ namespace MCDevTool::Style {
 
     MinecraftWindowStyler::MinecraftWindowStyler(int pid) : mPid(pid) {}
 
+    MinecraftWindowStyler::~MinecraftWindowStyler() { safeExit(); }
+
     void MinecraftWindowStyler::start() {
         if (mThread.has_value() || mPid == 0) {
             return;

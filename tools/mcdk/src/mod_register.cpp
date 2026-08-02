@@ -5,7 +5,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 
 #include <INCLUDE_MOD.h>
 #include <mcdevtool/addon.h>
@@ -16,56 +15,9 @@
 
 namespace mcdk {
     namespace {
-        nlohmann::json debugOptionToJson(const DebugOptionValue& option) {
-            return std::visit(
-                [](const auto& value) -> nlohmann::json {
-                    using Value = std::decay_t<decltype(value)>;
-                    if constexpr (std::is_same_v<Value, DebugOptionValue::Array>) {
-                        auto result = nlohmann::json::array();
-                        for (const auto& item : value) {
-                            result.push_back(debugOptionToJson(item));
-                        }
-                        return result;
-                    } else if constexpr (std::is_same_v<Value, DebugOptionValue::Object>) {
-                        auto result = nlohmann::json::object();
-                        for (const auto& [key, item] : value) {
-                            result[key] = debugOptionToJson(item);
-                        }
-                        return result;
-                    } else {
-                        return value;
-                    }
-                },
-                option.value
-            );
-        }
-
-        std::string toPythonLiteral(const DebugModOptions& options) {
-            auto json = nlohmann::json::object();
-            for (const auto& [key, value] : options.additionalOptions) {
-                json[key] = debugOptionToJson(value);
-            }
-            if (options.reloadKey) {
-                json["reload_key"] = debugOptionToJson(*options.reloadKey);
-            }
-            if (options.reloadWorldKey) {
-                json["reload_world_key"] = debugOptionToJson(*options.reloadWorldKey);
-            }
-            if (options.reloadAddonKey) {
-                json["reload_addon_key"] = debugOptionToJson(*options.reloadAddonKey);
-            }
-            if (options.reloadShadersKey) {
-                json["reload_shaders_key"] = debugOptionToJson(*options.reloadShadersKey);
-            }
-            if (options.reloadKeyGlobal) {
-                json["reload_key_global"] = debugOptionToJson(*options.reloadKeyGlobal);
-            }
-
-            auto literal = json.dump();
-            stringReplace(literal, "true", "True");
-            stringReplace(literal, "false", "False");
-            stringReplace(literal, "null", "None");
-            return literal;
+        std::string toPythonJsonStringLiteral(const DebugModOptions& options) {
+            // Config.py calls json.loads; quote the JSON once so strings/keys containing true, false or null stay intact.
+            return nlohmann::json(options.serializedJson).dump();
         }
     } // namespace
 
@@ -97,7 +49,7 @@ namespace mcdk {
             std::filesystem::remove_all(target);
         }
 
-        const auto debugOptions = toPythonLiteral(options);
+        const auto debugOptions = toPythonJsonStringLiteral(options);
         for (const auto& [resourceName, resourceData] : INCLUDE_MOD_RES::resourceMap) {
             const auto resourcePath = target / std::filesystem::u8path(resourceName);
             std::filesystem::create_directories(resourcePath.parent_path());

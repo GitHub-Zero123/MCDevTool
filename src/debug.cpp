@@ -2,6 +2,7 @@
 #include <mcdevtool/reload.h>
 #include <iostream>
 #include <chrono>
+#include <cstddef>
 #include <functional>
 #include <cstring>
 #include <algorithm>
@@ -32,13 +33,6 @@ namespace MCDevTool::Debug {
             return true;
         }
 
-        std::string jsonDumpNoThrow(const nlohmann::json& value) {
-            try {
-                return value.dump();
-            } catch (...) {
-                return "{}";
-            }
-        }
     }
 
     DebugIPCServer::~DebugIPCServer() { safeExit(); }
@@ -267,19 +261,42 @@ namespace MCDevTool::Debug {
     IPCJsonResult DebugIPCServer::requestJson(std::string_view method, std::string_view paramsJson, uint32_t timeoutMs) {
         IPCJsonResult result;
         try {
-            auto params = nlohmann::json::parse(paramsJson.empty() ? "{}" : std::string(paramsJson), nullptr, false);
+            const auto source = paramsJson.empty() ? std::string_view("{}") : paramsJson;
+            auto params = nlohmann::json::parse(source.begin(), source.end(), nullptr, false);
             if (params.is_discarded()) {
                 result.errorMessage = "Invalid params JSON";
                 return result;
             }
+            return requestJsonValue(method, std::move(params), timeoutMs);
+        } catch (const std::exception& e) {
+            result.errorMessage = e.what();
+            return result;
+        } catch (...) {
+            result.errorMessage = "Unknown requestJson error";
+            return result;
+        }
+    }
 
+    IPCJsonResult DebugIPCServer::requestJsonValue(
+        std::string_view method,
+        nlohmann::json  params,
+        uint32_t        timeoutMs
+    ) {
+        IPCJsonResult result;
+        try {
             uint64_t id = mNextJsonRequestId.fetch_add(1);
             if (id == 0) {
                 id = mNextJsonRequestId.fetch_add(1);
             }
 
-            nlohmann::json req = { {"id", id}, {"method", std::string(method)}, {"params", params} };
-            result             = requestJsonRaw(jsonDumpNoThrow(req), timeoutMs);
+            nlohmann::json request = nlohmann::json::object();
+            request["id"]          = id;
+            request["method"]      = std::string(method);
+            request["params"]      = std::move(params);
+            auto serializedRequest = request.dump();
+            request.clear();
+            // The generated id is already known, so bypass requestJsonRaw's compatibility parse.
+            result = requestJsonRawWithId(serializedRequest, id, timeoutMs, true);
             if (result.requestId == 0) {
                 result.requestId = id;
             }
@@ -305,7 +322,7 @@ namespace MCDevTool::Debug {
                 return result;
             }
 
-            auto req = nlohmann::json::parse(std::string(requestJson), nullptr, false);
+            auto req = nlohmann::json::parse(requestJson.begin(), requestJson.end(), nullptr, false);
             if (req.is_discarded() || !req.is_object() || !req.contains("id")) {
                 result.errorMessage = "Request JSON must be an object with id";
                 return result;
@@ -322,12 +339,37 @@ namespace MCDevTool::Debug {
                 result.errorMessage = "Request id must not be 0";
                 return result;
             }
-            result.requestId = id;
+            req.clear();
+            // Raw callers still pay one validation parse; generated requests use the known-id fast path above.
+            return requestJsonRawWithId(requestJson, id, timeoutMs, false);
+        } catch (const std::exception& e) {
+            result.errorMessage = e.what();
+            return result;
+        } catch (...) {
+            result.errorMessage = "Unknown requestJsonRaw error";
+            return result;
+        }
+    }
+
+    IPCJsonResult DebugIPCServer::requestJsonRawWithId(
+        std::string_view requestJson,
+        uint64_t         requestId,
+        uint32_t         timeoutMs,
+        bool             retainResponseValue
+    ) {
+        IPCJsonResult result;
+        try {
+            result.requestId = requestId;
+            if (getClientCount() == 0) {
+                result.errorMessage = "No IPC client connected";
+                return result;
+            }
 
             auto pending = std::make_shared<PendingJsonRequest>();
+            pending->retainResponseValue = retainResponseValue;
             {
                 std::lock_guard<std::mutex> lockGuard(mPendingJsonMutex);
-                mPendingJsonRequests[id] = pending;
+                mPendingJsonRequests[requestId] = pending;
             }
 
             bool sent = sendMessageToOneClient(
@@ -337,7 +379,7 @@ namespace MCDevTool::Debug {
             );
             if (!sent) {
                 std::lock_guard<std::mutex> lockGuard(mPendingJsonMutex);
-                mPendingJsonRequests.erase(id);
+                mPendingJsonRequests.erase(requestId);
                 result.errorMessage = "Failed to send IPC JSON request";
                 return result;
             }
@@ -352,12 +394,13 @@ namespace MCDevTool::Debug {
             if (!completed) {
                 pending->completed = true;
             }
-            std::string responseJson = pending->responseJson;
+            std::string responseJson  = std::move(pending->responseJson);
+            auto        responseValue = std::move(pending->responseValue);
             pendingLock.unlock();
 
             {
                 std::lock_guard<std::mutex> lockGuard(mPendingJsonMutex);
-                mPendingJsonRequests.erase(id);
+                mPendingJsonRequests.erase(requestId);
             }
 
             if (!completed) {
@@ -366,8 +409,9 @@ namespace MCDevTool::Debug {
                 return result;
             }
 
-            result.success      = !responseJson.empty();
-            result.responseJson = std::move(responseJson);
+            result.success       = !responseJson.empty();
+            result.responseJson  = std::move(responseJson);
+            result.responseValue = std::move(responseValue);
             if (!result.success) {
                 result.errorMessage = "IPC JSON request was cancelled";
             }
@@ -393,25 +437,32 @@ namespace MCDevTool::Debug {
             int received = recv(clientSock, reinterpret_cast<char*>(temp), static_cast<int>(sizeof(temp)), 0);
             if (received > 0) {
                 buffer.insert(buffer.end(), temp, temp + received);
-                while (buffer.size() >= IPC_HEADER_SIZE) {
+                size_t consumed = 0;
+                while (buffer.size() - consumed >= IPC_HEADER_SIZE) {
                     uint16_t typeID = 0;
                     uint32_t length = 0;
-                    readU16BE(buffer.data(), typeID);
-                    readU32BE(buffer.data() + 2, length);
+                    const auto* frame = buffer.data() + consumed;
+                    readU16BE(frame, typeID);
+                    readU32BE(frame + 2, length);
 
                     if (length > IPC_MAX_PACKET_LENGTH) {
                         eraseClient(socketPtr, true);
                         return;
                     }
-                    if (buffer.size() < IPC_HEADER_SIZE + static_cast<size_t>(length)) {
+                    const auto frameSize = IPC_HEADER_SIZE + static_cast<size_t>(length);
+                    if (buffer.size() - consumed < frameSize) {
                         break;
                     }
 
-                    const uint8_t* payload = buffer.data() + IPC_HEADER_SIZE;
+                    const uint8_t* payload = frame + IPC_HEADER_SIZE;
                     if (typeID == IPC_JSON_RESPONSE_TYPE) {
                         handleJsonResponsePacket(payload, length);
                     }
-                    buffer.erase(buffer.begin(), buffer.begin() + IPC_HEADER_SIZE + static_cast<size_t>(length));
+                    consumed += frameSize;
+                }
+                if (consumed != 0) {
+                    // Compact once per recv batch instead of shifting the remaining bytes after every frame.
+                    buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(consumed));
                 }
                 continue;
             }
@@ -433,14 +484,17 @@ namespace MCDevTool::Debug {
 
     void DebugIPCServer::handleJsonResponsePacket(const uint8_t* data, size_t length) {
         if (!data || length == 0) return;
-        auto response = nlohmann::json::parse(std::string(reinterpret_cast<const char*>(data), length), nullptr, false);
-        if (response.is_discarded() || !response.is_object() || !response.contains("id")) {
+        const auto* begin = reinterpret_cast<const char*>(data);
+        auto response = std::make_shared<nlohmann::json>(
+            nlohmann::json::parse(begin, begin + length, nullptr, false)
+        );
+        if (response->is_discarded() || !response->is_object() || !response->contains("id")) {
             return;
         }
 
         uint64_t id = 0;
         try {
-            id = response["id"].get<uint64_t>();
+            id = (*response)["id"].get<uint64_t>();
         } catch (...) {
             return;
         }
@@ -458,6 +512,10 @@ namespace MCDevTool::Debug {
             std::lock_guard<std::mutex> pendingLock(pending->mutex);
             if (pending->completed) return;
             pending->responseJson = std::string(reinterpret_cast<const char*>(data), length);
+            if (pending->retainResponseValue) {
+                // Keep the routing parse only for value callers; raw callers retain their previous memory profile.
+                pending->responseValue = std::move(response);
+            }
             pending->completed    = true;
         }
         pending->cv.notify_all();
@@ -527,6 +585,8 @@ namespace MCDevTool::Debug {
     : mProcessId(processId),
       mModDirs(std::move(modDirs)) {}
 
+    HotReloadWatcherTask::~HotReloadWatcherTask() { safeExit(); }
+
     void HotReloadWatcherTask::safeExit() {
         mStopFlag = true;
         join();
@@ -571,28 +631,35 @@ namespace MCDevTool::Debug {
             fileWatcherThread.reset();
             throw std::runtime_error("Failed to start file watcher thread");
         }
-        processWatcherThread = MCDevTool::HotReload::watchProcessForegroundWindow(
-            mProcessId,
-            [this](bool isForeground) {
-                bool shouldReload = false;
-                {
-                    std::lock_guard<std::mutex> stateLock(this->mStateMutex);
-                    this->mIsForeground = isForeground;
-                    if (isForeground && this->mNeedUpdate) {
-                        this->mNeedUpdate = false;
-                        shouldReload      = true;
+        try {
+            processWatcherThread = MCDevTool::HotReload::watchProcessForegroundWindow(
+                mProcessId,
+                [this](bool isForeground) {
+                    bool shouldReload = false;
+                    {
+                        std::lock_guard<std::mutex> stateLock(this->mStateMutex);
+                        this->mIsForeground = isForeground;
+                        if (isForeground && this->mNeedUpdate) {
+                            this->mNeedUpdate = false;
+                            shouldReload      = true;
+                        }
                     }
-                }
-                if (shouldReload) {
-                    this->onHotReloadTriggered();
-                }
-            },
-            &mStopFlag
-        );
-        if (!processWatcherThread.has_value()) {
-            processWatcherThread.reset();
+                    if (shouldReload) {
+                        this->onHotReloadTriggered();
+                    }
+                },
+                &mStopFlag
+            );
+            if (!processWatcherThread.has_value()) {
+                throw std::runtime_error("Failed to start process watcher thread");
+            }
+        } catch (...) {
+            // A partially started watcher must stop and join its file thread before optional<thread> is destroyed.
+            mStopFlag = true;
+            join();
             fileWatcherThread.reset();
-            throw std::runtime_error("Failed to start process watcher thread");
+            processWatcherThread.reset();
+            throw;
         }
     }
 

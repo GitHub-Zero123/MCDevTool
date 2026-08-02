@@ -9,6 +9,8 @@ namespace mcdk {
     class UserStyleProcessor : public MCDevTool::Style::MinecraftWindowStyler {
     public:
         UserStyleProcessor(int pid, MCDevTool::Style::StyleConfig config);
+        // Stop the worker while the derived output callback is still alive.
+        ~UserStyleProcessor() override { safeExit(); }
 
         void setOutputCallback(ConsoleOutputCallback callback);
         void start();
