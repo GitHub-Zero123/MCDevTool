@@ -1,17 +1,19 @@
-﻿cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.24)
+
+cmake_policy(SET CMP0091 NEW)
 
 project(MC_DEV_TOOL_ROOT LANGUAGES CXX C)
 
 option(MC_DEV_TOOL_BUILD_TEST "BUILD TEST EXECUTABLE" OFF)
+if(MC_DEV_TOOL_BUILD_TEST)
+    enable_testing()
+endif()
 
 # By Zero123
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     if(MSVC)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         add_compile_options(/utf-8 /EHsc)
-        # set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Release>:>")
-        if(CMAKE_BUILD_TYPE STREQUAL "Release")
-            add_compile_options(/MT)
-        endif()
     endif()
 endif()
 

@@ -55,6 +55,8 @@ namespace mcdk::performance {
         ProfileTarget        target = ProfileTarget::Client;
         ProfileClock         clock  = ProfileClock::Wall;
         std::chrono::seconds duration{15};
+        std::size_t          tracebackDepth = 8;
+        bool                 collectGarbage = true;
     };
 
     struct JobSnapshot {
@@ -63,6 +65,8 @@ namespace mcdk::performance {
         JobState     state   = JobState::Created;
         bool         partial = false;
         std::string  statusMessage;
+        std::string  createdAt;
+        std::string  completedAt;
     };
 
     using ProfilerFieldValue = std::variant<std::int64_t, double, bool, std::string>;
@@ -103,6 +107,7 @@ namespace mcdk::performance {
     struct DetailResult {
         QueryRecord              record;
         std::vector<QueryRecord> related;
+        bool                     truncated = false;
     };
 
     struct HistoryRequest {

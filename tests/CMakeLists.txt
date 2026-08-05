@@ -32,6 +32,13 @@ target_link_libraries(rpc_registry_test PRIVATE mcdk_core)
 add_executable(profiler_foundation_test profiler_foundation_test.cpp)
 target_compile_features(profiler_foundation_test PRIVATE cxx_std_23)
 target_link_libraries(profiler_foundation_test PRIVATE mcdk_core)
+add_test(NAME profiler-foundation COMMAND profiler_foundation_test)
+if(TARGET mcdk_native_profiler_component)
+    add_dependencies(profiler_foundation_test mcdk_native_profiler_component)
+    target_compile_definitions(profiler_foundation_test PRIVATE
+        MCDEV_TEST_MCDK_DIR="$<TARGET_FILE_DIR:mcdk>"
+    )
+endif()
 
 add_executable(host_bridge_test host_bridge_test.cpp)
 target_compile_features(host_bridge_test PRIVATE cxx_std_23)

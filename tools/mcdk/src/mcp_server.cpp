@@ -199,10 +199,10 @@ namespace mcdk {
             server->register_tool(
                 mcp_tool_definitions::buildMcProfilerTool(),
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
-                    if (auto localResult = mc_profiler_mcp::tryBuildLocalResult(params)) {
-                        return std::move(*localResult);
-                    }
                     if (!profilerHandler) {
+                        if (auto localResult = mc_profiler_mcp::tryBuildLocalResult(params)) {
+                            return std::move(*localResult);
+                        }
                         return mc_profiler_mcp::buildErrorResult(
                             params.value("op", ""),
                             "PROFILER_RUNTIME_UNAVAILABLE",

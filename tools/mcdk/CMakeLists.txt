@@ -2,12 +2,28 @@ project(MC_DEV_TOOL_MCDK)
 
 option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" OFF)
 
+set(_mcdk_native_profiler_supported OFF)
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(_mcdk_native_profiler_supported ON)
+    add_subdirectory(
+        "${CMAKE_CURRENT_LIST_DIR}/../../components/profiler/tracy-bridge"
+        "${CMAKE_CURRENT_BINARY_DIR}/native-profiler"
+    )
+else()
+    message(STATUS "mcdk native profiler component is unavailable on this platform (requires Windows x64)")
+endif()
+
 add_library(mcdev_profiler_core STATIC
+    src/performance/native_bridge_loader.cpp
     src/performance/profiler_runtime_owner.cpp
+    src/performance/profiler_service.cpp
     src/performance/profiler_types.cpp
 )
 target_compile_features(mcdev_profiler_core PUBLIC cxx_std_23)
 target_include_directories(mcdev_profiler_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(WIN32)
+    target_link_libraries(mcdev_profiler_core PUBLIC bcrypt iphlpapi ws2_32)
+endif()
 
 add_library(mcdk_core STATIC
     src/config.cpp
@@ -49,6 +65,38 @@ add_executable(mcdk main.cpp)
 target_compile_features(mcdk PRIVATE cxx_std_23)
 target_include_directories(mcdk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs)
 target_link_libraries(mcdk PRIVATE mcdk_runtime)
+include(GNUInstallDirs)
+install(TARGETS mcdk
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    COMPONENT mcdk-core
+)
+
+if(_mcdk_native_profiler_supported)
+    set(_mcdk_native_component_dir
+        "$<TARGET_FILE_DIR:mcdk>/components/native-profiler/windows-x64"
+    )
+    add_custom_target(mcdk_native_profiler_component
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${_mcdk_native_component_dir}/licenses"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:mcdev-tracy-bridge>"
+            "${_mcdk_native_component_dir}/mcdev-tracy-bridge.dll"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_PROPERTY:mcdev-tracy-bridge,MCDEV_TRACY_LICENSE_FILE>"
+            "${_mcdk_native_component_dir}/licenses/LICENSE-Tracy.txt"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_PROPERTY:mcdev-tracy-bridge,MCDEV_CAPSTONE_LICENSE_FILE>"
+            "${_mcdk_native_component_dir}/licenses/LICENSE-Capstone.txt"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMCDEV_NATIVE_DLL=${_mcdk_native_component_dir}/mcdev-tracy-bridge.dll"
+            "-DMCDEV_NATIVE_MANIFEST=${_mcdk_native_component_dir}/component.json"
+            -P "${CMAKE_CURRENT_LIST_DIR}/../../components/profiler/tracy-bridge/cmake/WriteNativeProfilerManifest.cmake"
+        DEPENDS mcdev-tracy-bridge
+        COMMENT "Synchronizing the native profiler component beside mcdk"
+        VERBATIM
+    )
+    add_dependencies(mcdk mcdk_native_profiler_component)
+endif()
 
 if(MC_DEV_TOOL_MCDK_ENABLE_CLI)
     target_compile_definitions(mcdk PRIVATE MCDK_ENABLE_CLI)

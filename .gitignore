@@ -368,6 +368,7 @@ FodyWeavers.xsd
 /.selfTest/
 
 /build/
+/.cache/mcdev-deps/
 
 reloadFiles/
 .mcdev.json

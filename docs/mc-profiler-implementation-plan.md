@@ -1,6 +1,6 @@
 # `mc_profiler` MCP 工具实施计划
 
-- 状态：Draft
+- 状态：已实现；Debug/Release 离线构建与测试通过，真实游戏 E2E 待验证
 - 目标仓库：`MCDevTool`
 - 参考实现：`D:\Zero123\CPP\mcdev-tools`
 - 最后更新：2026-08-05
@@ -51,9 +51,10 @@ MCP / CLI / Host Bridge / future service
 ### 2.2 惰性初始化
 
 - 没有 profiler 调用时不创建任务线程、不扫描端口、不加载 DLL、不扫描历史目录。
-- `/help` 和 `/guide` 只读取静态帮助数据。
-- Python 与 Native backend 分别惰性初始化，调用 Python 不加载 Native 组件。
-- 报告生成器只在 `/export` 或对应后端 API 被调用时初始化。
+- 首个 profiler op（包括 `/help`、`/guide` 和参数错误请求）惰性构造共享 service，并探测、校验和尝试加载固定位置的 Native DLL，使帮助响应能反映实际 capability。
+- DLL 探测不等于 endpoint discovery；只有 Native start 或 `kind=native.cpu, deep=true` 的 doctor 才枚举端口。
+- Python 调用会复用已构造的 service，但不扫描 Tracy endpoint、不创建 Native capture worker。
+- history 目录扫描和报告导出仍分别延迟到对应 API 首次调用。
 
 ### 2.3 AI 不可信原则
 
@@ -135,60 +136,52 @@ MCP / CLI / Host Bridge / future service
 - 当前 MCP `CodeExecuteHandler` 生成 MCP 文本，不适合作为内部结构化执行 API。
 - `cpp-mcp` 已能转发 `structuredContent`。
 
-## 5. 目标模块结构
+## 5. 已实现模块结构
 
 ```text
 mcdev_profiler_core                 # 不依赖 MCP
   ProfilerRuntimeOwner              # 每个游戏 runtime 唯一所有者
   ProfilerServiceProvider           # 惰性取得共享 service
-  ProfilerService
-  ProfilerJobManager
-  PythonCpuBackend
-  PythonMemoryBackend
-  NativeTracyBackend
-  ProfilerResultStore
-  ProfilerReportExporter
+  ProfilerService                   # typed API
+  DefaultProfilerService            # job/backend/store/report 的进程内实现
+  NativeBridgeLoader                # C ABI 的 C++ wrapper
 
-mcdk_runtime
-  McProfilerMcpAdapter              # 唯一依赖 cpp-mcp 的 profiler 层
-  GameCodeExecutorAdapter
-  GameProcessContextAdapter
+mcdk_core
+  mc_profiler_mcp                   # op 校验、help/guide、domain-to-MCP 映射
+
+mcdk_runtime/game_process
+  GameCodeExecutor adapter
+  current game PID/process context
 
 mcdev-tracy-bridge.dll
   Tracy 0.11.1 server implementation
   stable C ABI v1
 ```
 
-建议文件：
+实际文件：
 
 ```text
 tools/mcdk/include/performance/
   profiler_runtime_owner.hpp
-  profiler_service_provider.hpp
   profiler_service.hpp
+  profiler_service_factory.hpp
   profiler_types.hpp
-  profiler_error.hpp
-  profiler_backend.hpp
-  profiler_result_store.hpp
   native_bridge_loader.hpp
 
 tools/mcdk/src/performance/
   profiler_service.cpp
-  profiler_job_manager.cpp
-  profiler_result_store.cpp
-  profiler_report_exporter.cpp
-  python_cpu_backend.cpp
-  python_memory_backend.cpp
-  native_tracy_backend.cpp
+  profiler_runtime_owner.cpp
+  profiler_types.cpp
   native_bridge_loader.cpp
 
-tools/mcdk/src/mcp/
-  mc_profiler_adapter.cpp
-  mc_profiler_help.cpp
+tools/mcdk/src/
+  mc_profiler_mcp.cpp
 
-tools/mcdk/resources/performance/
-  python_cpu.py
-  python_memory.py
+components/profiler/tracy-bridge/
+  include/mcdev_tracy_bridge.h
+  src/api.cpp
+  src/capture_session.cpp
+  src/result_builder.cpp
 ```
 
 ## 6. 后端直接调用 API
@@ -248,20 +241,20 @@ public:
 | 触发点 | 允许初始化 |
 |---|---|
 | MCDK 启动 | 注册 `mc_profiler` adapter；不构造 service |
-| `/help`、`/guide` | 静态帮助目录 |
-| `/doctor` | 默认仅平台、文件和配置检查；显式 `kind=native.cpu, deep=true` 才允许初始化 Native runtime |
-| 首次 Python start | service、job manager、指定 Python backend |
-| 首次显式 Native runtime request | Native start 执行 endpoint discovery、DLL loader、capture worker；Native deep doctor 只执行 discovery 和 DLL probe/load |
+| 首个 profiler op（含 `/help`、`/guide`） | 共享 service、job manager、固定路径 Native DLL probe/load；不扫描端口 |
+| `/doctor` | 复用首次 probe 结果；仅显式 `kind=native.cpu, deep=true` 执行 endpoint discovery |
+| 首次 Python start | 指定 Python backend；不执行 endpoint discovery |
+| 首次显式 Native runtime request | Native start 执行 endpoint discovery 并创建 capture worker；Native deep doctor 只执行 discovery |
 | query/detail | 指定 job 的摘要或索引 |
 | history | 此时才扫描 manifests |
 | export | 指定报告生成器 |
 
 实现约束：
 
-- `LazyPerformanceService` 首次构造由 mutex 保护。
+- `ProfilerServiceProvider` 首次构造由 mutex 和 condition variable 保护，失败可重试。
 - Native loader 使用可重试状态机；DLL 缺失后安装组件可再次探测。
 - DLL 成功加载后保留到 MCDK 退出，不在任务间反复 `FreeLibrary`。
-- Native deep doctor 是有副作用的显式诊断：它可扫描端口并加载 DLL，响应必须返回 warning，说明模块会常驻到 MCDK 退出；普通 `/doctor` 不触发这些动作。
+- Native deep doctor 是有副作用的显式诊断：它会扫描端口；DLL 已由首个 profiler op 探测，成功后常驻到 MCDK 退出。普通 `/doctor` 不扫描端口。
 - service 析构先停止任务并 join worker，最后释放 backend/module。
 - 不使用后台 Tracy endpoint 扫描；Native start 或 Native deep doctor 每次请求时扫描一次，活动 capture 内只轮询 capture 状态。
 
@@ -400,12 +393,13 @@ stdio bridge 的职责边界：
 - `/doctor`、`/start`、`/status`、`/stop`、`/query`、`/detail`、`/history`、`/export`、`/discard`、`/cleanup` 原样转发给游戏内 MCDK MCP。
 - 后端未启动时继续返回明确 tool error，不在 stdio bridge 内创建替代任务。
 
-静态帮助例外：
+帮助回退：
 
-- `/help` 和 `/guide` 可由 stdio bridge 本地响应，使 Agent 在游戏启动前获得教程和调用提示。
-- 本地响应必须调用与 MCDK MCP 共用的只读 `ProfilerHelpCatalog`，禁止复制帮助文本。
-- 本地 help/guide 与内置 MCP 共用 `ProfilerEnvelopeBuilder` 和 `validateProfilerEnvelope()`，不能只共享文本后分别拼装返回结构。
-- 本地帮助不得触发 `LazyPerformanceService` 初始化，也不得检查运行环境。
+- `/help` 和 `/guide` 先尝试转发，使 MCDK 的首次 op 初始化和 DLL probe 能影响帮助中的 runtime capability。
+- MCDK 不可达时，stdio bridge 才使用共享静态帮助作为回退，并明确标记 `runtime.status=unavailable`，不得猜测 DLL 状态。
+- 本地响应必须调用与 MCDK MCP 共用的 `tryBuildLocalResult()`，禁止复制帮助文本。
+- 本地 help/guide 与内置 MCP 共用 envelope 构造和 `validateProfilerEnvelope()`，不能只共享文本后分别拼装返回结构。
+- stdio bridge 自身不得构造 service、加载 DLL 或检查运行环境。
 - `/doctor` 必须转发，因为平台、DLL、游戏 IPC、project 和 Tracy endpoint 都属于实际 MCDK 实例状态。
 
 版本一致性：
@@ -516,25 +510,21 @@ Native bridge 当前在同一 MCDK 进程内运行，`release()` 最终需要 jo
 
 ### 11.4 采集层数据契约
 
-召回上限与采集上限是两层不同约束。`/query limit=20` 只限制单次 Agent 返回量，不能依赖插件现有的 160 functions、480 calls、80 allocations 或 Native 160 zones 作为唯一原始数据集，否则后端无法召回采集阶段已经丢弃的记录。
-
-第一版采用“游戏侧不可变有界快照 + MCDK 自动分页拉取 + 本地持久化”的方案：
+召回上限与采集上限是两层约束。当前实现采用“游戏侧单次有界快照 + MCDK 本地持久化和分页查询”：
 
 1. soft deadline 到达后先停止 Yappi/tracemalloc 采集。
-2. 游戏侧将项目相关记录转换为带稳定 ID 的不可变 snapshot，返回 snapshot metadata，不立即清空。
-3. MCDK job worker 按固定页字节预算自动拉取所有页面；这是后端内部采集流程，不由 Agent 驱动。
-4. MCDK 校验 page sequence、snapshot id、总记录数和累计字节数，完成后生成 summary/index 并持久化。
-5. 持久化提交后调用幂等 snapshot cleanup；失败、超时和 MCDK shutdown 也执行 cleanup。
-6. 游戏侧 snapshot 自带独立 hard TTL timer，即使 MCDK 崩溃或断线也会自动释放。
+2. 游戏侧只保留项目相关记录，CPU 最多返回 512 个函数和 2048 条调用边，memory 最多返回 512 个 allocation site；traceback depth 最大 16，符号与路径字符串也有长度上限。
+3. 游戏侧响应显式包含 observed total 与 `truncated`，MCDK 不把采集阶段已截断的数据伪装成完整全集。
+4. MCDK 持久化该 job 的完整有界快照；Agent 后续只通过服务端 filter/sort/cursor 分页召回，单次最多 50 条且约 64 KiB。
+5. 成功、失败、提前 stop、discard 和 shutdown 均走幂等 cleanup；游戏侧另有 duration + 60 秒 hard TTL，即使 Agent 或 MCDK 不再调用也会释放 profiler 状态。
 
 采集预算：
 
-- Python CPU 分别限制 functions、call edges、单页字节和整个 snapshot 字节数。
-- Python memory 分别限制 allocation sites、traceback frames、单页字节和整个 snapshot 字节数。
+- Python CPU 分别限制 functions、call edges、符号长度和持久化数据规模。
+- Python memory 分别限制 allocation sites、traceback depth、路径长度和持久化数据规模。
 - 达到采集预算时停止追加并记录 `capture_truncated=true`、`captured_records`、`total_observed` 和 truncation reason。
 - 采集预算由服务端配置决定，Agent 不能请求无界值或绕过上限。
-- 每页必须可在游戏 IPC 单次消息限制内安全传输，并保留额外 envelope 余量。
-- stable ID 在 snapshot 生成时确定，后续分页、落盘和 `/detail` 不重新编号。
+- stable ID 在快照生成时确定，后续落盘、分页和 `/detail` 不重新编号。
 
 Native 数据契约不同：
 
@@ -543,7 +533,7 @@ Native 数据契约不同：
 - 返回 `index_truncated`、`indexed_zones`、`total_zones` 和 call-tree coverage。
 - 第一版不为了任意查询而重复解析 `.tracy`；需要扩大覆盖时调整服务端预算并重新采集。
 
-因此，本文中的“完整数据”统一表示“该 job 已持久化的完整有界数据集”，不表示进程运行期间产生的无限全集。现有插件的固定 Top-K 仅作为 UI summary 默认值，不直接作为 MCDK 原始采集上限。
+因此，本文中的“完整数据”统一表示“该 job 已持久化的完整有界数据集”，不表示进程运行期间产生的无限全集。扩大 Python 采集覆盖需要重新采集或后续引入多页 IPC snapshot 协议；当前实现不会假装能召回采集时未保留的记录。
 
 ## 12. 受控落盘
 
@@ -652,14 +642,14 @@ components/native-profiler/windows-x64/
 - JSON 作为结果边界，不暴露 Tracy、STL、thread 或 mutex 类型。
 - `api_version` 和 `protocol_version` 独立校验。
 
-MCDK 侧封装：
+MCDK 侧已实现封装：
 
 ```cpp
-class NativeTracyModule;   // LoadLibrary/GetProcAddress 和版本校验
-class NativeTracyCapture;  // move-only RAII，析构执行 stop/release
+class NativeBridgeLoader;  // LoadLibrary/GetProcAddress、版本校验和全部 C ABI 调用
+struct NativeCaptureHandle;
 ```
 
-业务代码只使用上述 C++ wrapper，不直接散布 handle 和函数指针。这样可获得 C++ 类型安全和生命周期管理，同时不把 C++ ABI 暴露到 DLL 边界。
+业务代码只通过 `NativeBridgeLoader` 使用 handle；service 在成功、失败、discard 和 shutdown 路径显式 stop/release，loader 析构执行全局 shutdown。函数指针不散布到业务层，也不把 C++ ABI 暴露到 DLL 边界。
 
 C ABI 必须补强：
 
@@ -674,7 +664,7 @@ C ABI 必须补强：
 
 ### 13.4 源码归属
 
-将 `native/tracy-bridge` 移入 MCDevTool 或独立共享仓库，作为唯一权威源。VS Code 插件和 MCDK 发布流程消费同一个构建产物。MCDevTool 不得依赖本机相邻目录 `D:\Zero123\CPP\mcdev-tools`。
+唯一权威源码已落在 `components/profiler/tracy-bridge`。VS Code 插件和 MCDK 发布流程应消费同一个构建产物；MCDevTool 不依赖本机相邻目录 `D:\Zero123\CPP\mcdev-tools`。
 
 ### 13.5 Native endpoint 发现契约
 
@@ -733,8 +723,9 @@ Windows x64 target graph：
 
 ```cmake
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-    add_subdirectory(native/tracy-bridge EXCLUDE_FROM_ALL)
-    add_dependencies(mcdk mcdev-tracy-bridge)
+    add_subdirectory(components/profiler/tracy-bridge)
+    add_custom_target(mcdk_native_profiler_component DEPENDS mcdev-tracy-bridge)
+    add_dependencies(mcdk mcdk_native_profiler_component)
 endif()
 ```
 
@@ -835,9 +826,9 @@ cmake install / package
   -> native-profiler component 可选
 
 runtime
-  -> DLL 存在也不预加载
-  -> 首次显式 Native runtime request 才允许 LoadLibraryExW
-     (native.cpu start，或 kind=native.cpu 且 deep=true 的 doctor)
+  -> 没有 profiler op 时不加载 DLL
+  -> 首个 profiler op 探测/校验/尝试加载 DLL，使 help 能反映 capability
+  -> 只有 native.cpu start 或 kind=native.cpu, deep=true doctor 扫描 endpoint
 ```
 
 Release 验证：
@@ -847,9 +838,11 @@ Release 验证：
 - 安装 Tracy 和 Capstone license。
 - 生成 `component.json`。
 - 验证 core-only 包没有 DLL 仍能运行 Python profiler。
-- 验证 full 包未调用 Native 时没有加载 DLL。
+- 验证 full 包在没有任何 profiler op 时不加载 DLL；首次 `/help` 后 probe 结果进入 runtime capability。
 
-## 16. 分阶段实施
+## 16. 实施状态
+
+Phase 0-5 与 Phase 6 的 help/guide 已落地。Debug/Release 离线构建、C ABI 测试、核心 typed API deadline/落盘/恢复测试、stdio 无游戏回退和安装树组件校验已通过。真实游戏中的 Python/Tracy 数据质量、插件侧 discovery golden cases 和 Agent 召回参数校准仍需游戏 E2E；不得把离线测试表述为游戏采集已验证。
 
 ### Phase 0：领域 API 与测试骨架
 
@@ -859,9 +852,9 @@ Release 验证：
 - 建立 fake clock、fake executor、fake store、fake backend。
 - 固定 `mc_profiler` adapter schema，但不接真实 profiler。
 - 将共享 tool definition 加入 `buildAllTools()`，由内置 MCP 和 `mcdk_stdio_bridge` 同时消费。
-- 在 stdio bridge 本地接入共享 `/help`、`/guide` 静态响应，其他 op 保持转发。
+- stdio bridge 对 `/help`、`/guide` 先转发，后端不可达时使用共享静态响应回退；其他 op 保持转发。
 
-验收：其他 C++ 调用方可不经过 MCP 完成 fake start/status/query/stop；游戏未启动时 stdio `tools/list` 仍包含 `mc_profiler`，且 `/help` 不连接后端。
+验收：其他 C++ 调用方可不经过 MCP 完成 fake start/status/query/stop；游戏未启动时 stdio `tools/list` 仍包含 `mc_profiler`，且 `/help` 尝试后端后返回 runtime unknown 的静态回退。
 
 ### Phase 1：惰性 service、状态机和落盘
 
@@ -874,7 +867,7 @@ Release 验证：
 ### Phase 2：Python CPU
 
 - 迁移 Yappi start、marker、collect、cleanup。
-- 将现有固定 160/480 截断改为带 capture budget、稳定 ID、hard TTL 的不可变分页 snapshot，由 MCDK 自动拉取并清理。
+- 使用 512 functions / 2048 edges 的有界快照、稳定 ID、字符串上限和 hard TTL，由 MCDK 持久化后分页查询。
 - 支持 client/server/all、CPU/WALL。
 - 实现 hotspots/functions/callers/callees/contexts 查询。
 - 迁移 parser 和 report golden tests。
@@ -883,7 +876,7 @@ Release 验证：
 
 - 迁移 tracemalloc baseline/collect/cleanup。
 - 增加 duration 和 host watchdog。
-- 将现有固定 80 allocation 截断改为带 capture budget、稳定 ID、hard TTL 的不可变分页 snapshot，由 MCDK 自动拉取并清理。
+- 使用 512 allocation sites、最大 16 层 traceback、路径上限和 hard TTL 的有界快照，由 MCDK 持久化后分页查询。
 - 实现 allocations/growth/retained/traceback 查询。
 - 保证 IPC 失败走幂等 cleanup。
 
@@ -917,7 +910,7 @@ Release 验证：
 - job 状态转换、并发 start、stop 幂等、discard/finalize 竞争。
 - 单一 runtime owner、多 adapter 共用同一 service，以及重复构造被拒绝。
 - soft/completion deadline、`cleanup_pending` 和系统时钟跳变隔离。
-- Python snapshot page sequence、累计字节预算、stable ID、hard TTL 和幂等 cleanup。
+- Python 有界快照、字符串/记录预算、stable ID、hard TTL 和幂等 cleanup。
 - cursor 绑定、sort/filter、条数和字节预算。
 - 原子落盘、Unicode 路径、磁盘满、containment。
 - Native manifest/hash 一致性、可选签名、ABI、协议和导出函数校验。
@@ -931,7 +924,7 @@ Release 验证：
 - DLL 缺失、损坏、不兼容、Tracy endpoint 不存在或 PID 不匹配。
 - Native endpoint 范围上下界、其他 PID、PID identity 变化、多候选歧义和连接前二次校验。
 - 未调用 Native start 或显式 Native deep doctor 时不执行 `GetExtendedTcpTable`，不存在后台 discovery timer。
-- 显式 Native deep doctor 执行一次 discovery 和 DLL probe/load、不创建 capture worker；响应包含 DLL 常驻 warning，后续普通 `/doctor` 不重复扫描端口。
+- 首个 profiler op 执行一次 DLL probe/load；显式 Native deep doctor 执行一次 discovery、不创建 capture worker，后续普通 `/doctor` 不扫描端口。
 - core-only install 和 full install。
 - 已填充依赖缓存的离线 rebuild 不访问网络。
 - 每个顶层构建独占 `_deps`；跨构建只共享下载归档、可选只读源码缓存和按完整编译环境键控的编译器对象缓存。
@@ -941,9 +934,9 @@ Release 验证：
 - 迁移插件现有三类 parser 测试向量。
 - 迁移 Markdown/SVG report 关键断言。
 - 保留 bridge C ABI tests。
-- 检查未调用 profiler 时没有新增 worker、端口扫描、报告扫描和 DLL module。
+- 检查未调用 profiler 时没有新增 worker、端口扫描、报告扫描和 DLL module；首个任意 profiler op 才探测 DLL。
 - 游戏未启动时，`mcdk_stdio_bridge tools/list` 包含与内置 MCP 完全相同的 `mc_profiler` JSON schema。
-- stdio bridge 本地 `/help`、`/guide` 不发起 HTTP 连接，运行态 op 仍只在调用时连接。
+- stdio bridge `/help`、`/guide` 先发起一次有界后端连接尝试，失败后回退到共享静态帮助并标记 runtime unknown；运行态 op 不在本地执行。
 - stdio bridge 与旧版 MCDK 不匹配时返回明确版本/工具不可用错误。
 
 ## 18. 风险与对策
@@ -951,11 +944,11 @@ Release 验证：
 | 风险 | 对策 |
 |---|---|
 | MCP 逻辑渗入核心 | 独立 core target，禁止依赖 cpp-mcp，typed API 测试 |
-| 内置 MCP 与 stdio bridge 工具定义漂移 | 两者共用 `buildAllTools()` 和 `ProfilerHelpCatalog` |
+| 内置 MCP 与 stdio bridge 工具定义漂移 | 两者共用 `buildAllTools()` 和 `tryBuildLocalResult()` |
 | stdio bridge 与远端 MCDK 版本不匹配 | 成对发行，并返回 `BACKEND_TOOL_UNAVAILABLE` |
 | Agent 启动后不停止 | 有限 duration、backend timer、MCDK watchdog、snapshot hard TTL |
 | 结果撑爆上下文 | L0-L3、Top-K、cursor、字节预算 |
-| 上游采集提前截断导致无法召回 | 游戏侧有界分页 snapshot；Native 区分完整 trace 与有界 index |
+| 上游采集提前截断导致无法召回 | 显式返回 observed/captured/truncated；Python 重新采集以扩大覆盖，Native 区分完整 trace 与有界 index |
 | profiler 互相污染 | 全局单任务互斥 |
 | 多个 service 绕过全局互斥 | 每个 game runtime 唯一 owner，所有 adapter 共用 provider |
 | Native ABI/协议漂移 | manifest 一致性、ABI、protocol 校验；需要防篡改时验证签名 |
@@ -973,31 +966,30 @@ Release 验证：
 
 - MCP `tools/list` 只新增 `mc_profiler`。
 - `mcdk_stdio_bridge` 在游戏未启动时也暴露同一 `mc_profiler` schema。
-- stdio bridge 只本地处理共享静态 help/guide，所有运行态操作惰性转发且不持有 profiler 任务。
+- stdio bridge 对 help/guide 先转发并在不可达时静态回退，所有运行态操作惰性转发且不持有 profiler 任务。
 - profiler core 可由 C++ 业务直接调用，不依赖 MCP 或网络回环。
 - 每个 game runtime 只有一个 owner；MCP 和其他业务共享同一个惰性 service。
 - 未调用时不创建 worker、不扫描端口、不加载 DLL、不扫描历史报告。
 - Python profiler 在 Agent 不再调用时仍须按 deadline 自动结束、清理并落盘；Native 须自动请求 stop 和持久化可得结果，若 in-process worker 未在 completion deadline 内退出，则进入 `cleanup_pending`、保持任务锁并等待 cooperative join，不能伪报已清理。
 - 默认最多一个 profiler 活动。
-- Agent 默认只收到摘要；Python 完整有界 snapshot 自动分页落盘，Native 明确区分完整 trace 和有界分析 index。
+- Agent 默认只收到摘要；Python 有界 snapshot 落盘后由 query 分页召回，Native 明确区分完整 trace 和有界分析 index。
 - 所有 query 支持服务端筛选、排序、分页和稳定 ID。
 - 所有路径受服务端控制，写入原子且有 retention。
 - Native DLL 缺失不影响 MCDK 和 Python profiler。
 - Native endpoint discovery 与插件共享规则，仅在显式 Native 调用时触发，并拒绝 PID 不符或多候选情况。
 - Native DLL 不导出 STL/Tracy C++ 对象，所有导出函数形成完整异常边界。
-- MCDK 通过 move-only RAII C++ wrapper 使用 Native C ABI。
+- MCDK 通过集中式 C++ loader/wrapper 使用 Native C ABI，业务层不直接持有函数指针。
 - Native finalizing 超时进入 `cleanup_pending` 并保持任务锁；同进程 DLL 模式不虚假承诺可强杀线程。
 - 构建 mcdk 可联动构建 DLL，发行可独立选择 Native install component。
 - 固定第三方源码 hash，下载缓存可复用，每个顶层构建独占 FetchContent binary tree。
 - 已填充缓存的离线构建可重复完成。
 - 所有 partial、timeout、persist failure 返回真实状态，不伪报 completed。
 
-## 20. 实施前需用数据确定的参数
+## 20. 游戏 E2E 后需校准的参数
 
-- 各 kind 的默认、最小、最大 `duration_seconds`。
-- MCP 单次结果最终字节上限。
-- Native 单 trace 和总保留空间上限。
-- history TTL 和最大 job 数。
-- 是否自动生成 Markdown，或仅 `/export` 生成。
-- `data.json` 使用单文件、分片 JSON 或带索引格式。
+- `duration_seconds` 当前默认 15、范围 1..300；需根据真实开销判断是否按 kind 收紧。
+- query/detail 当前最多 50/20 条且约 64 KiB；需用真实符号长度验证估算余量。
+- retention 当前为 50 jobs、30 天、2 GiB；Native 单 trace 的更严格配额需用真实 trace 样本确定。
+- Markdown/SVG 当前只在 `/export` 生成，`data.json` 当前使用单文件。
+- Python 当前采集 512 functions 或 allocations、2048 edges；只有真实召回不足时才引入多页 IPC snapshot 协议。
 - Native component 默认进入正式安装包，还是仅进入可选离线组件包。

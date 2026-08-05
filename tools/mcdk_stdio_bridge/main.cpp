@@ -461,9 +461,35 @@ namespace {
                 json        arguments = params.value("arguments", json::object());
                 if (toolName == mcdk::mc_profiler_mcp::ToolName) {
                     const auto standardArguments = nlohmann::json::parse(arguments.dump());
-                    if (auto localResult = mcdk::mc_profiler_mcp::tryBuildLocalResult(standardArguments)) {
-                        return makeSuccessResponse(id, json::parse(localResult->dump()));
+                    auto remoteResult = gameClient_.callTool(toolName, arguments);
+                    if (!remoteResult.value("isError", false)) {
+                        return makeSuccessResponse(id, std::move(remoteResult));
                     }
+                    if (remoteResult.contains("structuredContent")) {
+                        return makeSuccessResponse(id, std::move(remoteResult));
+                    }
+                    if (auto localResult = mcdk::mc_profiler_mcp::tryBuildLocalResult(standardArguments)) {
+                        auto converted = json::parse(localResult->dump());
+                        if (converted.contains("structuredContent") && converted["structuredContent"].contains("data")) {
+                            converted["structuredContent"]["data"]["runtime"] = {
+                                {"status", "unavailable"},
+                                {"reason", "The stdio bridge could not reach MCDK; runtime and Native DLL status are unknown."},
+                            };
+                        }
+                        return makeSuccessResponse(id, std::move(converted));
+                    }
+                    return makeSuccessResponse(
+                        id,
+                        json::parse(
+                            mcdk::mc_profiler_mcp::buildErrorResult(
+                                standardArguments.value("op", ""),
+                                "BACKEND_UNAVAILABLE",
+                                "The stdio bridge could not reach MCDK. Runtime profiler operations are unavailable; "
+                                "the bridge never starts a local capture.",
+                                true
+                            ).dump()
+                        )
+                    );
                 }
                 return makeSuccessResponse(id, gameClient_.callTool(toolName, arguments));
             }

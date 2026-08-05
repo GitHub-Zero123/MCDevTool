@@ -25,6 +25,9 @@
 - `tools/call` 被调用时才触发一次连接/初始化尝试：
   - 成功：转发调用到 `mcdk` 游戏 MCP；
   - 失败：以 tool error 形式返回游戏未启动或 MCP 未配置的说明。
+- `mc_profiler` 是一个 `op + args` 工具，不会为每种 profiler 注册独立工具。
+- `mc_profiler /help` 和 `/guide` 也先尝试后端，使 MCDK 的首次 profiler op 能惰性探测 Native DLL 并返回真实 capability；后端不可达时才返回共享静态帮助，并将 runtime 标记为 unavailable/unknown。
+- 其他 `mc_profiler` op 在后端不可达时只返回 unavailable；bridge 不会本地创建 service、加载 DLL、扫描端口、启动采集或持有任务。
 
 ## 前置配置
 

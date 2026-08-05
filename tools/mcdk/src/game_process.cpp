@@ -3,6 +3,7 @@
 #include <game_process.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <sstream>
 #include <cstdint>
@@ -38,6 +39,9 @@
 #include <mod_dir_config.hpp>
 #include <mod_register.hpp>
 #include <particle_reload_support.hpp>
+#include <performance/profiler_runtime_owner.hpp>
+#include <performance/profiler_service_factory.hpp>
+#include <mc_profiler_mcp.hpp>
 #include <shader_reload_support.hpp>
 #include <style_processor.hpp>
 #include <utils.hpp>
@@ -69,6 +73,18 @@
 #include <windows.h>
 
 namespace {
+    std::filesystem::path currentExecutableDirectory() {
+        std::vector<wchar_t> buffer(512);
+        while (true) {
+            const auto written = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+            if (written == 0) throw std::runtime_error("GetModuleFileNameW failed");
+            if (written < buffer.size() - 1) {
+                return std::filesystem::path(std::wstring(buffer.data(), written)).parent_path();
+            }
+            buffer.resize(buffer.size() * 2);
+        }
+    }
+
     class UniqueHandle {
     public:
         UniqueHandle() = default;
@@ -463,6 +479,46 @@ void mcdk::launchGameExe(
     auto ipcServer = MCDevTool::Debug::createDebugServer();
     auto logBuffer = std::make_shared<mcdk::LogBuffer>(1000, 250);
     auto errBuffer = std::make_shared<mcdk::LogBuffer>(1000, 400);
+    auto profilerGamePid = std::make_shared<std::atomic<std::uint32_t>>(0);
+    mcdk::performance::ProfilerRuntimeOwner profilerRuntime(
+        [ipcServer, profilerGamePid, storageRoot = std::filesystem::current_path() / ".mcdev" / "profiles"] {
+            return mcdk::performance::createProfilerService({
+                .executeCode = [ipcServer](
+                    std::string code,
+                    mcdk::performance::ProfileTarget side,
+                    std::chrono::milliseconds timeout
+                ) -> std::expected<nlohmann::json, mcdk::performance::GameExecutionError> {
+                    if (!ipcServer || ipcServer->getClientCount() == 0) {
+                        return std::unexpected(mcdk::performance::GameExecutionError{
+                            .code = "GAME_WORLD_NOT_READY",
+                            .message = "Minecraft has not entered a world or the debug IPC is unavailable.",
+                            .retryable = true,
+                        });
+                    }
+                    const bool isClient = side != mcdk::performance::ProfileTarget::Server;
+                    auto value = mcdk::ipc_code_execution::requestCodeReturnValueJson(
+                        ipcServer,
+                        std::move(code),
+                        isClient,
+                        static_cast<std::uint32_t>(std::clamp<std::int64_t>(timeout.count(), 1, 120000))
+                    );
+                    if (value.is_object() && value.contains("error") && !value.contains("reason")) {
+                        return std::unexpected(mcdk::performance::GameExecutionError{
+                            .code = "GAME_EXECUTION_FAILED",
+                            .message = value.value("error", "Game IPC execution failed."),
+                            .retryable = true,
+                        });
+                    }
+                    return value;
+                },
+                .currentGameProcessId = [profilerGamePid] {
+                    return profilerGamePid->load(std::memory_order_acquire);
+                },
+                .storageRoot = storageRoot,
+                .executableDirectory = currentExecutableDirectory(),
+            });
+        }
+    );
     auto mcpServer = mcdk::MCPServer(mcpServerConfig);
     if (mcpServerConfig.enabled) {
         // 若启用MCP服务器将自动启用IPC调试功能
@@ -474,6 +530,9 @@ void mcdk::launchGameExe(
         );
         mcpServer.setLogBuffer(logBuffer);
         mcpServer.setErrBuffer(errBuffer);
+        mcpServer.setProfilerHandler([&profilerRuntime](const nlohmann::json& arguments) {
+            return mcdk::mc_profiler_mcp::handleRuntimeRequest(profilerRuntime.provider(), arguments);
+        });
 
         // 代码执行Handler
         mcpServer.setCodeExecuteHandler(
@@ -1063,6 +1122,7 @@ void mcdk::launchGameExe(
     nullInput.reset();
 
     DWORD pid = pi.dwProcessId;
+    profilerGamePid->store(pid, std::memory_order_release);
     // 设置样式处理器PID
     styleProcessor.setPid(pid);
     mcpServer.setMinecraftProcessId(pid);
@@ -1245,6 +1305,7 @@ void mcdk::launchGameExe(
         minecraftExitCode = static_cast<DWORD>(-1);
     }
     hostBridgeTask.notifyMinecraftExited(minecraftExitCode);
+    profilerGamePid->store(0, std::memory_order_release);
 
     // 停止热更新任务
     pyReloadTask.safeExit();
@@ -1252,13 +1313,14 @@ void mcdk::launchGameExe(
     shaderReloadTask.safeExit();
     materialReloadTask.safeExit();
     particleReloadTask.safeExit();
-    // 停止IPC服务器 如果已启用
+    // Stop new MCP calls before tearing down the profiler runtime they invoke.
+    mcpServer.stop();
+    // Profiler cleanup must finish while the game IPC executor is still available.
+    profilerRuntime.shutdown();
     ipcServer->safeExit();
     hostBridgeTask.safeExit();
     // 停止样式处理器
     styleProcessor.safeExit();
-    // 安全的关闭MCP服务器(如果已启用)
-    mcpServer.stop();
 
     // 等待读线程退出并关闭读端句柄
     pipeReaders.join();
