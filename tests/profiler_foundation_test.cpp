@@ -11,6 +11,8 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -162,6 +164,28 @@ namespace {
         passed &= expect(
             startHelp && (*startHelp)["structuredContent"]["data"]["storage"].value("default", "") == "memory",
             "start help explains temporary memory storage as the default"
+        );
+        passed &= expect(
+            startHelp && (*startHelp)["structuredContent"]["data"]["optional"].size() == 6
+                && (*startHelp)["structuredContent"]["data"].contains("bounds"),
+            "start help lists all bounded optional fields"
+        );
+        const auto queryHelp = mcdk::mc_profiler_mcp::tryBuildLocalResult(
+            {{"op", "/help"}, {"args", {{"topic", "/query"}}}}
+        );
+        passed &= expect(
+            queryHelp && (*queryHelp)["structuredContent"]["data"].contains("views")
+                && (*queryHelp)["structuredContent"]["data"].value("note", "").find("calltree-children")
+                    != std::string::npos,
+            "query help documents profiler views and call-tree parent filtering"
+        );
+        const auto cleanupHelp = mcdk::mc_profiler_mcp::tryBuildLocalResult(
+            {{"op", "/help"}, {"args", {{"topic", "/cleanup"}}}}
+        );
+        passed &= expect(
+            cleanupHelp && (*cleanupHelp)["structuredContent"]["data"].value("note", "").find("dry_run=true")
+                    != std::string::npos,
+            "cleanup help distinguishes retention cleanup from temporary lazy GC"
         );
         const auto exportHelp = mcdk::mc_profiler_mcp::tryBuildLocalResult(
             {{"op", "/help"}, {"args", {{"topic", "/export"}}}}
@@ -549,6 +573,116 @@ namespace {
         return passed;
     }
 
+    bool testPythonCaptureOwnershipTokens() {
+        const auto root = std::filesystem::temp_directory_path()
+                        / ("mcdev-profiler-owner-" + std::to_string(
+                            std::chrono::steady_clock::now().time_since_epoch().count()
+                        ));
+        std::mutex codesMutex;
+        std::vector<std::string> codes;
+        auto service = createProfilerService({
+            .executeCode = [&](std::string code, ProfileTarget, std::chrono::milliseconds)
+                -> std::expected<nlohmann::json, GameExecutionError> {
+                {
+                    std::lock_guard lock(codesMutex);
+                    codes.push_back(code);
+                }
+                if (code.find("yappi.start") != std::string::npos) {
+                    return nlohmann::json{{"ok", true}, {"running", true}, {"clock", "WALL"}};
+                }
+                if (code.find("tracemalloc.start") != std::string::npos) {
+                    return nlohmann::json{{"ok", true}, {"depth", 8}};
+                }
+                if (code.find("yappi.get_func_stats") != std::string::npos) {
+                    return nlohmann::json{
+                        {"ok", true}, {"clock", "WALL"}, {"elapsed", 1.0}, {"total", 0},
+                        {"truncated", false}, {"targets", nlohmann::json::array()},
+                        {"nodes", nlohmann::json::array()}, {"edges", nlohmann::json::array()},
+                    };
+                }
+                return nlohmann::json(true);
+            },
+            .currentGameProcessId = [] { return std::uint32_t{0}; },
+            .storageRoot = root / "profiles",
+            .executableDirectory = root,
+        });
+        bool passed = expect(service.has_value(), "ownership-token service is constructible");
+        if (!service) return false;
+
+        const auto discardAndWait = [&](ProfilerKind kind) -> std::optional<JobSnapshot> {
+            auto started = (*service)->start(StartRequest{.kind = kind, .duration = std::chrono::seconds(10)});
+            if (!started) return std::nullopt;
+            (void)(*service)->discard(started->id);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+            while (std::chrono::steady_clock::now() < deadline) {
+                auto current = (*service)->status(started->id);
+                if (current && current->state == JobState::Discarded) return *current;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            return std::nullopt;
+        };
+
+        const auto cpu = discardAndWait(ProfilerKind::PythonCpu);
+        const auto memory = discardAndWait(ProfilerKind::PythonMemory);
+        passed &= expect(cpu.has_value(), "discarded Python CPU capture completes cleanup");
+        passed &= expect(memory.has_value(), "discarded Python memory capture completes cleanup");
+
+        const auto containsCode = [&](std::string_view prefix, std::string_view required) {
+            std::lock_guard lock(codesMutex);
+            return std::any_of(codes.begin(), codes.end(), [&](const std::string& code) {
+                return code.starts_with(prefix) && code.find(required) != std::string::npos;
+            });
+        };
+        if (cpu) {
+            const auto token = "_mcdev_pp_owner='" + cpu->id + "'";
+            passed &= expect(
+                containsCode("import yappi,threading,time", token)
+                    && containsCode("import yappi\n", token),
+                "Python CPU start and cleanup share one job owner token"
+            );
+        }
+        if (memory) {
+            const auto token = "_mcdev_pm_owner='" + memory->id + "'";
+            passed &= expect(
+                containsCode("import tracemalloc,time,threading", token)
+                    && containsCode("import tracemalloc\n", token),
+                "Python memory start and cleanup share one job owner token"
+            );
+        }
+        passed &= expect(
+            containsCode("import yappi,threading,time", "if yappi.is_running() or globals().get('_mcdev_pp_owned',False):")
+                && containsCode("import tracemalloc,time,threading", "if tracemalloc.is_tracing() or globals().get('_mcdev_pm_owned',False):"),
+            "MCP refuses to steal a Python profiler already owned by another frontend"
+        );
+
+        auto allCpu = (*service)->start(StartRequest{
+            .kind = ProfilerKind::PythonCpu,
+            .target = ProfileTarget::All,
+            .duration = std::chrono::seconds(1),
+        });
+        if (allCpu) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+            while (std::chrono::steady_clock::now() < deadline) {
+                const auto current = (*service)->status(allCpu->id);
+                if (current && current->state == JobState::Completed) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        }
+        passed &= expect(allCpu.has_value(), "all-target Python CPU capture starts");
+        passed &= expect(
+            containsCode(
+                "import yappi,time",
+                "_sides.get(_parent.index)==_sides.get(_child.index)"
+            ),
+            "all-target Python CPU call edges cannot cross client/server contexts"
+        );
+
+        (*service)->shutdown();
+        std::error_code ignored;
+        std::filesystem::remove_all(root, ignored);
+        return passed;
+    }
+
     bool testNativeCalltreeChildrenUseExactParentId() {
         const auto root = std::filesystem::temp_directory_path()
                         / ("mcdev-profiler-calltree-" + std::to_string(
@@ -634,6 +768,7 @@ int main() {
     passed      &= testBuiltNativeComponentProbe();
     passed      &= testAutomaticDeadlineAndPersistence();
     passed      &= testTemporaryMemoryStorageAndLazyGc();
+    passed      &= testPythonCaptureOwnershipTokens();
     passed      &= testNativeDoesNotFallbackWithoutDll();
     passed      &= testNativeCalltreeChildrenUseExactParentId();
     return passed ? 0 : 1;

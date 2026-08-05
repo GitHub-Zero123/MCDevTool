@@ -369,6 +369,7 @@ FodyWeavers.xsd
 
 /build/
 /.cache/mcdev-deps/
+/.mcdev/profiles/
 
 reloadFiles/
 .mcdev.json
@@ -376,3 +377,4 @@ logs/
 /.roo/
 /.codex/
 /temps/
+/.mcdev

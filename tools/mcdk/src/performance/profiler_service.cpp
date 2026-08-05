@@ -70,35 +70,35 @@ namespace {
         return value;
     }
 
-    std::string pythonCpuStartCode(const StartRequest& request) {
+    std::string pythonCpuStartCode(const StartRequest& request, std::string_view owner) {
         std::string code = R"PY(import yappi,threading,time
 _mcdev_pp_clock='@CLOCK@'
 _mcdev_pp_duration=@DURATION@
-if yappi.is_running() and not globals().get('_mcdev_pp_owned',False):
+_mcdev_pp_owner='@OWNER@'
+if yappi.is_running() or globals().get('_mcdev_pp_owned',False):
  _result={'ok':False,'reason':'busy'}
 else:
  _old=globals().get('_mcdev_pp_timer')
  if _old: _old.cancel()
  _ttl=globals().get('_mcdev_pp_ttl')
  if _ttl: _ttl.cancel()
- if globals().get('_mcdev_pp_owned',False) and yappi.is_running(): yappi.stop()
  yappi.clear_stats()
  yappi.set_clock_type(_mcdev_pp_clock)
  yappi.start(False,@THREADS@)
- globals()['_mcdev_pp_owned']=True
+ globals()['_mcdev_pp_owned']=True; globals()['_mcdev_pp_owner']=_mcdev_pp_owner
  globals()['_mcdev_pp_started']=time.time()
  globals()['_mcdev_pp_stopped']=None
  globals()['_mcdev_pp_clock']=_mcdev_pp_clock
- def _mcdev_pp_stop():
+ def _mcdev_pp_stop(_owner=_mcdev_pp_owner):
   try:
-   if globals().get('_mcdev_pp_owned',False) and yappi.is_running():
+   if globals().get('_mcdev_pp_owner')==_owner and globals().get('_mcdev_pp_owned',False) and yappi.is_running():
     yappi.stop(); globals()['_mcdev_pp_stopped']=time.time()
   except: pass
- def _mcdev_pp_expire():
+ def _mcdev_pp_expire(_owner=_mcdev_pp_owner):
   try:
-   if globals().get('_mcdev_pp_owned',False):
+   if globals().get('_mcdev_pp_owner')==_owner and globals().get('_mcdev_pp_owned',False):
     if yappi.is_running(): yappi.stop()
-    yappi.clear_stats(); globals()['_mcdev_pp_owned']=False
+    yappi.clear_stats(); globals()['_mcdev_pp_owned']=False; globals()['_mcdev_pp_owner']=None
   except: pass
  _timer=threading.Timer(_mcdev_pp_duration,_mcdev_pp_stop); _timer.daemon=True; _timer.start()
  _ttl=threading.Timer(_mcdev_pp_duration+60,_mcdev_pp_expire); _ttl.daemon=True; _ttl.start()
@@ -106,6 +106,7 @@ else:
  _result={'ok':True,'running':True,'clock':_mcdev_pp_clock})PY";
         code = replaceToken(std::move(code), "@CLOCK@", request.clock == ProfileClock::Wall ? "WALL" : "CPU");
         code = replaceToken(std::move(code), "@DURATION@", std::to_string(request.duration.count()));
+        code = replaceToken(std::move(code), "@OWNER@", owner);
         return replaceToken(std::move(code), "@THREADS@", request.target == ProfileTarget::All ? "True" : "False");
     }
 
@@ -115,11 +116,12 @@ else:
              + "_marker()\n_result=True";
     }
 
-    std::string pythonCpuCollectCode(const StartRequest& request) {
+    std::string pythonCpuCollectCode(const StartRequest& request, std::string_view owner) {
         const auto target = request.target == ProfileTarget::Client ? "client"
                           : request.target == ProfileTarget::Server ? "server" : "all";
         std::string code = R"PY(import yappi,time
-if not globals().get('_mcdev_pp_owned',False):
+_mcdev_pp_owner='@OWNER@'
+if globals().get('_mcdev_pp_owner')!=_mcdev_pp_owner or not globals().get('_mcdev_pp_owned',False):
  _result={'ok':False,'reason':'not_owned'}
 else:
  _timer=globals().get('_mcdev_pp_timer'); _ttl=globals().get('_mcdev_pp_ttl')
@@ -149,53 +151,59 @@ else:
  _edges=[]
  for _parent in _keep:
   for _child in _parent.children:
-   if _child.index in _ids:
+   if _child.index in _ids and _sides.get(_parent.index)==_sides.get(_child.index):
     _edges.append([_ids[_parent.index],_ids[_child.index],int(_child.ncall or 0),float(_child.tsub or 0),float(_child.ttot or 0)])
     if len(_edges)>=2048: break
   if len(_edges)>=2048: break
  _end=globals().get('_mcdev_pp_stopped') or time.time()
  _result={'ok':True,'clock':globals().get('_mcdev_pp_clock','CPU'),'elapsed':max(0,_end-globals().get('_mcdev_pp_started',_end)),'total':len(_all),'truncated':len(_all)>len(_keep) or len(_edges)>=2048,'targets':list(set(_ctx.values())),'nodes':_nodes,'edges':_edges}
- yappi.clear_stats(); globals()['_mcdev_pp_owned']=False; globals()['_mcdev_pp_timer']=None; globals()['_mcdev_pp_ttl']=None)PY";
+ yappi.clear_stats(); globals()['_mcdev_pp_owned']=False; globals()['_mcdev_pp_owner']=None; globals()['_mcdev_pp_timer']=None; globals()['_mcdev_pp_ttl']=None)PY";
+        code = replaceToken(std::move(code), "@OWNER@", owner);
         return replaceToken(std::move(code), "@TARGET@", target);
     }
 
-    std::string pythonCpuCleanupCode() {
-        return R"PY(import yappi
+    std::string pythonCpuCleanupCode(std::string_view owner) {
+        std::string code = R"PY(import yappi
+_mcdev_pp_owner='@OWNER@'
 _timer=globals().get('_mcdev_pp_timer'); _ttl=globals().get('_mcdev_pp_ttl')
-if _timer: _timer.cancel()
-if _ttl: _ttl.cancel()
-if globals().get('_mcdev_pp_owned',False):
+if globals().get('_mcdev_pp_owner')==_mcdev_pp_owner:
+ if _timer: _timer.cancel()
+ if _ttl: _ttl.cancel()
  if yappi.is_running(): yappi.stop()
  yappi.clear_stats()
-globals()['_mcdev_pp_owned']=False; globals()['_mcdev_pp_timer']=None; globals()['_mcdev_pp_ttl']=None
+ globals()['_mcdev_pp_owned']=False; globals()['_mcdev_pp_owner']=None; globals()['_mcdev_pp_timer']=None; globals()['_mcdev_pp_ttl']=None
 _result=True)PY";
+        return replaceToken(std::move(code), "@OWNER@", owner);
     }
 
-    std::string pythonMemoryStartCode(const StartRequest& request) {
+    std::string pythonMemoryStartCode(const StartRequest& request, std::string_view owner) {
         std::string code = R"PY(import tracemalloc,time,threading
-if tracemalloc.is_tracing() and not globals().get('_mcdev_pm_owned',False):
+_mcdev_pm_owner='@OWNER@'
+if tracemalloc.is_tracing() or globals().get('_mcdev_pm_owned',False):
  _result={'ok':False,'reason':'busy'}
 else:
  _ttl=globals().get('_mcdev_pm_ttl')
  if _ttl: _ttl.cancel()
- if globals().get('_mcdev_pm_owned',False) and tracemalloc.is_tracing(): tracemalloc.stop()
  tracemalloc.start(@DEPTH@)
- globals()['_mcdev_pm_owned']=True; globals()['_mcdev_pm_depth']=@DEPTH@
+ globals()['_mcdev_pm_owned']=True; globals()['_mcdev_pm_owner']=_mcdev_pm_owner; globals()['_mcdev_pm_depth']=@DEPTH@
  globals()['_mcdev_pm_started']=time.time(); globals()['_mcdev_pm_base']=tracemalloc.take_snapshot()
- def _mcdev_pm_expire():
+ def _mcdev_pm_expire(_owner=_mcdev_pm_owner):
   try:
-   if globals().get('_mcdev_pm_owned',False) and tracemalloc.is_tracing(): tracemalloc.stop()
-   globals()['_mcdev_pm_owned']=False; globals()['_mcdev_pm_base']=None
+   if globals().get('_mcdev_pm_owner')==_owner:
+    if globals().get('_mcdev_pm_owned',False) and tracemalloc.is_tracing(): tracemalloc.stop()
+    globals()['_mcdev_pm_owned']=False; globals()['_mcdev_pm_owner']=None; globals()['_mcdev_pm_base']=None
   except: pass
  _ttl=threading.Timer(@TTL@,_mcdev_pm_expire); _ttl.daemon=True; _ttl.start(); globals()['_mcdev_pm_ttl']=_ttl
  _result={'ok':True,'depth':@DEPTH@})PY";
         code = replaceToken(std::move(code), "@DEPTH@", std::to_string(request.tracebackDepth));
-        return replaceToken(std::move(code), "@TTL@", std::to_string(request.duration.count() + 60));
+        code = replaceToken(std::move(code), "@TTL@", std::to_string(request.duration.count() + 60));
+        return replaceToken(std::move(code), "@OWNER@", owner);
     }
 
-    std::string pythonMemoryCollectCode(bool collectGarbage) {
+    std::string pythonMemoryCollectCode(bool collectGarbage, std::string_view owner) {
         std::string code = R"PY(import tracemalloc,time,gc
-if not globals().get('_mcdev_pm_owned',False) or not tracemalloc.is_tracing():
+_mcdev_pm_owner='@OWNER@'
+if globals().get('_mcdev_pm_owner')!=_mcdev_pm_owner or not globals().get('_mcdev_pm_owned',False) or not tracemalloc.is_tracing():
  _result={'ok':False,'reason':'not_owned'}
 else:
  _ttl=globals().get('_mcdev_pm_ttl')
@@ -219,17 +227,21 @@ else:
   _frames=[[(_f.filename or '')[:1024],int(_f.lineno or 0)] for _f in _s.traceback]
   _rows.append([_i,int(_s.size_diff),int(_s.count_diff),int(_s.size),int(_s.count),_frames])
  _result={'ok':True,'elapsed':max(0,time.time()-globals().get('_mcdev_pm_started',time.time())),'depth':int(globals().get('_mcdev_pm_depth',1)),'sizeDiff':sum(_s.size_diff for _s in _all),'countDiff':sum(_s.count_diff for _s in _all),'size':sum(_s.size for _s in _all),'count':sum(_s.count for _s in _all),'total':len(_all),'truncated':len(_all)>len(_keep),'rows':_rows}
- tracemalloc.stop(); globals()['_mcdev_pm_owned']=False; globals()['_mcdev_pm_base']=None; globals()['_mcdev_pm_ttl']=None)PY";
-        return replaceToken(std::move(code), "@GC@", collectGarbage ? "gc.collect()" : "pass");
+ tracemalloc.stop(); globals()['_mcdev_pm_owned']=False; globals()['_mcdev_pm_owner']=None; globals()['_mcdev_pm_base']=None; globals()['_mcdev_pm_ttl']=None)PY";
+        code = replaceToken(std::move(code), "@GC@", collectGarbage ? "gc.collect()" : "pass");
+        return replaceToken(std::move(code), "@OWNER@", owner);
     }
 
-    std::string pythonMemoryCleanupCode() {
-        return R"PY(import tracemalloc
+    std::string pythonMemoryCleanupCode(std::string_view owner) {
+        std::string code = R"PY(import tracemalloc
+_mcdev_pm_owner='@OWNER@'
 _ttl=globals().get('_mcdev_pm_ttl')
-if _ttl: _ttl.cancel()
-if globals().get('_mcdev_pm_owned',False) and tracemalloc.is_tracing(): tracemalloc.stop()
-globals()['_mcdev_pm_owned']=False; globals()['_mcdev_pm_base']=None; globals()['_mcdev_pm_ttl']=None
+if globals().get('_mcdev_pm_owner')==_mcdev_pm_owner:
+ if _ttl: _ttl.cancel()
+ if globals().get('_mcdev_pm_owned',False) and tracemalloc.is_tracing(): tracemalloc.stop()
+ globals()['_mcdev_pm_owned']=False; globals()['_mcdev_pm_owner']=None; globals()['_mcdev_pm_base']=None; globals()['_mcdev_pm_ttl']=None
 _result=True)PY";
+        return replaceToken(std::move(code), "@OWNER@", owner);
     }
 
     bool validProfilerPayload(const Json& value) {
@@ -921,25 +933,29 @@ private:
     std::expected<void, ProfilerError> startBackend(Job& job) {
         if (job.request.kind == ProfilerKind::PythonCpu) {
             const auto side = job.request.target == ProfileTarget::Server ? ProfileTarget::Server : ProfileTarget::Client;
-            auto started = execute(pythonCpuStartCode(job.request), side, std::chrono::seconds(12));
+            auto started = execute(pythonCpuStartCode(job.request, job.snapshot.id), side, std::chrono::seconds(12));
             if (!started || !validProfilerPayload(*started)) {
-                cleanupPython(job.request.kind, side);
+                cleanupPython(job.request.kind, side, job.snapshot.id);
                 return std::unexpected(started ? failure("PYTHON_PROFILER_START_FAILED", "Yappi is busy or could not start.", true) : started.error());
             }
             if (job.request.target == ProfileTarget::All) {
                 const auto client = execute(pythonCpuMarkerCode(ProfileTarget::Client), ProfileTarget::Client, std::chrono::seconds(5));
                 const auto server = execute(pythonCpuMarkerCode(ProfileTarget::Server), ProfileTarget::Server, std::chrono::seconds(5));
                 if (!client || !server) {
-                    cleanupPython(job.request.kind, ProfileTarget::Client);
+                    cleanupPython(job.request.kind, ProfileTarget::Client, job.snapshot.id);
                     return std::unexpected(failure("PYTHON_PROFILER_MARKER_FAILED", "Client/server context markers could not both execute.", true));
                 }
             }
             return {};
         }
         if (job.request.kind == ProfilerKind::PythonMemory) {
-            auto started = execute(pythonMemoryStartCode(job.request), ProfileTarget::Client, std::chrono::seconds(12));
+            auto started = execute(
+                pythonMemoryStartCode(job.request, job.snapshot.id),
+                ProfileTarget::Client,
+                std::chrono::seconds(12)
+            );
             if (!started || !validProfilerPayload(*started)) {
-                cleanupPython(job.request.kind, ProfileTarget::Client);
+                cleanupPython(job.request.kind, ProfileTarget::Client, job.snapshot.id);
                 return std::unexpected(started ? failure("PYTHON_MEMORY_START_FAILED", "tracemalloc is busy or could not start.", true) : started.error());
             }
             return {};
@@ -955,9 +971,13 @@ private:
         return {};
     }
 
-    void cleanupPython(ProfilerKind kind, ProfileTarget side) const noexcept {
+    void cleanupPython(ProfilerKind kind, ProfileTarget side, std::string_view owner) const noexcept {
         try {
-            (void)execute(kind == ProfilerKind::PythonMemory ? pythonMemoryCleanupCode() : pythonCpuCleanupCode(), side, std::chrono::seconds(8));
+            (void)execute(
+                kind == ProfilerKind::PythonMemory ? pythonMemoryCleanupCode(owner) : pythonCpuCleanupCode(owner),
+                side,
+                std::chrono::seconds(8)
+            );
         } catch (...) {}
     }
 
@@ -985,7 +1005,11 @@ private:
     void finalizePython(const std::shared_ptr<Job>& job) {
         if (job->discardRequested.load(std::memory_order_acquire)
             || shuttingDown_.load(std::memory_order_acquire)) {
-            cleanupPython(job->request.kind, job->request.target == ProfileTarget::Server ? ProfileTarget::Server : ProfileTarget::Client);
+            cleanupPython(
+                job->request.kind,
+                job->request.target == ProfileTarget::Server ? ProfileTarget::Server : ProfileTarget::Client,
+                job->snapshot.id
+            );
             finishDiscarded(
                 job,
                 shuttingDown_.load(std::memory_order_acquire) ? JobState::Aborted : JobState::Discarded
@@ -995,13 +1019,13 @@ private:
         const auto side = job->request.target == ProfileTarget::Server ? ProfileTarget::Server : ProfileTarget::Client;
         auto result = execute(
             job->request.kind == ProfilerKind::PythonMemory
-                ? pythonMemoryCollectCode(job->request.collectGarbage)
-                : pythonCpuCollectCode(job->request),
+                ? pythonMemoryCollectCode(job->request.collectGarbage, job->snapshot.id)
+                : pythonCpuCollectCode(job->request, job->snapshot.id),
             side,
             std::chrono::seconds(30)
         );
         if (!result || !validProfilerPayload(*result)) {
-            cleanupPython(job->request.kind, side);
+            cleanupPython(job->request.kind, side, job->snapshot.id);
             finishFailed(job, result ? failure("PYTHON_COLLECT_FAILED", "Python profiler returned no owned capture.") : result.error());
             return;
         }

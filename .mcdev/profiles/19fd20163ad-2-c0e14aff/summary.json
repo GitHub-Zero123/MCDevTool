@@ -1,8 +1,0 @@
-{
-  "capture_truncated": false,
-  "captured_calls": 64,
-  "captured_functions": 60,
-  "elapsed_seconds": 3.003000020980835,
-  "kind": "python.cpu",
-  "total_functions": 60
-}

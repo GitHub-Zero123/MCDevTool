@@ -285,7 +285,8 @@ void appendCallNode(std::ostringstream& output, const CallNode& node) {
 std::string buildResultJson(
     tracy::Worker& worker,
     double capturedSeconds,
-    std::uint32_t maximumZones
+    std::uint32_t maximumZones,
+    bool captureTruncated
 ) {
     std::vector<ZoneResult> zones;
     const auto& sourceZones = worker.GetSourceLocationZones();
@@ -370,7 +371,7 @@ std::string buildResultJson(
     output << std::setprecision(15)
            << "{\"capturedSeconds\":" << capturedSeconds
            << ",\"totalZones\":" << totalZones
-           << ",\"truncated\":" << (totalZones > zones.size() ? "true" : "false")
+           << ",\"truncated\":" << (captureTruncated || totalZones > zones.size() ? "true" : "false")
            << ",\"callTreeTruncated\":" << (callTreeTruncated ? "true" : "false")
            << ",\"zones\":[";
     for (std::size_t index = 0; index < zones.size(); ++index) {

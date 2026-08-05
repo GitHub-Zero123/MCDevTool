@@ -79,6 +79,32 @@ namespace {
         return ports;
     }
 
+    std::expected<bool, ProfilerError> endpointConnected(std::uint32_t pid, std::uint16_t port) {
+        ULONG size = 0;
+        const auto first = GetExtendedTcpTable(
+            nullptr, &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0
+        );
+        if (first != ERROR_INSUFFICIENT_BUFFER) {
+            return std::unexpected(nativeError("TRACY_DISCOVERY_FAILED", "Unable to size the Windows TCP connection table.", true));
+        }
+        std::vector<std::byte> buffer(size);
+        auto* table = reinterpret_cast<MIB_TCPTABLE_OWNER_PID*>(buffer.data());
+        const auto loaded = GetExtendedTcpTable(
+            table, &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0
+        );
+        if (loaded != NO_ERROR) {
+            return std::unexpected(nativeError("TRACY_DISCOVERY_FAILED", "Unable to read the Windows TCP connection table.", true));
+        }
+        for (DWORD index = 0; index < table->dwNumEntries; ++index) {
+            const auto& row = table->table[index];
+            if (row.dwOwningPid == pid && row.dwState == MIB_TCP_STATE_ESTAB
+                && ntohs(static_cast<u_short>(row.dwLocalPort)) == port) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     std::expected<std::string, ProfilerError> sha256File(const std::filesystem::path& path) {
         BCRYPT_ALG_HANDLE algorithm = nullptr;
         BCRYPT_HASH_HANDLE hash = nullptr;
@@ -298,6 +324,15 @@ std::expected<NativeEndpoint, ProfilerError> NativeBridgeLoader::discover(std::u
     if (ports->size() != 1) {
         return std::unexpected(nativeError("TRACY_ENDPOINT_AMBIGUOUS", "Multiple Tracy listeners are owned by the current game PID; refusing to guess a port."));
     }
+    const auto connected = endpointConnected(expectedPid, ports->front());
+    if (!connected) return std::unexpected(connected.error());
+    if (*connected) {
+        return std::unexpected(nativeError(
+            "TRACY_ENDPOINT_BUSY",
+            "The current game Tracy endpoint is already connected to another profiler.",
+            true
+        ));
+    }
     return NativeEndpoint{expectedPid, ports->front(), *identity};
 #endif
 }
@@ -327,9 +362,18 @@ std::expected<NativeCaptureHandle, ProfilerError> NativeBridgeLoader::start(
     if (!endpoint) return std::unexpected(endpoint.error());
     const auto secondIdentity = processIdentity(expectedPid);
     const auto secondPorts = listeningPorts(expectedPid);
+    const auto connected = endpointConnected(expectedPid, endpoint->port);
     if (!secondIdentity || !secondPorts || *secondIdentity != endpoint->identity
         || std::find(secondPorts->begin(), secondPorts->end(), endpoint->port) == secondPorts->end()) {
         return std::unexpected(nativeError("TRACY_ENDPOINT_CHANGED", "The game process or Tracy listener changed during discovery.", true));
+    }
+    if (!connected) return std::unexpected(connected.error());
+    if (*connected) {
+        return std::unexpected(nativeError(
+            "TRACY_ENDPOINT_BUSY",
+            "The current game Tracy endpoint became busy before capture could start.",
+            true
+        ));
     }
     std::filesystem::create_directories(tracePath.parent_path());
     const auto traceUtf8 = tracePath.generic_u8string();

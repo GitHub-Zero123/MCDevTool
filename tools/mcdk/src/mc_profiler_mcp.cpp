@@ -132,7 +132,16 @@ namespace {
         } else if (topic == "/start") {
             data["topic"]       = "/start";
             data["required"]    = Json::array({"kind"});
-            data["common_args"] = Json::array({"target", "clock", "duration_seconds", "storage"});
+            data["optional"]    = Json::array(
+                {"target", "clock", "duration_seconds", "storage", "traceback_depth", "collect_garbage"}
+            );
+            data["bounds"] = Json{
+                {"duration_seconds", "integer 1..300"},
+                {"target", "client | server | all"},
+                {"clock", "cpu | wall; Python CPU only"},
+                {"traceback_depth", "integer 1..16; Python memory only"},
+                {"collect_garbage", "boolean; Python memory only"},
+            };
             data["example"]     = Json{
                     {"op", "/start"},
                     {"args", {{"kind", "python.cpu"}, {"target", "client"}, {"clock", "wall"}, {"duration_seconds", 15}, {"storage", "memory"}}},
@@ -179,6 +188,8 @@ namespace {
                     Json::array({"threads", "calltree-roots", "calltree-children", "hotspots", "source-locations"});
                 data["limitations"] = Json::array(
                     {"Uninstrumented native work and arbitrary OS stack frames may not appear in the zone hierarchy.",
+                     "A Tracy endpoint accepts one profiler connection. If the VS Code plugin or Tracy GUI is capturing, doctor/start reports the endpoint as busy instead of competing for it.",
+                     "The bridge caps raw Tracy capture memory at 512 MiB. Reaching the cap stops collection and marks the bounded result as truncated.",
                      "Python/C++ correlation depends on the game emitting nested zones on the observed path.",
                      "Zone names and source locations depend on the target build and available instrumentation.",
                      "The bounded index may be truncated; inspect coverage fields and use the .tracy artifact as the "
@@ -193,11 +204,51 @@ namespace {
             nextCalls.push_back(nextCall("/help", Json{{"topic", "/start"}}, "Review bounded start parameters."));
         } else if (isSupportedOperation(topic)) {
             data["topic"] = topic;
-            if (topic == "/export") {
+            if (topic == "/doctor") {
+                data["optional"] = Json::array({"kind", "deep"});
+                data["note"] = "deep=true is valid only with kind=native.cpu and performs one bounded endpoint discovery; static doctor does not discover ports.";
+                data["example"] = Json{{"op", "/doctor"}, {"args", {{"kind", "native.cpu"}, {"deep", true}}}};
+            } else if (topic == "/guide") {
+                data["optional"] = Json::array({"name"});
+                data["note"] = "Omit name to list guides; returned placeholders must be replaced with ids from earlier calls.";
+                data["example"] = Json{{"op", "/guide"}, {"args", {{"name", "native-hotspot"}}}};
+            } else if (topic == "/status" || topic == "/stop" || topic == "/discard") {
+                data["required"] = Json::array({"job_id"});
+                data["note"] = topic == "/stop"
+                    ? "Requests early finalization and keeps the result; the server deadline still bounds capture lifetime."
+                    : topic == "/discard"
+                    ? "Stops an active job if needed and removes its retained result instead of keeping it queryable."
+                    : "Reads current state without extending the capture deadline.";
+                data["example"] = Json{{"op", topic}, {"args", {{"job_id", "$start.job.id"}}}};
+            } else if (topic == "/query") {
+                data["required"] = Json::array({"job_id", "view"});
+                data["optional"] = Json::array({"filter", "sort", "order", "limit", "cursor"});
+                data["bounds"] = Json{{"filter", "string <=256 bytes"}, {"sort", "field name <=64 bytes"}, {"order", "asc | desc"}, {"limit", "integer 1..50"}, {"cursor", "opaque returned cursor <=256 bytes"}};
+                data["views"] = Json{
+                    {"python.cpu", Json::array({"hotspots", "functions", "contexts", "callers", "callees"})},
+                    {"python.memory", Json::array({"allocations", "growth", "retained", "traceback"})},
+                    {"native.cpu", Json::array({"threads", "calltree-roots", "calltree-children", "hotspots", "source-locations"})},
+                };
+                data["note"] = "calltree-children requires filter to be one complete node id returned by calltree-roots or a preceding child query. Preserve job_id, view, filter, sort, and order when following next_cursor.";
+                data["example"] = Json{{"op", "/query"}, {"args", {{"job_id", "$start.job.id"}, {"view", "calltree-children"}, {"filter", "$root.records[0].id"}, {"limit", 20}}}};
+            } else if (topic == "/detail") {
+                data["required"] = Json::array({"job_id", "view", "record_id"});
+                data["note"] = "Use a record id and the same view that returned it. Native call-tree detail includes bounded related parent/sibling/child records.";
+                data["example"] = Json{{"op", "/detail"}, {"args", {{"job_id", "$query.job_id"}, {"view", "calltree-children"}, {"record_id", "$query.records[0].id"}}}};
+            } else if (topic == "/export") {
+                data["required"] = Json::array({"job_id", "format"});
                 data["formats"] = Json::array({"markdown", "svg"});
                 data["note"] = "Export explicitly writes a report to a server-controlled path, including for memory jobs.";
+                data["example"] = Json{{"op", "/export"}, {"args", {{"job_id", "$start.job.id"}, {"format", "markdown"}}}};
             } else if (topic == "/history") {
+                data["optional"] = Json::array({"limit", "cursor"});
+                data["bounds"] = Json{{"limit", "integer 1..50"}, {"cursor", "opaque returned cursor <=256 bytes"}};
                 data["note"] = "History contains disk jobs only; temporary memory jobs are intentionally excluded.";
+                data["example"] = Json{{"op", "/history"}, {"args", {{"limit", 10}}}};
+            } else if (topic == "/cleanup") {
+                data["optional"] = Json::array({"dry_run"});
+                data["note"] = "Applies server retention policy to persisted disk jobs. Use dry_run=true to inspect counts without deleting artifacts; temporary memory jobs expire through lazy GC or /discard.";
+                data["example"] = Json{{"op", "/cleanup"}, {"args", {{"dry_run", true}}}};
             } else {
                 data["note"] = "Operation-specific runtime fields are strictly validated by the backend adapter.";
             }

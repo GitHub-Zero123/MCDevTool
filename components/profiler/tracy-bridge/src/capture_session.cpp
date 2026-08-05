@@ -20,6 +20,7 @@ namespace mcdev::tracy_bridge {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr std::int64_t MaximumCaptureMemoryBytes = 512ll * 1024 * 1024;
 
 std::string handshakeError(std::uint8_t status) {
     switch (status) {
@@ -123,8 +124,10 @@ std::string CaptureSession::error() const {
 
 void CaptureSession::run() noexcept {
     try {
-        const auto memoryLimit = static_cast<std::int64_t>(options_.memoryLimitPercent)
-            * tracy::GetPhysicalMemorySize() / 100;
+        const auto physicalMemory = static_cast<std::int64_t>(tracy::GetPhysicalMemorySize());
+        const auto requestedMemoryLimit = static_cast<std::int64_t>(options_.memoryLimitPercent)
+            * physicalMemory / 100;
+        const auto memoryLimit = std::min(requestedMemoryLimit, MaximumCaptureMemoryBytes);
         tracy::Worker worker(options_.address.c_str(), options_.port, memoryLimit);
         const auto connectStarted = Clock::now();
         while (!worker.HasData()) {
@@ -166,7 +169,8 @@ void CaptureSession::run() noexcept {
         file->Finish();
 
         const double capturedSeconds = std::chrono::duration<double>(completedAt - capturedAt).count();
-        std::string result = buildResultJson(worker, capturedSeconds, options_.maximumZones);
+        const bool memoryLimitHit = tracy::memUsage.load(std::memory_order_relaxed) >= memoryLimit;
+        std::string result = buildResultJson(worker, capturedSeconds, options_.maximumZones, memoryLimitHit);
         {
             std::lock_guard lock(valueMutex_);
             result_ = std::move(result);

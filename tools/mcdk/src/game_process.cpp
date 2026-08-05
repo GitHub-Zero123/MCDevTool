@@ -480,7 +480,7 @@ void mcdk::launchGameExe(
     auto logBuffer = std::make_shared<mcdk::LogBuffer>(1000, 250);
     auto errBuffer = std::make_shared<mcdk::LogBuffer>(1000, 400);
     auto profilerGamePid = std::make_shared<std::atomic<std::uint32_t>>(0);
-    mcdk::performance::ProfilerRuntimeOwner profilerRuntime(
+    auto profilerRuntime = std::make_shared<mcdk::performance::ProfilerRuntimeOwner>(
         [ipcServer, profilerGamePid, storageRoot = std::filesystem::current_path() / ".mcdev" / "profiles"] {
             return mcdk::performance::createProfilerService({
                 .executeCode = [ipcServer](
@@ -531,8 +531,8 @@ void mcdk::launchGameExe(
         );
         mcpServer.setLogBuffer(logBuffer);
         mcpServer.setErrBuffer(errBuffer);
-        mcpServer.setProfilerHandler([&profilerRuntime](const nlohmann::json& arguments) {
-            return mcdk::mc_profiler_mcp::handleRuntimeRequest(profilerRuntime.provider(), arguments);
+        mcpServer.setProfilerHandler([profilerRuntime](const nlohmann::json& arguments) {
+            return mcdk::mc_profiler_mcp::handleRuntimeRequest(profilerRuntime->provider(), arguments);
         });
 
         // 代码执行Handler
@@ -635,8 +635,8 @@ void mcdk::launchGameExe(
         });
 
         // 触发游戏窗口原生 Ctrl+R UI definition 热重载
-        mcpServer.setReloadUiHandler([&mcpServer]() -> bool {
-            const int pid = mcpServer.getMinecraftProcessId();
+        mcpServer.setReloadUiHandler([profilerGamePid]() -> bool {
+            const auto pid = profilerGamePid->load(std::memory_order_acquire);
             if (pid <= 0) {
                 return false;
             }
@@ -1317,7 +1317,7 @@ void mcdk::launchGameExe(
     // Stop new MCP calls before tearing down the profiler runtime they invoke.
     mcpServer.stop();
     // Profiler cleanup must finish while the game IPC executor is still available.
-    profilerRuntime.shutdown();
+    profilerRuntime->shutdown();
     ipcServer->safeExit();
     hostBridgeTask.safeExit();
     // 停止样式处理器
