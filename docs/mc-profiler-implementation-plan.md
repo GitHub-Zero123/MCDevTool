@@ -599,31 +599,17 @@ Native capture 仍允许 bridge 在 `.runtime/<job-id>/capture.tracy` 写临时�
 ```text
 mcdk.exe
 mcdev-tracy-bridge.dll
-mcdev-tracy-bridge.json
 licenses/native-profiler/
     LICENSE-Tracy.txt
     LICENSE-Capstone.txt
-```
-
-`mcdev-tracy-bridge.json`：
-
-```json
-{
-  "component": "native-profiler",
-  "bridge_api": 1,
-  "tracy_protocol": "0.11.1",
-  "platform": "windows",
-  "arch": "x64",
-  "sha256": "<release hash>"
-}
 ```
 
 ### 13.2 安全加载
 
 - 只加载与当前 `mcdk.exe` 同目录、固定文件名的 `mcdev-tracy-bridge.dll`；不枚举或尝试任意 DLL。
 - 使用绝对路径以及 `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32` 调用 `LoadLibraryExW`，避免当前目录和 `PATH` 搜索劫持。
-- 校验 manifest、文件 hash、C ABI version 和 Tracy protocol。相邻 manifest 中的 SHA-256 只用于检测文件损坏和版本错配，不是发布者身份的信任根。
-- 如果威胁模型包含安装目录被篡改，发行组件必须使用 Authenticode，或使用内置可信公钥验证签名 manifest；不能依赖攻击者可同时替换的 DLL 与相邻 hash 文件。
+- 校验必需导出、C ABI version 和 Tracy protocol，防止错误版本被加载；这些兼容性检查不证明 DLL 的发布者身份。
+- 不生成相邻 hash manifest：它与 DLL 位于同一可替换边界，攻击者可同时替换两者。如果威胁模型包含安装目录被篡改，发行组件必须使用 Authenticode，或使用内置可信公钥验证签名。
 - 所有函数指针解析完成后才发布 module ready。
 - Agent 不得传 DLL 路径或关闭验证。
 - DLL 缺失只令 `native.cpu` unavailable，Python profiler 继续可用。
@@ -827,7 +813,7 @@ Preset 只描述构建环境，例如 generator、toolchain、architecture、bui
 ```text
 cmake build mcdk
   -> 可依赖并构建 mcdev-tracy-bridge.dll
-  -> DLL 和校验清单直接位于 mcdk.exe 同级
+  -> DLL 直接位于 mcdk.exe 同级
 
 cmake install / package
   -> core component 必选
@@ -835,16 +821,14 @@ cmake install / package
 
 runtime
   -> 没有 profiler op 时不加载 DLL
-  -> 首个 profiler op 探测/校验/尝试加载 DLL，使 help 能反映 capability
+  -> 首个 profiler op 探测并尝试加载 DLL、检查 API/协议兼容性，使 help 能反映 capability
   -> 只有 native.cpu start 或 kind=native.cpu, deep=true doctor 扫描 endpoint
 ```
 
 Release 验证：
 
 - 运行 bridge C ABI tests。
-- 生成并校验 DLL SHA-256。
 - 安装 Tracy 和 Capstone license。
-- 生成 `mcdev-tracy-bridge.json`。
 - 验证 core-only 包没有 DLL 仍能运行 Python profiler。
 - 验证 full 包在没有任何 profiler op 时不加载 DLL；首次 `/help` 后 probe 结果进入 runtime capability。
 
@@ -897,7 +881,7 @@ Phase 0-5 与 Phase 6 的 help/guide 已落地。Release 离线构建、C ABI、
 
 ### Phase 5：Native runtime
 
-- 实现安全 DLL loader 和 component manifest 校验。
+- 实现固定同级路径 DLL loader、受限依赖搜索以及导出/API/协议兼容性校验。
 - 按 13.5 的惰性发现契约，使用 Windows IP Helper API 在 `8086..8105` 内匹配 LISTEN socket、当前 Minecraft PID 和进程 identity。
 - 与插件共用 discovery 规范和 golden cases，并修正多个同 PID 候选时的隐式选择。
 - 接入 start/status/stop/result/release 和 watchdog。

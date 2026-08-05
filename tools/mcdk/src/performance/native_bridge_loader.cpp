@@ -6,8 +6,6 @@
 #include <string_view>
 #include <vector>
 
-#include <nlohmann/json.hpp>
-
 #ifdef _WIN32
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -219,31 +217,16 @@ std::expected<void, ProfilerError> NativeBridgeLoader::initialize() {
             impl_->reason = "Native profiling requires a 64-bit MCDK process.";
             return std::unexpected(nativeError("NATIVE_PLATFORM_UNSUPPORTED", impl_->reason));
         }
-        const auto manifestPath = impl_->executableDirectory / "mcdev-tracy-bridge.json";
         const auto libraryPath = impl_->executableDirectory / "mcdev-tracy-bridge.dll";
-        std::ifstream manifestInput(manifestPath, std::ios::binary);
-        nlohmann::json manifest;
-        if (!manifestInput || !(manifestInput >> manifest) || !manifest.is_object()) {
-            impl_->reason = "Native profiler component manifest is missing or invalid.";
+        if (!std::filesystem::is_regular_file(libraryPath)) {
+            impl_->reason = "Native profiler DLL is missing beside mcdk.exe.";
             return std::unexpected(nativeError("NATIVE_COMPONENT_MISSING", impl_->reason, true));
-        }
-        if (manifest.value("component", "") != "native-profiler" || manifest.value("bridge_api", 0) != 1
-            || manifest.value("tracy_protocol", "") != "0.11.1" || manifest.value("platform", "") != "windows"
-            || manifest.value("arch", "") != "x64") {
-            impl_->reason = "Native profiler component manifest is incompatible with this runtime.";
-            return std::unexpected(nativeError("NATIVE_COMPONENT_INCOMPATIBLE", impl_->reason));
-        }
-        const auto digest = sha256File(libraryPath);
-        if (!digest || *digest != manifest.value("sha256", "")) {
-            impl_->reason = digest ? "Native profiler DLL hash does not match mcdev-tracy-bridge.json."
-                                   : digest.error().message;
-            return std::unexpected(nativeError("NATIVE_COMPONENT_HASH_MISMATCH", impl_->reason));
         }
         impl_->module = LoadLibraryExW(
             libraryPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32
         );
         if (!impl_->module) {
-            impl_->reason = "Windows could not load the verified Native profiler DLL.";
+            impl_->reason = "Windows could not load the Native profiler DLL.";
             return std::unexpected(nativeError("NATIVE_COMPONENT_LOAD_FAILED", impl_->reason, true));
         }
         const auto resolve = [this](auto& target, const char* name) {
@@ -267,7 +250,7 @@ std::expected<void, ProfilerError> NativeBridgeLoader::initialize() {
             impl_->reason = "Native profiler DLL exports or protocol version are incompatible.";
             return std::unexpected(nativeError("NATIVE_COMPONENT_INCOMPATIBLE", impl_->reason));
         }
-        impl_->reason = "Native profiler DLL is verified and loaded; endpoint discovery remains deferred.";
+        impl_->reason = "Native profiler DLL is loaded and API/protocol compatible; endpoint discovery remains deferred.";
         return {};
 #endif
     } catch (const std::exception& error) {

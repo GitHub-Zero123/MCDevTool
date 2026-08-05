@@ -348,7 +348,7 @@ namespace {
             auto capabilities = (*service)->inspectCapabilities(DoctorRequest{.kind = ProfilerKind::NativeCpu});
             passed &= expect(
                 capabilities && capabilities->entries.size() == 1 && capabilities->entries.front().available,
-                "fixed-path Native probe verifies manifest, hash, ABI, and Tracy protocol"
+                "fixed-path Native probe validates DLL exports, ABI, and Tracy protocol"
             );
             (*service)->shutdown();
         }
