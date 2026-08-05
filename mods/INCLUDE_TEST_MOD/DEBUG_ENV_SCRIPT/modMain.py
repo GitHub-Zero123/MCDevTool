@@ -27,7 +27,7 @@ class STD_OUT_WRAPPER(object):
 
     def write(self, data):
         with self.writeLock:
-            parts = str(data).splitlines(True)
+            parts = data.replace("\x00", "\\0").splitlines(True)
             for part in parts:
                 if part.endswith("\n"):
                     if self._buffer:
