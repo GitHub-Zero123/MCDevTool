@@ -106,7 +106,7 @@ if(MSVC)
     target_link_options(mcdev-tracy-bridge PRIVATE $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
 endif()
 
-set(_mcdev_native_component_dir "${CMAKE_INSTALL_BINDIR}/components/native-profiler/windows-x64")
+set(_mcdev_native_component_dir "${CMAKE_INSTALL_BINDIR}/native-profiler")
 install(TARGETS mcdev-tracy-bridge
     RUNTIME DESTINATION "${_mcdev_native_component_dir}" COMPONENT native-profiler
     LIBRARY DESTINATION "${_mcdev_native_component_dir}" COMPONENT native-profiler

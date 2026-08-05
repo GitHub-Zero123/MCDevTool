@@ -589,7 +589,7 @@ Native 数据契约不同：
 
 ```text
 mcdk.exe
-components/native-profiler/windows-x64/
+native-profiler/
   component.json
   mcdev-tracy-bridge.dll
   licenses/

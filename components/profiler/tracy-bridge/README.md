@@ -13,7 +13,7 @@ Building `mcdk` also builds `mcdev-tracy-bridge.dll` and synchronizes the DLL, t
 component manifest below the executable directory:
 
 ```text
-components/native-profiler/windows-x64/
+native-profiler/
 ```
 
 Tracy and Capstone are immutable FetchContent archives with SHA-256 verification. Downloads are shared through

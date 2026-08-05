@@ -7,7 +7,7 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     set(_mcdk_native_profiler_supported ON)
     add_subdirectory(
         "${CMAKE_CURRENT_LIST_DIR}/../../components/profiler/tracy-bridge"
-        "${CMAKE_CURRENT_BINARY_DIR}/native-profiler"
+        "${CMAKE_CURRENT_BINARY_DIR}/native-profiler-build"
     )
 else()
     message(STATUS "mcdk native profiler component is unavailable on this platform (requires Windows x64)")
@@ -73,7 +73,7 @@ install(TARGETS mcdk
 
 if(_mcdk_native_profiler_supported)
     set(_mcdk_native_component_dir
-        "$<TARGET_FILE_DIR:mcdk>/components/native-profiler/windows-x64"
+        "$<TARGET_FILE_DIR:mcdk>/native-profiler"
     )
     add_custom_target(mcdk_native_profiler_component
         COMMAND "${CMAKE_COMMAND}" -E make_directory

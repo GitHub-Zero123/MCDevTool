@@ -165,7 +165,7 @@ public:
     Shutdown shutdownAll = nullptr;
 #endif
     explicit Impl(std::filesystem::path executable)
-    : componentDirectory(std::move(executable) / "components" / "native-profiler" / "windows-x64") {}
+    : componentDirectory(std::move(executable) / "native-profiler") {}
 
     std::filesystem::path componentDirectory;
     mutable std::mutex mutex;
