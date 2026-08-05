@@ -14,6 +14,7 @@ namespace mcdk::mcp_tool_definitions {
     [[nodiscard]] mcp::tool              buildCaptureGameWindowTool();
     [[nodiscard]] mcp::tool              buildClickGameWindowTool();
     [[nodiscard]] mcp::tool              buildJsonUiDebuggerTool();
+    [[nodiscard]] mcp::tool              buildMcProfilerTool();
     [[nodiscard]] std::vector<mcp::tool> buildAllTools();
 
 } // namespace mcdk::mcp_tool_definitions

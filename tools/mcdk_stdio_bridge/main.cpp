@@ -13,6 +13,7 @@
 #endif
 
 #include <mcp_tool_definitions.hpp>
+#include <mc_profiler_mcp.hpp>
 
 #include <httplib.h>
 #include <mcp_message.h>
@@ -258,9 +259,19 @@ namespace {
 
             if (response.contains("error")) {
                 const auto& err = response["error"];
-                return makeToolErrorResult(
-                    "MCDK game MCP returned an error: " + err.value("message", dumpJsonReplacingInvalidUtf8(response))
-                );
+                const auto  message = err.value("message", dumpJsonReplacingInvalidUtf8(response));
+                if (name == mcdk::mc_profiler_mcp::ToolName
+                    && message.find("Tool not found") != std::string::npos) {
+                    return json::parse(
+                        mcdk::mc_profiler_mcp::buildErrorResult(
+                            "",
+                            "BACKEND_TOOL_UNAVAILABLE",
+                            "The running MCDK backend does not expose mc_profiler. Update mcdk and mcdk_stdio_bridge as a matched pair.",
+                            false
+                        ).dump()
+                    );
+                }
+                return makeToolErrorResult("MCDK game MCP returned an error: " + message);
             }
             if (!response.contains("result")) {
                 return makeToolErrorResult(
@@ -448,6 +459,12 @@ namespace {
                 }
                 std::string toolName  = params.value("name", "");
                 json        arguments = params.value("arguments", json::object());
+                if (toolName == mcdk::mc_profiler_mcp::ToolName) {
+                    const auto standardArguments = nlohmann::json::parse(arguments.dump());
+                    if (auto localResult = mcdk::mc_profiler_mcp::tryBuildLocalResult(standardArguments)) {
+                        return makeSuccessResponse(id, json::parse(localResult->dump()));
+                    }
+                }
                 return makeSuccessResponse(id, gameClient_.callTool(toolName, arguments));
             }
             if (method == "resources/list") {

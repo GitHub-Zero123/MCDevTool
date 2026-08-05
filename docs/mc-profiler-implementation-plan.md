@@ -421,6 +421,9 @@ stdio bridge 的职责边界：
 - `/help`：短命令索引、安全约束、可用 guide。
 - `/help {op}`：参数、边界、完整 JSON 示例。
 - `/help {kind}`：前提、测量干扰、可查询 view。
+- `/help native.cpu` 必须说明 Native 返回的是按线程组织的 Tracy zone 调用层级：当游戏在同一路径同时发布 Python-facing 与 C++ zones 时，可以跨语言追踪父子耗时，并定位数驱 JSON 解析/反序列化、属性转换、对象构建、事件分发等已埋点底层阶段。
+- Native help 必须同时说明证据边界：这不是无条件的 OS sampled machine stack；未埋点的 native 工作、目标构建未提供的名称/源码位置不会凭空出现。Agent 必须检查 index/call-tree coverage 与 truncation，缺失 zone 只能视为缺失证据。
+- Native 判读提示必须区分 inclusive total 与 self：高 total/低 self 应继续向子节点下钻，高 self 才说明耗时主要发生在当前 zone；结合 calls、mean、maximum 区分累计开销与单次尖峰。
 - 明确说明采集会在 deadline 自动请求停止，不要求 Agent 保持连接或主动 stop；同时说明 Native 收尾超时可能进入 `cleanup_pending`，不能承诺固定时间内销毁同进程 worker。
 
 ### 9.2 `/guide`

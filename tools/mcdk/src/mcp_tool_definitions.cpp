@@ -160,6 +160,7 @@ Parameters:
             buildReloadGameTool(),
             buildCaptureGameWindowTool(),
             buildClickGameWindowTool(),
+            buildMcProfilerTool(),
         };
     }
 

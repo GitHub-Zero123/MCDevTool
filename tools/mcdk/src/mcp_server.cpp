@@ -12,6 +12,7 @@
 #include <functional>
 #include <log_buffer.hpp>
 #include <mcp_tool_definitions.hpp>
+#include <mc_profiler_mcp.hpp>
 #include <jsonui_debugger.hpp>
 #include <jsonui_reload_support.hpp>
 #include <nlohmann/json.hpp>
@@ -64,6 +65,7 @@ namespace mcdk {
     public:
         using CodeExecuteHandler =
             std::function<nlohmann::json(const std::string& code, bool isClient, bool directReturn)>;
+        using ProfilerHandler = std::function<nlohmann::json(const nlohmann::json& arguments)>;
         // 定义单次执行返回状态bool的Handler类型 无参数
         using SimpleHandler = std::function<bool()>;
         // 接收一个布尔参数的Handler类型（用于游戏/Addon重载）
@@ -75,6 +77,7 @@ namespace mcdk {
         std::shared_ptr<LogBuffer>   errBuffer;          // 用于存储错误日志的缓冲区
         std::shared_ptr<mcp::server> server;             // MCP服务器实例
         CodeExecuteHandler           codeExecuteHandler; // 代码执行处理器
+        ProfilerHandler              profilerHandler;
         BoolParamHandler             reloadGameHandler;  // 重载游戏/Addon处理器
         SimpleHandler                reloadUiHandler;    // 重载 UI definition 处理器
         // The process id is published after server startup and read by HTTP worker threads.
@@ -87,6 +90,7 @@ namespace mcdk {
         void setLogBuffer(std::shared_ptr<LogBuffer> buffer) { logBuffer = std::move(buffer); }
         void setErrBuffer(std::shared_ptr<LogBuffer> buffer) { errBuffer = std::move(buffer); }
         void setCodeExecuteHandler(CodeExecuteHandler handler) { codeExecuteHandler = std::move(handler); }
+        void setProfilerHandler(ProfilerHandler handler) { profilerHandler = std::move(handler); }
         void setReloadGameHandler(BoolParamHandler handler) { reloadGameHandler = std::move(handler); }
         void setReloadUiHandler(SimpleHandler handler) { reloadUiHandler = std::move(handler); }
         void setMinecraftProcessId(int pid) { mcPid.store(pid, std::memory_order_relaxed); }
@@ -187,6 +191,62 @@ namespace mcdk {
                     bool        directReturn = params.value("direct_return", true);
 
                     return codeExecuteHandler(code, isClient, directReturn);
+                }
+            );
+        }
+
+        void initProfilerTool() {
+            server->register_tool(
+                mcp_tool_definitions::buildMcProfilerTool(),
+                [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
+                    if (auto localResult = mc_profiler_mcp::tryBuildLocalResult(params)) {
+                        return std::move(*localResult);
+                    }
+                    if (!profilerHandler) {
+                        return mc_profiler_mcp::buildErrorResult(
+                            params.value("op", ""),
+                            "PROFILER_RUNTIME_UNAVAILABLE",
+                            "The profiler runtime backend has not been attached to this MCDK instance.",
+                            true
+                        );
+                    }
+
+                    nlohmann::json result;
+                    try {
+                        result = profilerHandler(params);
+                    } catch (const std::exception& error) {
+                        return mc_profiler_mcp::buildErrorResult(
+                            params.value("op", ""),
+                            "PROFILER_ADAPTER_EXCEPTION",
+                            error.what(),
+                            false
+                        );
+                    } catch (...) {
+                        return mc_profiler_mcp::buildErrorResult(
+                            params.value("op", ""),
+                            "PROFILER_ADAPTER_EXCEPTION",
+                            "The profiler runtime adapter raised an unknown exception.",
+                            false
+                        );
+                    }
+                    if (!result.is_object() || !result.contains("structuredContent")) {
+                        return mc_profiler_mcp::buildErrorResult(
+                            params.value("op", ""),
+                            "PROFILER_ADAPTER_INVALID_RESPONSE",
+                            "The profiler runtime adapter returned no structuredContent envelope.",
+                            false
+                        );
+                    }
+                    std::string validationError;
+                    if (!mc_profiler_mcp::validateProfilerEnvelope(result["structuredContent"], validationError)) {
+                        return mc_profiler_mcp::buildErrorResult(
+                            params.value("op", ""),
+                            "PROFILER_ADAPTER_INVALID_RESPONSE",
+                            validationError,
+                            false
+                        );
+                    }
+                    return result;
                 }
             );
         }
@@ -563,6 +623,7 @@ namespace mcdk {
         void initTools() {
             initLogTool();
             initCodeExecutionTool();
+            initProfilerTool();
             initJsonUiDebuggerTool();
             initGameTools();
             initGameWindowTools();
@@ -630,6 +691,8 @@ namespace mcdk {
     void MCPServer::setCodeExecuteHandler(CodeExecuteHandler handler) {
         mImpl->setCodeExecuteHandler(std::move(handler));
     }
+
+    void MCPServer::setProfilerHandler(ProfilerHandler handler) { mImpl->setProfilerHandler(std::move(handler)); }
 
     void MCPServer::setReloadGameHandler(BoolParamHandler handler) { mImpl->setReloadGameHandler(std::move(handler)); }
 

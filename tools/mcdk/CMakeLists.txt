@@ -2,6 +2,13 @@ project(MC_DEV_TOOL_MCDK)
 
 option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" OFF)
 
+add_library(mcdev_profiler_core STATIC
+    src/performance/profiler_runtime_owner.cpp
+    src/performance/profiler_types.cpp
+)
+target_compile_features(mcdev_profiler_core PUBLIC cxx_std_23)
+target_include_directories(mcdev_profiler_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 add_library(mcdk_core STATIC
     src/config.cpp
     src/env.cpp
@@ -15,6 +22,7 @@ add_library(mcdk_core STATIC
     src/mcp_tool_definitions.cpp
     src/mod_dir_config.cpp
     src/mod_register.cpp
+    src/mc_profiler_mcp.cpp
     src/reload_code.cpp
     src/rpc_registry.cpp
     src/style_processor.cpp
@@ -23,7 +31,7 @@ add_library(mcdk_core STATIC
 )
 target_compile_features(mcdk_core PUBLIC cxx_std_23)
 target_include_directories(mcdk_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(mcdk_core PUBLIC mcdevtool PRIVATE mcp MCDEV_MOD_RESOURCE)
+target_link_libraries(mcdk_core PUBLIC mcdevtool mcdev_profiler_core mcp PRIVATE MCDEV_MOD_RESOURCE)
 
 add_library(mcdk_runtime STATIC
     src/application.cpp

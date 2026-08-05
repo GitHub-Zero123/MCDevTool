@@ -16,6 +16,7 @@ namespace mcdk {
     public:
         using CodeExecuteHandler =
             std::function<nlohmann::json(const std::string& code, bool isClient, bool directReturn)>;
+        using ProfilerHandler = std::function<nlohmann::json(const nlohmann::json& arguments)>;
         using SimpleHandler    = std::function<bool()>;
         using BoolParamHandler = std::function<bool(bool parameter)>;
 
@@ -31,6 +32,7 @@ namespace mcdk {
         void setLogBuffer(std::shared_ptr<LogBuffer> buffer);
         void setErrBuffer(std::shared_ptr<LogBuffer> buffer);
         void setCodeExecuteHandler(CodeExecuteHandler handler);
+        void setProfilerHandler(ProfilerHandler handler);
         void setReloadGameHandler(BoolParamHandler handler);
         void setReloadUiHandler(SimpleHandler handler);
         void setMinecraftProcessId(int processId);

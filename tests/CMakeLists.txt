@@ -29,6 +29,10 @@ add_executable(rpc_registry_test rpc_registry_test.cpp)
 target_compile_features(rpc_registry_test PRIVATE cxx_std_23)
 target_link_libraries(rpc_registry_test PRIVATE mcdk_core)
 
+add_executable(profiler_foundation_test profiler_foundation_test.cpp)
+target_compile_features(profiler_foundation_test PRIVATE cxx_std_23)
+target_link_libraries(profiler_foundation_test PRIVATE mcdk_core)
+
 add_executable(host_bridge_test host_bridge_test.cpp)
 target_compile_features(host_bridge_test PRIVATE cxx_std_23)
 target_link_libraries(host_bridge_test PRIVATE mcdk_runtime)
