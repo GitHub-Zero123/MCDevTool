@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <expected>
 #include <filesystem>
 #include <fstream>
@@ -36,7 +37,19 @@ namespace {
         std::expected<JobSnapshot, ProfilerError>  status(const JobId&) const override { return JobSnapshot{}; }
         std::expected<JobSnapshot, ProfilerError>  stop(const JobId&) override { return JobSnapshot{}; }
         std::expected<void, ProfilerError>         discard(const JobId&) override { return {}; }
-        std::expected<QueryPage, ProfilerError>    query(const QueryRequest&) const override { return QueryPage{}; }
+        std::expected<QueryPage, ProfilerError> query(const QueryRequest&) const override {
+            QueryRecord record{.id = "fake:0"};
+            record.fields.emplace("total_time", ProfilerField{1.0, "seconds"});
+            return QueryPage{
+                .records = {std::move(record)},
+                .totalAvailable = 2,
+                .truncated = true,
+                .nextCursor = "fake-cursor",
+            };
+        }
+        std::expected<CompareResult, ProfilerError> compare(const CompareRequest&) const override {
+            return CompareResult{};
+        }
         std::expected<DetailResult, ProfilerError> detail(const DetailRequest&) const override {
             return DetailResult{};
         }
@@ -187,6 +200,13 @@ namespace {
                     != std::string::npos,
             "cleanup help distinguishes retention cleanup from temporary lazy GC"
         );
+        const auto compareHelp = mcdk::mc_profiler_mcp::tryBuildLocalResult(
+            {{"op", "/help"}, {"args", {{"topic", "/compare"}}}}
+        );
+        passed &= expect(
+            compareHelp && (*compareHelp)["structuredContent"]["data"].contains("supported_views"),
+            "compare help documents stable cross-capture views"
+        );
         const auto exportHelp = mcdk::mc_profiler_mcp::tryBuildLocalResult(
             {{"op", "/help"}, {"args", {{"topic", "/export"}}}}
         );
@@ -275,6 +295,38 @@ namespace {
         );
         passed &= expect(second["structuredContent"].value("ok", false), "runtime guide succeeds");
         passed &= expect(factoryCount == 1, "first profiler op initializes the shared runtime exactly once");
+        const auto page = mcdk::mc_profiler_mcp::handleRuntimeRequest(
+            owner.provider(),
+            {
+                {"op", "/query"},
+                {"args", {
+                    {"job_id", "job"}, {"view", "hotspots"}, {"filter", "tick"},
+                    {"sort", "self_time"}, {"order", "asc"}, {"limit", 7}
+                }},
+            }
+        );
+        const auto& nextArgs = page["structuredContent"]["next_calls"][0]["args"];
+        passed &= expect(
+            nextArgs.value("filter", "") == "tick" && nextArgs.value("sort", "") == "self_time"
+                && nextArgs.value("order", "") == "asc" && nextArgs.value("limit", 0) == 7
+                && nextArgs.value("cursor", "") == "fake-cursor",
+            "query pagination preserves filter, ordering, limit, and the returned cursor"
+        );
+        const auto comparison = mcdk::mc_profiler_mcp::handleRuntimeRequest(
+            owner.provider(),
+            {
+                {"op", "/compare"},
+                {"args", {
+                    {"baseline_job_id", "before"}, {"candidate_job_id", "after"},
+                    {"view", "hotspots"}, {"metric", "self_time"}, {"limit", 5}
+                }},
+            }
+        );
+        passed &= expect(
+            comparison["structuredContent"].value("ok", false)
+                && comparison["structuredContent"]["data"].value("metric", "missing").empty(),
+            "runtime adapter accepts bounded compare arguments"
+        );
         return passed;
     }
 
@@ -513,8 +565,11 @@ namespace {
             const std::string contents((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
             passed &= expect(
                 contents.find("Python Performance Profile") != std::string::npos
-                    && contents.find("<rect x=\"540\"") != std::string::npos,
-                "SVG export contains a bounded hotspot chart"
+                    && contents.find(">Total</text>") != std::string::npos
+                    && contents.find(">Self</text>") != std::string::npos
+                    && contents.find("fill=\"#b27adf\"") != std::string::npos
+                    && contents.find("20.000 ms / 10.000 ms") != std::string::npos,
+                "SVG export visibly distinguishes total and self time"
             );
         }
         passed &= expect(
@@ -535,6 +590,29 @@ namespace {
         passed &= expect(
             !expired && expired.error().code == "JOB_NOT_FOUND",
             "next profiler request lazily removes a memory job after 20 idle minutes"
+        );
+
+        auto discardCandidate = (*service)->start(StartRequest{.duration = std::chrono::seconds(1)});
+        JobSnapshot discardSnapshot;
+        const auto discardDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+        while (discardCandidate && discardSnapshot.state != JobState::Completed
+               && discardSnapshot.state != JobState::Failed
+               && std::chrono::steady_clock::now() < discardDeadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            auto current = (*service)->status(discardCandidate->id);
+            if (current) discardSnapshot = *current;
+        }
+        auto discardExport = discardCandidate
+            ? (*service)->exportReport({discardCandidate->id, ExportFormat::Svg})
+            : std::expected<ExportResult, ProfilerError>(std::unexpected(discardCandidate.error()));
+        const auto discardExportDirectory = discardExport
+            ? discardExport->path.parent_path() : std::filesystem::path{};
+        auto discarded = discardCandidate
+            ? (*service)->discard(discardCandidate->id)
+            : std::expected<void, ProfilerError>(std::unexpected(discardCandidate.error()));
+        passed &= expect(
+            discarded && !discardExportDirectory.empty() && !std::filesystem::exists(discardExportDirectory),
+            "discard removes explicit exports belonging to a temporary memory job"
         );
 
         (*service)->shutdown();
@@ -711,7 +789,26 @@ namespace {
                     })},
                 },
             })},
-            {"zones", nlohmann::json::array()},
+            {"zones", nlohmann::json::array({
+                nlohmann::json{
+                    {"id", 0}, {"name", "parse"}, {"sourceFile", "engine/json.cpp"}, {"sourceLine", 8},
+                    {"threadId", "1"}, {"threadName", "Main"}, {"calls", 1},
+                    {"totalNanoseconds", 100}, {"selfNanoseconds", 40},
+                    {"meanNanoseconds", 100}, {"maximumNanoseconds", 100},
+                    {"slowestCalls", nlohmann::json::array({
+                        nlohmann::json{{"startNanoseconds", 10}, {"durationNanoseconds", 100}}
+                    })},
+                },
+                nlohmann::json{
+                    {"id", 1}, {"name", "parse"}, {"sourceFile", "engine/json.cpp"}, {"sourceLine", 8},
+                    {"threadId", "2"}, {"threadName", "Worker"}, {"calls", 2},
+                    {"totalNanoseconds", 200}, {"selfNanoseconds", 60},
+                    {"meanNanoseconds", 100}, {"maximumNanoseconds", 150},
+                    {"slowestCalls", nlohmann::json::array({
+                        nlohmann::json{{"startNanoseconds", 20}, {"durationNanoseconds", 150}}
+                    })},
+                },
+            })},
         };
         const nlohmann::json manifest{
             {"job_id", jobId}, {"kind", "native.cpu"}, {"state", "completed"},
@@ -751,6 +848,164 @@ namespace {
                 children && children->records.size() == 1 && children->records.front().id == "node:40",
                 "calltree child selection does not prefix-match unrelated node ids"
             );
+            auto rootDetail = (*service)->detail(DetailRequest{
+                .jobId = jobId,
+                .view = "calltree-roots",
+                .recordId = "node:39",
+            });
+            passed &= expect(
+                rootDetail && rootDetail->related.size() == 1 && rootDetail->related.front().id == "node:40",
+                "calltree root detail returns its children without unrelated roots"
+            );
+            auto sources = (*service)->query(QueryRequest{
+                .jobId = jobId,
+                .view = "source-locations",
+                .limit = 20,
+            });
+            passed &= expect(
+                sources && sources->records.size() == 1
+                    && std::get<std::int64_t>(sources->records[0].fields.at("total_time").value) == 300
+                    && std::get<std::int64_t>(sources->records[0].fields.at("self_time").value) == 100
+                    && std::get<std::int64_t>(sources->records[0].fields.at("thread_count").value) == 2,
+                "Native source-locations view aggregates the same source across threads"
+            );
+            auto slowest = (*service)->query(QueryRequest{
+                .jobId = jobId,
+                .view = "slowest-calls",
+                .limit = 20,
+            });
+            passed &= expect(
+                slowest && slowest->records.size() == 2
+                    && std::get<std::int64_t>(slowest->records[0].fields.at("duration").value) == 150,
+                "Native slowest-calls exposes bounded event-level start and duration samples"
+            );
+            (*service)->shutdown();
+        }
+        std::filesystem::remove_all(root, ignored);
+        return passed;
+    }
+
+    bool testSemanticViewsStructuredTracebackAndCompare() {
+        const auto root = std::filesystem::temp_directory_path()
+                        / ("mcdev-profiler-semantic-" + std::to_string(
+                            std::chrono::steady_clock::now().time_since_epoch().count()
+                        ));
+        const auto profiles = root / "profiles";
+        std::error_code ignored;
+        const auto writeJob = [&](std::string_view id, std::string_view kind, const nlohmann::json& data) {
+            const auto directory = profiles / id;
+            std::filesystem::create_directories(directory, ignored);
+            const nlohmann::json manifest{
+                {"job_id", id}, {"kind", kind}, {"state", "completed"}, {"partial", false},
+                {"created_at", "2026-01-01T00:00:00Z"}, {"completed_at", "2026-01-01T00:00:01Z"},
+            };
+            std::ofstream(directory / "manifest.json") << manifest.dump();
+            std::ofstream(directory / "data.json") << data.dump();
+            std::ofstream(directory / "summary.json") << nlohmann::json::object().dump();
+        };
+        const auto cpuNode = [](std::int64_t id, std::string name, double self, double total) {
+            return nlohmann::json::array({
+                id, "pack/perf.py", 12, std::move(name), 10, 10, self, total, 1, "Main", "client"
+            });
+        };
+        writeJob(
+            "baseline", "python.cpu",
+            nlohmann::json{
+                {"nodes", nlohmann::json::array({cpuNode(7, "tick", 0.04, 0.10), cpuNode(8, "removed", 0.01, 0.02)})},
+                {"edges", nlohmann::json::array({nlohmann::json::array({7, 8, 2, 0.01, 0.02})})},
+            }
+        );
+        writeJob(
+            "candidate", "python.cpu",
+            nlohmann::json{
+                {"nodes", nlohmann::json::array({cpuNode(3, "tick", 0.07, 0.16), cpuNode(4, "added", 0.02, 0.03)})},
+                {"edges", nlohmann::json::array()},
+            }
+        );
+        writeJob(
+            "memory", "python.memory",
+            nlohmann::json{
+                {"rows", nlohmann::json::array({
+                    nlohmann::json::array({0, 100, 2, 300, 4, nlohmann::json::array({
+                        nlohmann::json::array({"pack/a.py", 7}), nlohmann::json::array({"pack/b.py", 9})
+                    })}),
+                    nlohmann::json::array({1, -50, -1, 25, 1, nlohmann::json::array({
+                        nlohmann::json::array({"pack/c.py", 11})
+                    })}),
+                })},
+            }
+        );
+
+        auto service = createProfilerService({
+            .executeCode = {},
+            .currentGameProcessId = [] { return std::uint32_t{0}; },
+            .storageRoot = profiles,
+            .executableDirectory = root,
+        });
+        bool passed = expect(service.has_value(), "semantic view fixture service is constructible");
+        if (service) {
+            auto growth = (*service)->query(QueryRequest{.jobId = "memory", .view = "growth", .limit = 20});
+            passed &= expect(
+                growth && growth->records.size() == 2
+                    && std::holds_alternative<ProfilerStackTrace>(growth->records[0].fields.at("traceback").value)
+                    && std::get<ProfilerStackTrace>(growth->records[0].fields.at("traceback").value).size() == 2,
+                "memory growth exposes traceback as structured frames"
+            );
+            auto retained = (*service)->query(QueryRequest{.jobId = "memory", .view = "retained", .limit = 20});
+            passed &= expect(
+                retained && retained->records.size() == 2
+                    && !retained->records[0].fields.contains("size_diff")
+                    && retained->records[0].fields.contains("current_size"),
+                "memory retained view has distinct current-retention semantics"
+            );
+            auto fakeView = (*service)->query(QueryRequest{.jobId = "baseline", .view = "functions", .limit = 20});
+            passed &= expect(
+                !fakeView && fakeView.error().code == "VIEW_INVALID",
+                "legacy alias views no longer pretend to provide distinct data"
+            );
+            auto calls = (*service)->query(QueryRequest{.jobId = "baseline", .view = "calls", .limit = 20});
+            passed &= expect(
+                calls && calls->records.size() == 1
+                    && std::get<std::string>(calls->records[0].fields.at("caller_name").value) == "tick"
+                    && std::get<std::string>(calls->records[0].fields.at("callee_name").value) == "removed",
+                "Python calls view retains node storage while resolving call-edge names"
+            );
+            auto compared = (*service)->compare(CompareRequest{
+                .baselineJobId = "baseline",
+                .candidateJobId = "candidate",
+                .view = "hotspots",
+                .limit = 20,
+            });
+            const QueryRecord* tick = nullptr;
+            if (compared) {
+                for (const auto& record : compared->records) {
+                    const auto found = record.fields.find("name");
+                    if (found != record.fields.end() && std::get<std::string>(found->second.value) == "tick") {
+                        tick = &record;
+                    }
+                }
+            }
+            passed &= expect(
+                compared && compared->matched == 1 && compared->added == 1 && compared->removed == 1
+                    && compared->metric == "total_time" && tick
+                    && std::abs(std::get<double>(tick->fields.at("delta").value) - 0.06) < 0.000001,
+                "compare aligns stable function identities and reports bounded deltas"
+            );
+            auto invalidMetric = (*service)->compare(CompareRequest{
+                .baselineJobId = "baseline", .candidateJobId = "candidate",
+                .view = "hotspots", .metric = "line",
+            });
+            passed &= expect(
+                !invalidMetric && invalidMetric.error().code == "COMPARE_METRIC_INVALID",
+                "compare rejects numeric identity fields as performance metrics"
+            );
+            auto mismatch = (*service)->compare(CompareRequest{
+                .baselineJobId = "baseline", .candidateJobId = "memory", .view = "hotspots",
+            });
+            passed &= expect(
+                !mismatch && mismatch.error().code == "COMPARE_KIND_MISMATCH",
+                "compare rejects jobs of different profiler kinds"
+            );
             (*service)->shutdown();
         }
         std::filesystem::remove_all(root, ignored);
@@ -771,5 +1026,6 @@ int main() {
     passed      &= testPythonCaptureOwnershipTokens();
     passed      &= testNativeDoesNotFallbackWithoutDll();
     passed      &= testNativeCalltreeChildrenUseExactParentId();
+    passed      &= testSemanticViewsStructuredTracebackAndCompare();
     return passed ? 0 : 1;
 }

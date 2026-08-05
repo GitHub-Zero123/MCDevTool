@@ -129,6 +129,9 @@ install(
 )
 
 if(MCDEV_TRACY_BUILD_TESTS)
+    if(PROJECT_IS_TOP_LEVEL)
+        enable_testing()
+    endif()
     add_executable(mcdev-tracy-bridge-tests tests/api_tests.cpp)
     target_compile_features(mcdev-tracy-bridge-tests PRIVATE cxx_std_20)
     target_link_libraries(mcdev-tracy-bridge-tests PRIVATE mcdev-tracy-bridge)

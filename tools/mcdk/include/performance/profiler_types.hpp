@@ -76,7 +76,13 @@ namespace mcdk::performance {
         std::string  completedAt;
     };
 
-    using ProfilerFieldValue = std::variant<std::int64_t, double, bool, std::string>;
+    struct ProfilerStackFrame {
+        std::string  file;
+        std::int64_t line = 0;
+    };
+
+    using ProfilerStackTrace = std::vector<ProfilerStackFrame>;
+    using ProfilerFieldValue = std::variant<std::int64_t, double, bool, std::string, ProfilerStackTrace>;
 
     struct ProfilerField {
         ProfilerFieldValue value;
@@ -103,6 +109,23 @@ namespace mcdk::performance {
         std::size_t                totalAvailable = 0;
         bool                       truncated      = false;
         std::optional<std::string> nextCursor;
+    };
+
+    struct CompareRequest {
+        JobId       baselineJobId;
+        JobId       candidateJobId;
+        std::string view;
+        std::string metric;
+        std::size_t limit = 20;
+    };
+
+    struct CompareResult {
+        std::vector<QueryRecord> records;
+        std::string              metric;
+        std::size_t              matched   = 0;
+        std::size_t              added     = 0;
+        std::size_t              removed   = 0;
+        bool                     truncated = false;
     };
 
     struct DetailRequest {

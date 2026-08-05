@@ -15,6 +15,8 @@ namespace mcdk::performance {
         [[nodiscard]] virtual std::expected<JobSnapshot, ProfilerError>  stop(const JobId& id)                      = 0;
         [[nodiscard]] virtual std::expected<void, ProfilerError>         discard(const JobId& id)                   = 0;
         [[nodiscard]] virtual std::expected<QueryPage, ProfilerError>    query(const QueryRequest& request) const   = 0;
+        [[nodiscard]] virtual std::expected<CompareResult, ProfilerError>
+        compare(const CompareRequest& request) const                                                               = 0;
         [[nodiscard]] virtual std::expected<DetailResult, ProfilerError> detail(const DetailRequest& request) const = 0;
         [[nodiscard]] virtual std::expected<HistoryPage, ProfilerError>
         history(const HistoryRequest& request) const                                                                = 0;

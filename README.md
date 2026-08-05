@@ -19,7 +19,7 @@
 - 一键生成并启动开发测试世界，自动挂载用户行为包 / 资源包。
 - 支持直接运行玩法地图工程，自动识别包含 `level.dat` 的地图目录，并保留地图自带的世界数据和包清单。
 - 支持 Python Mod 热更新，修改代码后回到游戏前台自动触发增量刷新。
-- 支持 JSON UI 热重载，可在资源包 `ui/*.json` 变化后触发原生 `Ctrl+R` UI definition reload。
+- 支持 JSON UI 热重载，可在资源包 `ui/*.json` 变化后触发原生 UI definition reload。
 - 支持 Shader / Material 单文件热更新，可在资源包文件变化后回到游戏前台触发增量重载。
 - 内置调试 MOD，可重定向 Python 输出、绑定热更新快捷键，并提供调试期 IPC 能力。
 - 可选启用 MCP 服务，让 AI / 自动化客户端读取日志、执行代码、分析 JSON UI、截图和点击游戏窗口。
@@ -148,7 +148,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "include_debug_mod": true,
     // 是否自动热更新MOD
     "auto_hot_reload_mods": true,
-    // 是否自动热更新 JSON UI，默认关闭。开启后，资源包 ui 目录下的 json 修改会在回到游戏前台时触发 Ctrl+R UI 热重载
+    // 是否自动热更新 JSON UI，默认关闭。开启后，资源包 ui 目录下的 json 修改会在回到游戏前台时触发 UI 热重载
     "auto_hot_reload_ui": false,
     // 是否自动热更新 Shader，默认关闭。开启后，资源包 shaders 目录下任意文件修改会在回到游戏前台时触发单文件 Shader 重载
     "auto_hot_reload_shaders": false,
@@ -327,9 +327,9 @@ VSCode 暂不支持直接连接 SSE，需通过 `mcp-remote` 桥接，配置在 
 
 ### 性能分析
 
-`mc_profiler` 提供 Python CPU 热点、Python 内存增长和 Native CPU 分析。Native 模式读取 Tracy zone 调用树，可在游戏提供相应埋点时关联 Python 调用和 C++ 引擎阶段，用于继续定位数据驱动 JSON 解析、转换、对象构建或事件分发等底层耗时。
+`mc_profiler` 提供 Python CPU 热点与调用关系、Python 内存增长与保留量，以及 Native CPU 分析。内存调用栈以结构化帧返回；Native 模式读取 Tracy zone 调用树，并保留每个索引 zone 最多三次最慢调用的起始时间和持续时间，可在游戏提供相应埋点时关联 Python 调用和 C++ 引擎阶段，用于继续定位数据驱动 JSON 解析、转换、对象构建或事件分发等底层耗时。
 
-分析任务具有服务端截止时间。结果默认只保存在进程内，连续 20 分钟未访问后由下一次性能分析请求惰性回收，不进入历史记录；需要跨进程恢复或前后对比时，可在启动任务时显式选择磁盘存储。Markdown 和 SVG 报告仅在显式导出时写入受控目录。
+分析任务具有服务端截止时间。结果默认只保存在进程内，连续 20 分钟未访问后由下一次性能分析请求惰性回收，不进入历史记录；需要跨进程恢复或前后对比时，可在启动任务时显式选择磁盘存储。相同分析类型的任务可按稳定来源身份在服务端计算基线、候选值和差值。Markdown 和 SVG 报告仅在显式导出时写入受控目录；CPU 报告会明确区分总耗时和自耗时。
 
 Native 分析是可选能力，仅支持 Windows x64。`mcdev-tracy-bridge.dll` 及其校验清单必须与 `mcdk.exe` 位于同一目录；缺少或校验失败时 Native 分析直接不可用，不会回退为 Python 分析。
 
@@ -345,7 +345,7 @@ MCDK MCP 的定位不是让通用 Agent 仅凭 LLM、截图和点击完成复杂
 4. 多轮执行后统计成功率、耗时和异常分布；
 5. 仅在视觉效果本身是测试目标时使用截图和点击能力。
 
-详细规范见 [MCP 游戏测试功能介绍与工作流策略规范](docs/mcp-game-testing-workflow.md)。面向 Agent 的可复用 Skill 位于 [.roo/skills/mcdk-mcp-game-testing-workflow/SKILL.md](.roo/skills/mcdk-mcp-game-testing-workflow/SKILL.md)。
+详细规范见 [MCP 游戏测试功能介绍与工作流策略规范](docs/mcp-game-testing-workflow.md)。
 
 ## 第三方依赖
 | 库名 | 用途 | 备注 |

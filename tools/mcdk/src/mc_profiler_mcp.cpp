@@ -8,13 +8,14 @@
 #include <filesystem>
 #include <initializer_list>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace {
 
     using Json = nlohmann::json;
 
-    constexpr std::array<std::string_view, 12> SupportedOperations = {
+    constexpr std::array<std::string_view, 13> SupportedOperations = {
         "/help",
         "/guide",
         "/doctor",
@@ -22,6 +23,7 @@ namespace {
         "/status",
         "/stop",
         "/query",
+        "/compare",
         "/detail",
         "/history",
         "/export",
@@ -137,7 +139,7 @@ namespace {
             );
             data["bounds"] = Json{
                 {"duration_seconds", "integer 1..300"},
-                {"target", "client | server | all"},
+                {"target", "Python CPU: client | server | all; Python memory: client control side only; Native: omitted"},
                 {"clock", "cpu | wall; Python CPU only"},
                 {"traceback_depth", "integer 1..16; Python memory only"},
                 {"collect_garbage", "boolean; Python memory only"},
@@ -167,6 +169,7 @@ namespace {
                     {"Cross-language parent/child zone relationships when both Python and C++ paths emit Tracy zones.",
                      "Zone and thread names plus source file and line when supplied by instrumentation.",
                      "Calls, inclusive total time, self time, mean time, and maximum time.",
+                     "Up to three bounded slowest call samples per indexed zone, with start and duration timestamps.",
                      "A complete .tracy artifact plus a bounded query index with explicit truncation and coverage."}
                 );
                 data["engine_stage_examples"] = Json::array(
@@ -185,16 +188,32 @@ namespace {
                      "of blaming the outer load zone."}
                 );
                 data["recommended_views"] =
-                    Json::array({"threads", "calltree-roots", "calltree-children", "hotspots", "source-locations"});
+                    Json::array({"threads", "calltree-roots", "calltree-children", "hotspots", "source-locations", "slowest-calls"});
                 data["limitations"] = Json::array(
                     {"Uninstrumented native work and arbitrary OS stack frames may not appear in the zone hierarchy.",
                      "A Tracy endpoint accepts one profiler connection. If the VS Code plugin or Tracy GUI is capturing, doctor/start reports the endpoint as busy instead of competing for it.",
                      "The bridge caps raw Tracy capture memory at 512 MiB. Reaching the cap stops collection and marks the bounded result as truncated.",
                      "Python/C++ correlation depends on the game emitting nested zones on the observed path.",
                      "Zone names and source locations depend on the target build and available instrumentation.",
+                     "slowest-calls start_time uses the Tracy capture clock and is comparable only within the same job.",
                      "The bounded index may be truncated; inspect coverage fields and use the .tracy artifact as the "
                      "source of truth."}
                 );
+            } else if (topic == "python.memory") {
+                data["note"] =
+                    "Python memory uses tracemalloc through the client control executor, but tracemalloc observes the "
+                    "shared Python interpreter process. Results may contain both client and server allocation paths; "
+                    "target=client does not mean client-only allocation isolation.";
+                data["scope"] = "process-wide Python allocations";
+                data["recommended_views"] = Json::array({"growth", "retained"});
+                data["view_semantics"] = Json{
+                    {"growth", "Allocation size/count delta since the baseline snapshot, including releases."},
+                    {"retained", "Current retained size/count at collection time."},
+                };
+                data["limitations"] = Json::array({
+                    "tracemalloc cannot attribute shared-interpreter allocations to a client or server thread reliably.",
+                    "Tracebacks identify allocation paths, not object ownership or proof of a leak.",
+                });
             } else {
                 data["note"] =
                     "The first mc_profiler operation probes the optional Native DLL so help can report capability. "
@@ -225,12 +244,30 @@ namespace {
                 data["optional"] = Json::array({"filter", "sort", "order", "limit", "cursor"});
                 data["bounds"] = Json{{"filter", "string <=256 bytes"}, {"sort", "field name <=64 bytes"}, {"order", "asc | desc"}, {"limit", "integer 1..50"}, {"cursor", "opaque returned cursor <=256 bytes"}};
                 data["views"] = Json{
-                    {"python.cpu", Json::array({"hotspots", "functions", "contexts", "callers", "callees"})},
-                    {"python.memory", Json::array({"allocations", "growth", "retained", "traceback"})},
-                    {"native.cpu", Json::array({"threads", "calltree-roots", "calltree-children", "hotspots", "source-locations"})},
+                    {"python.cpu", Json::array({"hotspots", "calls"})},
+                    {"python.memory", Json::array({"growth", "retained"})},
+                    {"native.cpu", Json::array({"threads", "calltree-roots", "calltree-children", "hotspots", "source-locations", "slowest-calls"})},
                 };
                 data["note"] = "calltree-children requires filter to be one complete node id returned by calltree-roots or a preceding child query. Preserve job_id, view, filter, sort, and order when following next_cursor.";
                 data["example"] = Json{{"op", "/query"}, {"args", {{"job_id", "$start.job.id"}, {"view", "calltree-children"}, {"filter", "$root.records[0].id"}, {"limit", 20}}}};
+            } else if (topic == "/compare") {
+                data["required"] = Json::array({"baseline_job_id", "candidate_job_id", "view"});
+                data["optional"] = Json::array({"metric", "limit"});
+                data["bounds"] = Json{{"metric", "numeric field <=64 bytes; defaults to the view's primary metric"}, {"limit", "integer 1..50"}};
+                data["supported_views"] = Json{
+                    {"python.cpu", Json{{"hotspots", Json::array({"calls", "actual_calls", "self_time", "total_time"})}}},
+                    {"python.memory", Json{
+                        {"growth", Json::array({"size_diff", "count_diff", "current_size", "current_count"})},
+                        {"retained", Json::array({"current_size", "current_count"})},
+                    }},
+                    {"native.cpu", Json{
+                        {"hotspots", Json::array({"calls", "total_time", "self_time", "mean_time", "maximum_time"})},
+                        {"source-locations", Json::array({"calls", "total_time", "self_time", "mean_time", "maximum_time"})},
+                        {"threads", Json::array({"calls", "total_time"})},
+                    }},
+                };
+                data["note"] = "Both jobs must have the same profiler kind. Results align stable source identities and rank absolute deltas; added and removed entries are explicit.";
+                data["example"] = Json{{"op", "/compare"}, {"args", {{"baseline_job_id", "$history.jobs[1].id"}, {"candidate_job_id", "$history.jobs[0].id"}, {"view", "hotspots"}, {"limit", 20}}}};
             } else if (topic == "/detail") {
                 data["required"] = Json::array({"job_id", "view", "record_id"});
                 data["note"] = "Use a record id and the same view that returned it. Native call-tree detail includes bounded related parent/sibling/child records.";
@@ -334,6 +371,9 @@ namespace {
                 Json{{"op", "/query"}, {"args", {{"job_id", "$start.job.id"}, {"view", "hotspots"}, {"limit", 20}}}}
             );
             steps.push_back(
+                Json{{"op", "/query"}, {"args", {{"job_id", "$start.job.id"}, {"view", "slowest-calls"}, {"limit", 20}}}}
+            );
+            steps.push_back(
                 Json{
                     {"op", "/query"},
                     {"args",
@@ -345,8 +385,7 @@ namespace {
             );
         } else if (name == "compare-before-after") {
             steps.push_back(Json{{"op", "/history"}, {"args", {{"limit", 10}}}});
-            steps.push_back(Json{{"op", "/query"}, {"args", {{"job_id", "$history.jobs[0].id"}, {"view", "hotspots"}, {"limit", 20}}}});
-            steps.push_back(Json{{"op", "/query"}, {"args", {{"job_id", "$history.jobs[1].id"}, {"view", "hotspots"}, {"limit", 20}}}});
+            steps.push_back(Json{{"op", "/compare"}, {"args", {{"baseline_job_id", "$history.jobs[1].id"}, {"candidate_job_id", "$history.jobs[0].id"}, {"view", "hotspots"}, {"limit", 20}}}});
         } else {
             steps.push_back(Json{{"op", "/start"}, {"args", {{"kind", "python.cpu"}, {"duration_seconds", 15}}}});
             steps.push_back(Json{{"op", "/query"}, {"args", {{"job_id", "$start.job.id"}, {"view", "hotspots"}, {"limit", 20}}}});
@@ -427,7 +466,18 @@ namespace mcdk::mc_profiler_mcp {
         Json recordJson(const QueryRecord& record) {
             Json fields = Json::object();
             for (const auto& [name, field] : record.fields) {
-                Json value = std::visit([](const auto& item) -> Json { return item; }, field.value);
+                Json value = std::visit([](const auto& item) -> Json {
+                    using Value = std::decay_t<decltype(item)>;
+                    if constexpr (std::is_same_v<Value, ProfilerStackTrace>) {
+                        Json frames = Json::array();
+                        for (const auto& frame : item) {
+                            frames.push_back({{"file", frame.file}, {"line", frame.line}});
+                        }
+                        return frames;
+                    } else {
+                        return item;
+                    }
+                }, field.value);
                 fields[name] = {{"value", std::move(value)}, {"unit", field.unit.empty() ? Json(nullptr) : Json(field.unit)}};
             }
             return Json{{"id", record.id}, {"fields", std::move(fields)}};
@@ -755,9 +805,69 @@ namespace mcdk::mc_profiler_mcp {
                 {"returned", result->records.size()}, {"truncated", result->truncated},
                 {"next_cursor", result->nextCursor ? Json(*result->nextCursor) : Json(nullptr)},
             };
+            if (request.view == "growth" || request.view == "retained") {
+                data["scope"] = "process-wide Python allocations";
+                data["control_side"] = "client";
+            }
             Json next = Json::array();
-            if (result->nextCursor) next.push_back(nextCall("/query", Json{{"job_id", request.jobId}, {"view", request.view}, {"cursor", *result->nextCursor}}, "Continue the same server-bound query."));
+            if (result->nextCursor) {
+                Json nextArgs = args;
+                nextArgs["cursor"] = *result->nextCursor;
+                next.push_back(nextCall("/query", std::move(nextArgs), "Continue the same server-bound query with the identical filter and ordering."));
+            }
             return successResult(op, std::move(data), nullptr, Json::array(), std::move(next), "Bounded profiler records are available in structuredContent.");
+        }
+
+        if (op == "/compare") {
+            if (!hasOnlyFields(args, {"baseline_job_id", "candidate_job_id", "view", "metric", "limit"})
+                || !args.contains("baseline_job_id") || !args["baseline_job_id"].is_string()
+                || !args.contains("candidate_job_id") || !args["candidate_job_id"].is_string()
+                || !args.contains("view") || !args["view"].is_string()) {
+                return staticArgumentError(op, "/compare requires baseline_job_id, candidate_job_id, and view plus optional metric and limit.");
+            }
+            CompareRequest request{
+                .baselineJobId = args["baseline_job_id"].get<std::string>(),
+                .candidateJobId = args["candidate_job_id"].get<std::string>(),
+                .view = args["view"].get<std::string>(),
+            };
+            if (request.baselineJobId.empty() || request.baselineJobId.size() > 128
+                || request.candidateJobId.empty() || request.candidateJobId.size() > 128
+                || request.view.empty() || request.view.size() > 64) {
+                return staticArgumentError(op, "compare job ids or view are invalid.");
+            }
+            if (args.contains("metric")) {
+                if (!args["metric"].is_string() || args["metric"].get_ref<const std::string&>().empty()
+                    || args["metric"].get_ref<const std::string&>().size() > 64) {
+                    return staticArgumentError(op, "metric must be a non-empty field name of at most 64 bytes.");
+                }
+                request.metric = args["metric"].get<std::string>();
+            }
+            if (args.contains("limit")) {
+                if (!args["limit"].is_number_integer()) return staticArgumentError(op, "limit must be an integer from 1 to 50.");
+                const auto limit = args["limit"].get<std::int64_t>();
+                if (limit < 1 || limit > 50) return staticArgumentError(op, "limit must be an integer from 1 to 50.");
+                request.limit = static_cast<std::size_t>(limit);
+            }
+            auto result = (*service)->compare(request);
+            if (!result) return domainError(op, result.error());
+            Json records = Json::array();
+            for (const auto& record : result->records) records.push_back(recordJson(record));
+            return successResult(
+                op,
+                Json{
+                    {"metric", result->metric},
+                    {"records", std::move(records)},
+                    {"returned", result->records.size()},
+                    {"matched", result->matched},
+                    {"added", result->added},
+                    {"removed", result->removed},
+                    {"truncated", result->truncated},
+                },
+                nullptr,
+                Json::array(),
+                Json::array(),
+                "Bounded profiler comparison deltas are available in structuredContent."
+            );
         }
 
         if (op == "/detail") {
@@ -838,7 +948,8 @@ namespace mcdk::mcp_tool_definitions {
             "Native profiles can correlate instrumented Python-facing and engine C++ Tracy zone hierarchies, including "
             "lower-level stages such as data-driven JSON parsing when those zones are emitted. Call /help first. Every "
             "capture has a server deadline; temporary memory results expire after 20 idle minutes, and Markdown/SVG "
-            "reports are explicit exports. Results are filtered and paged. Input uses {op:'/...', args:{...}}.";
+            "reports are explicit exports. Results are filtered and paged; same-kind captures support bounded "
+            "server-side comparison. Input uses {op:'/...', args:{...}}.";
         tool.parameters_schema = {
             {"type", "object"},
             {"required", Json::array({"op"})},

@@ -3,6 +3,7 @@
 #include <performance/native_bridge_loader.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <mutex>
 #include <random>
 #include <set>
@@ -258,7 +260,15 @@ _result=True)PY";
     std::string fieldText(const ProfilerField& field) {
         return std::visit([](const auto& item) {
             std::ostringstream output;
-            output << std::boolalpha << item;
+            using Value = std::decay_t<decltype(item)>;
+            if constexpr (std::is_same_v<Value, ProfilerStackTrace>) {
+                for (std::size_t index = 0; index < item.size(); ++index) {
+                    if (index != 0) output << " <- ";
+                    output << item[index].file << ':' << item[index].line;
+                }
+            } else {
+                output << std::boolalpha << item;
+            }
             return output.str();
         }, field.value);
     }
@@ -339,7 +349,15 @@ _result=True)PY";
 
     std::int64_t jsonInteger(const Json& value, std::string_view key) {
         if (!value.is_object() || !value.contains(key) || !value[key].is_number()) return 0;
-        return value[key].get<double>() < 0 ? 0 : static_cast<std::int64_t>(value[key].get<double>());
+        const auto& number = value[key];
+        if (number.is_number_unsigned()) {
+            const auto unsignedValue = number.get<std::uint64_t>();
+            return unsignedValue > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
+                 ? std::numeric_limits<std::int64_t>::max()
+                 : static_cast<std::int64_t>(unsignedValue);
+        }
+        if (number.is_number_integer()) return std::max<std::int64_t>(0, number.get<std::int64_t>());
+        return number.get<double>() < 0 ? 0 : static_cast<std::int64_t>(number.get<double>());
     }
 
     double jsonNumber(const Json& value, std::string_view key) {
@@ -459,6 +477,7 @@ public:
                 || job->snapshot.state == JobState::Discarded || job->snapshot.state == JobState::Aborted) {
                 std::error_code ignored;
                 if (!job->directory.empty()) std::filesystem::remove_all(job->directory, ignored);
+                std::filesystem::remove_all(options_.storageRoot / ".exports" / job->snapshot.id, ignored);
                 job->snapshot.state = JobState::Discarded;
                 job->snapshot.statusMessage = "Capture artifacts were discarded.";
                 return {};
@@ -554,6 +573,170 @@ public:
         return page;
     }
 
+    std::expected<CompareResult, ProfilerError> compare(const CompareRequest& request) const override {
+        const auto baseline = findJob(request.baselineJobId);
+        const auto candidate = findJob(request.candidateJobId);
+        if (!baseline || !candidate) {
+            return std::unexpected(failure("JOB_NOT_FOUND", "One or both profiler jobs were not found."));
+        }
+        if (snapshotOf(baseline).state != JobState::Completed || snapshotOf(candidate).state != JobState::Completed) {
+            return std::unexpected(failure("JOB_NOT_COMPARABLE", "Only completed profiler jobs can be compared.", true));
+        }
+        if (baseline->request.kind != candidate->request.kind) {
+            return std::unexpected(failure("COMPARE_KIND_MISMATCH", "Profiler comparison requires two jobs of the same kind."));
+        }
+        if ((baseline->request.kind == ProfilerKind::PythonCpu && request.view != "hotspots")
+            || (baseline->request.kind == ProfilerKind::PythonMemory
+                && request.view != "growth" && request.view != "retained")
+            || (baseline->request.kind == ProfilerKind::NativeCpu
+                && request.view != "hotspots" && request.view != "source-locations" && request.view != "threads")) {
+            return std::unexpected(failure(
+                "COMPARE_VIEW_INVALID",
+                "This view has no stable cross-capture identity. Compare hotspots, growth, retained, source-locations, or threads as appropriate."
+            ));
+        }
+
+        auto baselineRecords = recordsFor(*baseline, request.view);
+        auto candidateRecords = recordsFor(*candidate, request.view);
+        if (!baselineRecords) return std::unexpected(baselineRecords.error());
+        if (!candidateRecords) return std::unexpected(candidateRecords.error());
+        const auto metric = request.metric.empty() ? defaultSort(request.view) : request.metric;
+        const auto metricAllowed = [&] {
+            if (baseline->request.kind == ProfilerKind::PythonCpu) {
+                return metric == "calls" || metric == "actual_calls" || metric == "self_time"
+                    || metric == "total_time";
+            }
+            if (baseline->request.kind == ProfilerKind::PythonMemory) {
+                if (request.view == "growth") {
+                    return metric == "size_diff" || metric == "count_diff" || metric == "current_size"
+                        || metric == "current_count";
+                }
+                return metric == "current_size" || metric == "current_count";
+            }
+            if (request.view == "threads") return metric == "calls" || metric == "total_time";
+            return metric == "calls" || metric == "total_time" || metric == "self_time"
+                || metric == "mean_time" || metric == "maximum_time";
+        };
+        if (!metricAllowed()) {
+            return std::unexpected(failure(
+                "COMPARE_METRIC_INVALID",
+                "The requested metric is not a comparable performance metric for this profiler view."
+            ));
+        }
+
+        const auto valueOf = [](const QueryRecord& record, std::string_view name) -> const ProfilerField* {
+            const auto found = record.fields.find(std::string(name));
+            return found == record.fields.end() ? nullptr : &found->second;
+        };
+        const auto stableKey = [&](const QueryRecord& record) {
+            const auto join = [&](std::initializer_list<std::string_view> names) {
+                std::string key;
+                for (const auto name : names) {
+                    key.push_back('\x1f');
+                    if (const auto* field = valueOf(record, name)) key += fieldText(*field);
+                }
+                return key;
+            };
+            if (baseline->request.kind == ProfilerKind::PythonCpu) {
+                return join({"target", "module", "line", "name", "context_name"});
+            }
+            if (baseline->request.kind == ProfilerKind::PythonMemory) return join({"traceback"});
+            if (request.view == "threads") return join({"name"});
+            if (request.view == "source-locations") return join({"name", "source_file", "source_line"});
+            return join({"name", "source_file", "source_line", "thread_name"});
+        };
+
+        struct SideValue {
+            long double value = 0;
+            std::string unit;
+            const QueryRecord* source = nullptr;
+        };
+        const auto collect = [&](const std::vector<QueryRecord>& records) {
+            std::map<std::string, SideValue> values;
+            for (const auto& record : records) {
+                const auto* field = valueOf(record, metric);
+                if (!field) continue;
+                const auto numeric = numericFieldValue(*field);
+                if (!numeric) continue;
+                auto& value = values[stableKey(record)];
+                value.value += *numeric;
+                value.unit = field->unit;
+                if (!value.source) value.source = &record;
+            }
+            return values;
+        };
+        const auto before = collect(*baselineRecords);
+        const auto after = collect(*candidateRecords);
+        if (before.empty() && after.empty()) {
+            return std::unexpected(failure("COMPARE_METRIC_INVALID", "The requested metric is not numeric or is absent from this view."));
+        }
+
+        struct Difference {
+            QueryRecord record;
+            long double magnitude = 0;
+        };
+        std::vector<Difference> differences;
+        std::set<std::string> keys;
+        for (const auto& [key, ignored] : before) { (void)ignored; keys.insert(key); }
+        for (const auto& [key, ignored] : after) { (void)ignored; keys.insert(key); }
+        CompareResult result;
+        result.metric = metric;
+        static constexpr std::array<std::string_view, 10> IdentityFields = {
+            "name", "module", "line", "target", "context_name",
+            "source_file", "source_line", "thread_name", "thread_count", "traceback"
+        };
+        for (const auto& key : keys) {
+            const auto left = before.find(key);
+            const auto right = after.find(key);
+            const bool hasLeft = left != before.end();
+            const bool hasRight = right != after.end();
+            if (hasLeft && hasRight) ++result.matched;
+            else if (hasRight) ++result.added;
+            else ++result.removed;
+            const auto baselineValue = hasLeft ? left->second.value : 0.0L;
+            const auto candidateValue = hasRight ? right->second.value : 0.0L;
+            const auto delta = candidateValue - baselineValue;
+            const auto* source = hasRight ? right->second.source : left->second.source;
+            const auto unit = hasRight ? right->second.unit : left->second.unit;
+            QueryRecord record;
+            if (source) {
+                for (const auto fieldName : IdentityFields) {
+                    if (const auto found = source->fields.find(std::string(fieldName)); found != source->fields.end()) {
+                        record.fields.emplace(found->first, found->second);
+                    }
+                }
+            }
+            addField(record, "change", hasLeft && hasRight ? "matched" : hasRight ? "added" : "removed");
+            addField(record, "baseline", static_cast<double>(baselineValue), unit);
+            addField(record, "candidate", static_cast<double>(candidateValue), unit);
+            addField(record, "delta", static_cast<double>(delta), unit);
+            if (baselineValue != 0) {
+                addField(record, "delta_percent", static_cast<double>(delta / std::abs(baselineValue) * 100.0L), "percent");
+            }
+            if (delta != 0) differences.push_back({std::move(record), std::abs(delta)});
+        }
+        std::stable_sort(differences.begin(), differences.end(), [](const auto& left, const auto& right) {
+            return left.magnitude > right.magnitude;
+        });
+        const auto limit = std::clamp<std::size_t>(request.limit, 1, MaximumQueryRecords);
+        std::size_t bytes = 0;
+        for (auto& difference : differences) {
+            difference.record.id = "diff:" + std::to_string(result.records.size());
+            const auto estimate = recordBytes(difference.record);
+            if (result.records.size() >= limit || (!result.records.empty() && bytes + estimate > MaximumQueryBytes)) {
+                result.truncated = true;
+                break;
+            }
+            if (result.records.empty() && estimate > MaximumQueryBytes) {
+                return std::unexpected(failure("COMPARE_RECORD_TOO_LARGE", "A comparison record exceeds the response budget."));
+            }
+            bytes += estimate;
+            result.records.push_back(std::move(difference.record));
+        }
+        result.truncated = result.truncated || result.records.size() < differences.size();
+        return result;
+    }
+
     std::expected<DetailResult, ProfilerError> detail(const DetailRequest& request) const override {
         const auto job = findJob(request.jobId);
         if (!job) return std::unexpected(failure("JOB_NOT_FOUND", "Profiler job was not found."));
@@ -571,26 +754,44 @@ public:
         if (bytes > MaximumQueryBytes) {
             return std::unexpected(failure("DETAIL_RECORD_TOO_LARGE", "The requested record exceeds the detail response budget."));
         }
+        if (request.view != "calltree-roots" && request.view != "calltree-children") return result;
+
+        auto relationRecords = recordsFor(*job, "calltree-children");
+        if (!relationRecords) return std::unexpected(relationRecords.error());
         const auto parent = found->fields.find("parent_id");
-        for (const auto& record : *records) {
-            const auto candidate = record.fields.find("parent_id");
-            const bool related = candidate != record.fields.end()
-                && (fieldText(candidate->second) == request.recordId
-                    || (parent != found->fields.end()
-                        && fieldText(candidate->second) == fieldText(parent->second)
-                        && record.id != request.recordId));
-            if (!related) continue;
+        const auto selectedParent = parent == found->fields.end() ? std::string{} : fieldText(parent->second);
+        const auto selectedThreadField = found->fields.find("thread_id");
+        const auto selectedThread = selectedThreadField == found->fields.end()
+                                ? std::string{} : fieldText(selectedThreadField->second);
+        const auto appendRelated = [&](const QueryRecord& record) {
             if (result.related.size() == 20) {
                 result.truncated = true;
-                break;
+                return false;
             }
             const auto estimate = recordBytes(record);
             if (bytes + estimate > MaximumQueryBytes) {
                 result.truncated = true;
-                break;
+                return false;
             }
             bytes += estimate;
             result.related.push_back(record);
+            return true;
+        };
+        for (int relation = 0; relation < 3 && !result.truncated; ++relation) {
+            for (const auto& record : *relationRecords) {
+                if (record.id == request.recordId) continue;
+                const auto candidateParentField = record.fields.find("parent_id");
+                const auto candidateParent = candidateParentField == record.fields.end()
+                                         ? std::string{} : fieldText(candidateParentField->second);
+                const auto candidateThreadField = record.fields.find("thread_id");
+                const auto candidateThread = candidateThreadField == record.fields.end()
+                                         ? std::string{} : fieldText(candidateThreadField->second);
+                const bool isParent = relation == 0 && !selectedParent.empty() && record.id == selectedParent;
+                const bool isChild = relation == 1 && candidateParent == request.recordId;
+                const bool isSibling = relation == 2 && !selectedParent.empty()
+                    && candidateParent == selectedParent && candidateThread == selectedThread;
+                if ((isParent || isChild || isSibling) && !appendRelated(record)) break;
+            }
         }
         return result;
     }
@@ -653,6 +854,8 @@ public:
             std::string primaryText;
             std::string secondaryText;
             long double magnitude = 0;
+            long double secondaryMagnitude = 0;
+            bool showSecondary = false;
             bool negative = false;
         };
         const auto formatSeconds = [](double seconds) {
@@ -713,6 +916,8 @@ public:
                     .primaryText = formatSeconds(total),
                     .secondaryText = formatSeconds(self),
                     .magnitude = std::max(0.0, total),
+                    .secondaryMagnitude = std::max(0.0, self),
+                    .showSecondary = true,
                 });
             }
         } else if (job->request.kind == ProfilerKind::PythonMemory) {
@@ -757,6 +962,8 @@ public:
                     .primaryText = formatNanoseconds(total),
                     .secondaryText = formatNanoseconds(self),
                     .magnitude = static_cast<long double>(std::max<std::int64_t>(0, total)),
+                    .secondaryMagnitude = static_cast<long double>(std::max<std::int64_t>(0, self)),
+                    .showSecondary = true,
                 });
             }
         }
@@ -769,12 +976,15 @@ public:
         if (svg) {
             constexpr int width = 1400;
             constexpr int chartLeft = 540;
-            constexpr int chartRight = 110;
+            constexpr int chartRight = 250;
             constexpr int rowHeight = 28;
-            constexpr int top = 116;
+            constexpr int top = 130;
             const auto height = std::max(250, top + static_cast<int>(rows.size()) * rowHeight + 54);
             const auto chartWidth = width - chartLeft - chartRight;
             const auto maximum = rows.empty() ? 1.0L : std::max(1.0L, rows.front().magnitude);
+            const auto hasSecondary = std::any_of(rows.begin(), rows.end(), [](const auto& row) {
+                return row.showSecondary;
+            });
             output << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                    << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width << "\" height=\"" << height
                    << "\" viewBox=\"0 0 " << width << ' ' << height << "\">\n"
@@ -785,15 +995,28 @@ public:
                    << "<text x=\"20\" y=\"34\" class=\"title\">" << xmlEscape(title) << "</text>\n"
                    << "<text x=\"20\" y=\"58\" class=\"meta\">" << xmlEscape(job->snapshot.completedAt + " | " + job->snapshot.id) << "</text>\n"
                    << "<text x=\"20\" y=\"79\" class=\"meta\" clip-path=\"url(#meta-clip)\">" << xmlEscape(job->summary.dump()) << "</text>\n";
+            if (hasSecondary) {
+                output << "<rect x=\"" << chartLeft << "\" y=\"91\" width=\"12\" height=\"12\" rx=\"2\" fill=\"#3b82f6\"/>"
+                       << "<text x=\"" << chartLeft + 18 << "\" y=\"101\" class=\"meta\">" << xmlEscape(primaryHeading) << "</text>"
+                       << "<rect x=\"" << chartLeft + 76 << "\" y=\"91\" width=\"12\" height=\"12\" rx=\"2\" fill=\"#b27adf\"/>"
+                       << "<text x=\"" << chartLeft + 94 << "\" y=\"101\" class=\"meta\">" << xmlEscape(secondaryHeading) << "</text>\n";
+            }
             for (std::size_t index = 0; index < rows.size(); ++index) {
                 const auto& row = rows[index];
                 const auto y = top + static_cast<int>(index) * rowHeight;
                 const auto barWidth = std::max(1.0L, row.magnitude / maximum * chartWidth);
+                const auto secondaryWidth = std::max(0.0L, row.secondaryMagnitude / maximum * chartWidth);
                 const auto color = row.negative ? "#a855b5" : "#3b82f6";
                 output << "<g><title>" << xmlEscape(row.label + "\n" + row.context + "\n" + primaryHeading + ": " + row.primaryText + "\n" + secondaryHeading + ": " + row.secondaryText) << "</title>"
                        << "<text x=\"20\" y=\"" << y + 17 << "\" class=\"label\" clip-path=\"url(#label-clip)\">" << xmlEscape(row.label + " | " + row.context) << "</text>"
-                       << "<rect x=\"" << chartLeft << "\" y=\"" << y + 4 << "\" width=\"" << std::fixed << std::setprecision(2) << static_cast<double>(barWidth) << "\" height=\"18\" rx=\"3\" fill=\"" << color << "\"/>"
-                       << "<text x=\"" << width - 18 << "\" y=\"" << y + 17 << "\" text-anchor=\"end\" class=\"value\">" << xmlEscape(row.primaryText) << "</text></g>\n";
+                       << "<rect x=\"" << chartLeft << "\" y=\"" << y + 4 << "\" width=\"" << std::fixed << std::setprecision(2) << static_cast<double>(barWidth) << "\" height=\"18\" rx=\"3\" fill=\"" << color << "\"/>";
+                if (row.showSecondary && secondaryWidth > 0) {
+                    output << "<rect x=\"" << chartLeft << "\" y=\"" << y + 4 << "\" width=\""
+                           << static_cast<double>(secondaryWidth) << "\" height=\"18\" rx=\"3\" fill=\"#b27adf\"/>";
+                }
+                output << "<text x=\"" << width - 18 << "\" y=\"" << y + 17 << "\" text-anchor=\"end\" class=\"value\">"
+                       << xmlEscape(row.showSecondary ? row.primaryText + " / " + row.secondaryText : row.primaryText)
+                       << "</text></g>\n";
             }
             if (rows.empty()) output << "<text x=\"20\" y=\"150\" class=\"meta\">No retained profiler records were captured.</text>\n";
             output << "</svg>\n";
@@ -1212,6 +1435,7 @@ private:
         std::error_code ignored;
         std::filesystem::remove_all(job->temporaryTrace.parent_path(), ignored);
         if (!job->directory.empty()) std::filesystem::remove_all(job->directory, ignored);
+        std::filesystem::remove_all(options_.storageRoot / ".exports" / job->snapshot.id, ignored);
         std::lock_guard lock(mutex_);
         job->snapshot.state = state;
         job->snapshot.completedAt = utcNow();
@@ -1311,8 +1535,9 @@ private:
     }
 
     static std::string defaultSort(std::string_view view) {
-        if (view == "allocations" || view == "growth" || view == "retained") return "size_diff";
-        if (view == "threads") return "total_nanoseconds";
+        if (view == "growth") return "size_diff";
+        if (view == "retained") return "current_size";
+        if (view == "slowest-calls") return "duration";
         return "total_time";
     }
 
@@ -1325,7 +1550,7 @@ private:
     std::expected<std::vector<QueryRecord>, ProfilerError> recordsFor(const Job& job, std::string_view view) const {
         std::vector<QueryRecord> records;
         if (job.request.kind == ProfilerKind::PythonCpu) {
-            if (view == "hotspots" || view == "functions" || view == "contexts") {
+            if (view == "hotspots") {
                 for (const auto& row : job.data.value("nodes", Json::array())) {
                     if (!row.is_array() || row.size() < 11) continue;
                     QueryRecord record{.id = "fn:" + std::to_string(row[0].get<std::int64_t>())};
@@ -1343,12 +1568,32 @@ private:
                 }
                 return records;
             }
-            if (view == "callers" || view == "callees") {
+            if (view == "calls") {
+                std::map<std::int64_t, const Json*> nodes;
+                if (const auto found = job.data.find("nodes"); found != job.data.end() && found->is_array()) {
+                    for (const auto& row : *found) {
+                        if (row.is_array() && row.size() >= 11 && row[0].is_number_integer()) {
+                            nodes.emplace(row[0].get<std::int64_t>(), &row);
+                        }
+                    }
+                }
                 for (const auto& row : job.data.value("edges", Json::array())) {
                     if (!row.is_array() || row.size() < 5) continue;
                     QueryRecord record{.id = "edge:" + std::to_string(records.size())};
-                    addField(record, "caller_id", "fn:" + std::to_string(row[0].get<std::int64_t>()));
-                    addField(record, "callee_id", "fn:" + std::to_string(row[1].get<std::int64_t>()));
+                    const auto callerId = row[0].get<std::int64_t>();
+                    const auto calleeId = row[1].get<std::int64_t>();
+                    addField(record, "caller_id", "fn:" + std::to_string(callerId));
+                    addField(record, "callee_id", "fn:" + std::to_string(calleeId));
+                    if (const auto caller = nodes.find(callerId); caller != nodes.end()) {
+                        addField(record, "caller_name", (*caller->second)[3].get<std::string>());
+                        addField(record, "caller_module", (*caller->second)[1].get<std::string>());
+                        addField(record, "caller_target", (*caller->second)[10].is_string() ? (*caller->second)[10].get<std::string>() : "unknown");
+                    }
+                    if (const auto callee = nodes.find(calleeId); callee != nodes.end()) {
+                        addField(record, "callee_name", (*callee->second)[3].get<std::string>());
+                        addField(record, "callee_module", (*callee->second)[1].get<std::string>());
+                        addField(record, "callee_target", (*callee->second)[10].is_string() ? (*callee->second)[10].get<std::string>() : "unknown");
+                    }
                     addField(record, "calls", row[2].get<std::int64_t>());
                     addField(record, "self_time", row[3].get<double>(), "seconds");
                     addField(record, "total_time", row[4].get<double>(), "seconds");
@@ -1357,21 +1602,36 @@ private:
                 return records;
             }
         } else if (job.request.kind == ProfilerKind::PythonMemory) {
-            if (view == "allocations" || view == "growth" || view == "retained" || view == "traceback") {
+            if (view == "growth" || view == "retained") {
                 for (const auto& row : job.data.value("rows", Json::array())) {
                     if (!row.is_array() || row.size() < 6) continue;
+                    const auto sizeDiff = row[1].get<std::int64_t>();
+                    const auto currentSize = row[3].get<std::int64_t>();
+                    if ((view == "growth" && sizeDiff == 0) || (view == "retained" && currentSize <= 0)) continue;
                     QueryRecord record{.id = "allocation:" + std::to_string(row[0].get<std::int64_t>())};
-                    addField(record, "size_diff", row[1].get<std::int64_t>(), "bytes");
-                    addField(record, "count_diff", row[2].get<std::int64_t>());
-                    addField(record, "current_size", row[3].get<std::int64_t>(), "bytes");
+                    if (view == "growth") {
+                        addField(record, "size_diff", sizeDiff, "bytes");
+                        addField(record, "count_diff", row[2].get<std::int64_t>());
+                        addField(record, "direction", sizeDiff > 0 ? "growth" : "release");
+                    }
+                    addField(record, "current_size", currentSize, "bytes");
                     addField(record, "current_count", row[4].get<std::int64_t>());
-                    addField(record, "traceback", row[5].dump());
+                    ProfilerStackTrace traceback;
+                    if (row[5].is_array()) {
+                        for (const auto& frame : row[5]) {
+                            if (!frame.is_array() || frame.size() < 2 || !frame[0].is_string() || !frame[1].is_number_integer()) continue;
+                            auto file = frame[0].get<std::string>();
+                            if (file.size() > 4096) file.resize(4096);
+                            traceback.push_back({std::move(file), frame[1].get<std::int64_t>()});
+                        }
+                    }
+                    addField(record, "traceback", std::move(traceback));
                     records.push_back(std::move(record));
                 }
                 return records;
             }
         } else {
-            if (view == "hotspots" || view == "source-locations") {
+            if (view == "hotspots") {
                 for (const auto& zone : job.data.value("zones", Json::array())) {
                     if (!zone.is_object()) continue;
                     QueryRecord record{.id = "zone:" + std::to_string(jsonInteger(zone, "id"))};
@@ -1386,6 +1646,74 @@ private:
                     addField(record, "mean_time", jsonInteger(zone, "meanNanoseconds"), "nanoseconds");
                     addField(record, "maximum_time", jsonInteger(zone, "maximumNanoseconds"), "nanoseconds");
                     records.push_back(std::move(record));
+                }
+                return records;
+            }
+            if (view == "source-locations") {
+                struct Aggregate {
+                    std::string name;
+                    std::string file;
+                    std::int64_t line = 0;
+                    std::int64_t calls = 0;
+                    std::int64_t total = 0;
+                    std::int64_t self = 0;
+                    std::int64_t maximum = 0;
+                    std::set<std::string> threads;
+                };
+                std::map<std::string, Aggregate> aggregates;
+                for (const auto& zone : job.data.value("zones", Json::array())) {
+                    if (!zone.is_object()) continue;
+                    const auto name = jsonString(zone, "name", 1024);
+                    const auto file = jsonString(zone, "sourceFile");
+                    const auto line = jsonInteger(zone, "sourceLine");
+                    const auto key = name + '\0' + file + '\0' + std::to_string(line);
+                    auto& aggregate = aggregates[key];
+                    aggregate.name = name;
+                    aggregate.file = file;
+                    aggregate.line = line;
+                    aggregate.calls += jsonInteger(zone, "calls");
+                    aggregate.total += jsonInteger(zone, "totalNanoseconds");
+                    aggregate.self += jsonInteger(zone, "selfNanoseconds");
+                    aggregate.maximum = std::max(aggregate.maximum, jsonInteger(zone, "maximumNanoseconds"));
+                    auto thread = jsonString(zone, "threadName", 512);
+                    if (thread.empty()) thread = jsonString(zone, "threadId", 128);
+                    aggregate.threads.insert(std::move(thread));
+                }
+                for (auto& [key, aggregate] : aggregates) {
+                    (void)key;
+                    QueryRecord record{.id = "source:" + std::to_string(records.size())};
+                    addField(record, "name", std::move(aggregate.name));
+                    addField(record, "source_file", std::move(aggregate.file));
+                    addField(record, "source_line", aggregate.line);
+                    addField(record, "thread_count", static_cast<std::int64_t>(aggregate.threads.size()));
+                    addField(record, "calls", aggregate.calls);
+                    addField(record, "total_time", aggregate.total, "nanoseconds");
+                    addField(record, "self_time", aggregate.self, "nanoseconds");
+                    addField(record, "mean_time", aggregate.calls == 0 ? 0 : aggregate.total / aggregate.calls, "nanoseconds");
+                    addField(record, "maximum_time", aggregate.maximum, "nanoseconds");
+                    records.push_back(std::move(record));
+                }
+                return records;
+            }
+            if (view == "slowest-calls") {
+                for (const auto& zone : job.data.value("zones", Json::array())) {
+                    if (!zone.is_object() || !zone.value("slowestCalls", Json::array()).is_array()) continue;
+                    std::size_t sampleIndex = 0;
+                    for (const auto& sample : zone["slowestCalls"]) {
+                        if (!sample.is_object()) continue;
+                        QueryRecord record{
+                            .id = "sample:" + std::to_string(jsonInteger(zone, "id")) + ':' + std::to_string(sampleIndex++)
+                        };
+                        addField(record, "zone_id", "zone:" + std::to_string(jsonInteger(zone, "id")));
+                        addField(record, "name", jsonString(zone, "name", 1024));
+                        addField(record, "source_file", jsonString(zone, "sourceFile"));
+                        addField(record, "source_line", jsonInteger(zone, "sourceLine"));
+                        addField(record, "thread_id", jsonString(zone, "threadId", 128));
+                        addField(record, "thread_name", jsonString(zone, "threadName", 512));
+                        addField(record, "start_time", jsonInteger(sample, "startNanoseconds"), "nanoseconds");
+                        addField(record, "duration", jsonInteger(sample, "durationNanoseconds"), "nanoseconds");
+                        records.push_back(std::move(record));
+                    }
                 }
                 return records;
             }

@@ -19,6 +19,11 @@ constexpr std::size_t MaximumCallDepth = 64;
 constexpr std::string_view DebugEnvironmentSource = "DEBUG_ENV_SCRIPT";
 
 struct ZoneResult {
+    struct Sample {
+        std::int64_t start;
+        std::int64_t duration;
+    };
+
     std::string name;
     std::string sourceFile;
     std::uint32_t sourceLine;
@@ -29,6 +34,7 @@ struct ZoneResult {
     std::int64_t self;
     std::int64_t mean;
     std::int64_t maximum;
+    std::vector<Sample> slowest;
 };
 
 struct CallNode {
@@ -64,7 +70,18 @@ struct ZoneAggregate {
     std::int64_t total = 0;
     std::int64_t self = 0;
     std::int64_t maximum = 0;
+    std::vector<ZoneResult::Sample> slowest;
 };
+
+void addSlowestSample(ZoneAggregate& aggregate, std::int64_t start, std::int64_t duration) {
+    constexpr std::size_t MaximumSamples = 3;
+    if (duration <= 0) return;
+    aggregate.slowest.push_back({start, duration});
+    std::sort(aggregate.slowest.begin(), aggregate.slowest.end(), [](const auto& left, const auto& right) {
+        return left.duration > right.duration;
+    });
+    if (aggregate.slowest.size() > MaximumSamples) aggregate.slowest.resize(MaximumSamples);
+}
 
 bool isIgnoredSourceFile(std::string_view sourceFile) {
     if (sourceFile == DebugEnvironmentSource) return true;
@@ -332,17 +349,28 @@ std::string buildResultJson(
                 aggregate.total,
                 aggregate.self,
                 aggregate.calls == 0 ? 0 : aggregate.total / static_cast<std::int64_t>(aggregate.calls),
-                aggregate.maximum
+                aggregate.maximum,
+                aggregate.slowest
             });
         };
 
         if (data.threadCnt.size() == 1) {
-            makeZone(data.threadCnt.begin()->first, ZoneAggregate{
+            ZoneAggregate aggregate{
                 static_cast<std::uint64_t>(data.zones.size()),
                 data.total,
                 data.selfTotal,
                 data.max
-            });
+            };
+            for (const auto& zoneThread : data.zones) {
+                const auto* zone = zoneThread.Zone();
+                if (!zone) continue;
+                addSlowestSample(
+                    aggregate,
+                    zone->Start(),
+                    std::max<std::int64_t>(0, worker.GetZoneEnd(*zone) - zone->Start())
+                );
+            }
+            makeZone(data.threadCnt.begin()->first, aggregate);
             continue;
         }
 
@@ -357,6 +385,7 @@ std::string buildResultJson(
             aggregate.total += duration;
             aggregate.self += zoneSelfTime(worker, *zone, duration);
             aggregate.maximum = std::max(aggregate.maximum, duration);
+            addSlowestSample(aggregate, zone->Start(), duration);
         }
         for (const auto& [thread, aggregate] : threadAggregates) makeZone(thread, aggregate);
     }
@@ -390,7 +419,13 @@ std::string buildResultJson(
                << ",\"selfNanoseconds\":" << std::max<std::int64_t>(0, zone.self)
                << ",\"meanNanoseconds\":" << std::max<std::int64_t>(0, zone.mean)
                << ",\"maximumNanoseconds\":" << std::max<std::int64_t>(0, zone.maximum)
-               << '}';
+               << ",\"slowestCalls\":[";
+        for (std::size_t sampleIndex = 0; sampleIndex < zone.slowest.size(); ++sampleIndex) {
+            if (sampleIndex != 0) output << ',';
+            output << "{\"startNanoseconds\":" << zone.slowest[sampleIndex].start
+                   << ",\"durationNanoseconds\":" << zone.slowest[sampleIndex].duration << '}';
+        }
+        output << "]}";
     }
     output << "],\"threads\":[";
     for (std::size_t threadIndex = 0; threadIndex < threads.size(); ++threadIndex) {
