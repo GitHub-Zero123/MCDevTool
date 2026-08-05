@@ -111,11 +111,13 @@ namespace {
              Json::array(
                  {"Every capture has a server-enforced deadline.",
                   "Query results are filtered, paged, and byte-bounded by the server.",
-                  "Artifact paths and retention are controlled by the server.",
+                  "Memory results expire after 20 minutes without access; the next profiler request runs lazy GC.",
+                  "Artifact paths and disk retention are controlled by the server.",
                   "Only one profiler job is active by default."}
              )},
             {"initialization",
-             "The first mc_profiler operation initializes the shared service and probes the fixed Native DLL path so "
+             "The first mc_profiler operation initializes the shared service and probes mcdev-tracy-bridge.dll beside "
+             "mcdk.exe so "
              "runtime help can report capability. Tracy endpoint discovery remains deferred until Native start or a "
              "deep Native doctor."},
         };
@@ -130,10 +132,15 @@ namespace {
         } else if (topic == "/start") {
             data["topic"]       = "/start";
             data["required"]    = Json::array({"kind"});
-            data["common_args"] = Json::array({"target", "clock", "duration_seconds"});
+            data["common_args"] = Json::array({"target", "clock", "duration_seconds", "storage"});
             data["example"]     = Json{
                     {"op", "/start"},
-                    {"args", {{"kind", "python.cpu"}, {"target", "client"}, {"clock", "wall"}, {"duration_seconds", 15}}},
+                    {"args", {{"kind", "python.cpu"}, {"target", "client"}, {"clock", "wall"}, {"duration_seconds", 15}, {"storage", "memory"}}},
+            };
+            data["storage"] = Json{
+                {"default", "memory"},
+                {"memory", "Temporary in-process result; 20-minute idle TTL refreshed by successful job access, absent from history, and lost on MCDK exit."},
+                {"disk", "Committed result available to history and process-restart recovery."},
             };
             data["note"] = "The backend requests stop at the deadline. Native finalization may report cleanup_pending.";
             nextCalls.push_back(nextCall("/doctor", Json::object(), "Check availability before starting."));
@@ -186,7 +193,14 @@ namespace {
             nextCalls.push_back(nextCall("/help", Json{{"topic", "/start"}}, "Review bounded start parameters."));
         } else if (isSupportedOperation(topic)) {
             data["topic"] = topic;
-            data["note"]  = "Operation-specific runtime fields are strictly validated by the backend adapter.";
+            if (topic == "/export") {
+                data["formats"] = Json::array({"markdown", "svg"});
+                data["note"] = "Export explicitly writes a report to a server-controlled path, including for memory jobs.";
+            } else if (topic == "/history") {
+                data["note"] = "History contains disk jobs only; temporary memory jobs are intentionally excluded.";
+            } else {
+                data["note"] = "Operation-specific runtime fields are strictly validated by the backend adapter.";
+            }
         } else {
             return mcdk::mc_profiler_mcp::buildErrorResult(
                 "/help",
@@ -330,6 +344,7 @@ namespace mcdk::mc_profiler_mcp {
             return Json{
                 {"id", job.id},
                 {"kind", toString(job.kind)},
+                {"storage", toString(job.storage)},
                 {"state", toString(job.state)},
                 {"partial", job.partial},
                 {"status_message", job.statusMessage},
@@ -562,12 +577,18 @@ namespace mcdk::mc_profiler_mcp {
             auto result = (*service)->inspectCapabilities(request);
             if (!result) return domainError(op, result.error());
             Json next = Json::array();
-            next.push_back(nextCall("/start", Json{{"kind", request.kind ? toString(*request.kind) : "python.cpu"}}, "Start a bounded capture after checking availability."));
+            const auto startKind = request.kind ? *request.kind : ProfilerKind::PythonCpu;
+            const auto available = std::find_if(result->entries.begin(), result->entries.end(), [&](const auto& entry) {
+                return entry.kind == startKind && entry.available;
+            });
+            if (available != result->entries.end()) {
+                next.push_back(nextCall("/start", Json{{"kind", toString(startKind)}}, "Start a bounded temporary capture after checking availability."));
+            }
             return successResult(op, capabilitiesJson(*result), nullptr, warningsJson(*result), std::move(next), "Profiler capabilities are available in structuredContent.");
         }
 
         if (op == "/start") {
-            if (!hasOnlyFields(args, {"kind", "target", "clock", "duration_seconds", "traceback_depth", "collect_garbage"})
+            if (!hasOnlyFields(args, {"kind", "target", "clock", "storage", "duration_seconds", "traceback_depth", "collect_garbage"})
                 || !args.contains("kind") || !args["kind"].is_string()) {
                 return staticArgumentError(op, "/start requires kind and accepts only bounded profiler options.");
             }
@@ -585,6 +606,14 @@ namespace mcdk::mc_profiler_mcp {
                 const auto clock = args["clock"].get<std::string>();
                 if (clock != "cpu" && clock != "wall") return staticArgumentError(op, "clock must be cpu or wall.");
                 request.clock = clock == "cpu" ? ProfileClock::Cpu : ProfileClock::Wall;
+            }
+            if (args.contains("storage")) {
+                if (!args["storage"].is_string()) return staticArgumentError(op, "storage must be memory or disk.");
+                const auto storage = args["storage"].get<std::string>();
+                if (storage != "memory" && storage != "disk") {
+                    return staticArgumentError(op, "storage must be memory or disk.");
+                }
+                request.storage = storage == "disk" ? ProfileStorage::Disk : ProfileStorage::Memory;
             }
             if (args.contains("duration_seconds")) {
                 if (!args["duration_seconds"].is_number_integer()) return staticArgumentError(op, "duration_seconds must be an integer.");
@@ -607,7 +636,7 @@ namespace mcdk::mc_profiler_mcp {
             auto result = (*service)->start(request);
             if (!result) return domainError(op, result.error());
             Json next = Json::array({nextCall("/status", Json{{"job_id", result->id}}, "Observe automatic finalization without extending the deadline.")});
-            return successResult(op, Json{{"deadline_seconds", request.duration.count()}}, jobJson(*result), Json::array(), std::move(next), "Profiler job " + result->id + " started with a server deadline.");
+            return successResult(op, Json{{"deadline_seconds", request.duration.count()}, {"storage", toString(request.storage)}}, jobJson(*result), Json::array(), std::move(next), "Profiler job " + result->id + " started with a server deadline.");
         }
 
         if (op == "/status" || op == "/stop" || op == "/discard") {
@@ -624,7 +653,10 @@ namespace mcdk::mc_profiler_mcp {
             auto result = op == "/stop" ? (*service)->stop(jobId) : (*service)->status(jobId);
             if (!result) return domainError(op, result.error());
             Json next = Json::array();
-            if (result->state == JobState::Completed) next.push_back(nextCall("/query", Json{{"job_id", jobId}, {"view", "hotspots"}}, "Inspect the server-ranked bounded result."));
+            if (result->state == JobState::Completed) {
+                const auto view = result->kind == ProfilerKind::PythonMemory ? "growth" : "hotspots";
+                next.push_back(nextCall("/query", Json{{"job_id", jobId}, {"view", view}}, "Inspect the server-ranked bounded result."));
+            }
             else next.push_back(nextCall("/status", Json{{"job_id", jobId}}, "Check finalization without extending the deadline."));
             return successResult(op, Json::object(), jobJson(*result), Json::array(), std::move(next), "Profiler job status is available in structuredContent.");
         }
@@ -754,7 +786,8 @@ namespace mcdk::mcp_tool_definitions {
             "Profiles Minecraft Python CPU, Python memory, and optional Native CPU through one bounded command tool. "
             "Native profiles can correlate instrumented Python-facing and engine C++ Tracy zone hierarchies, including "
             "lower-level stages such as data-driven JSON parsing when those zones are emitted. Call /help first. Every "
-            "capture has a server deadline; results are filtered and paged. Input uses {op:'/...', args:{...}}.";
+            "capture has a server deadline; temporary memory results expire after 20 idle minutes, and Markdown/SVG "
+            "reports are explicit exports. Results are filtered and paged. Input uses {op:'/...', args:{...}}.";
         tool.parameters_schema = {
             {"type", "object"},
             {"required", Json::array({"op"})},

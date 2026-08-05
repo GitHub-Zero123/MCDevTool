@@ -165,9 +165,9 @@ public:
     Shutdown shutdownAll = nullptr;
 #endif
     explicit Impl(std::filesystem::path executable)
-    : componentDirectory(std::move(executable) / "native-profiler") {}
+    : executableDirectory(std::move(executable)) {}
 
-    std::filesystem::path componentDirectory;
+    std::filesystem::path executableDirectory;
     mutable std::mutex mutex;
     bool attempted = false;
     std::string reason = "Native component has not been probed.";
@@ -193,8 +193,8 @@ std::expected<void, ProfilerError> NativeBridgeLoader::initialize() {
             impl_->reason = "Native profiling requires a 64-bit MCDK process.";
             return std::unexpected(nativeError("NATIVE_PLATFORM_UNSUPPORTED", impl_->reason));
         }
-        const auto manifestPath = impl_->componentDirectory / "component.json";
-        const auto libraryPath = impl_->componentDirectory / "mcdev-tracy-bridge.dll";
+        const auto manifestPath = impl_->executableDirectory / "mcdev-tracy-bridge.json";
+        const auto libraryPath = impl_->executableDirectory / "mcdev-tracy-bridge.dll";
         std::ifstream manifestInput(manifestPath, std::ios::binary);
         nlohmann::json manifest;
         if (!manifestInput || !(manifestInput >> manifest) || !manifest.is_object()) {
@@ -209,7 +209,8 @@ std::expected<void, ProfilerError> NativeBridgeLoader::initialize() {
         }
         const auto digest = sha256File(libraryPath);
         if (!digest || *digest != manifest.value("sha256", "")) {
-            impl_->reason = digest ? "Native profiler DLL hash does not match component.json." : digest.error().message;
+            impl_->reason = digest ? "Native profiler DLL hash does not match mcdev-tracy-bridge.json."
+                                   : digest.error().message;
             return std::unexpected(nativeError("NATIVE_COMPONENT_HASH_MISMATCH", impl_->reason));
         }
         impl_->module = LoadLibraryExW(

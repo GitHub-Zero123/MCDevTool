@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
@@ -341,6 +342,7 @@ class DefaultProfilerService final : public ProfilerService {
         JobSnapshot snapshot;
         StartRequest request;
         Clock::time_point deadline;
+        Clock::time_point lastAccess;
         std::condition_variable condition;
         std::atomic<bool> stopRequested = false;
         std::atomic<bool> discardRequested = false;
@@ -366,6 +368,7 @@ public:
     ~DefaultProfilerService() override { shutdown(); }
 
     std::expected<JobSnapshot, ProfilerError> start(const StartRequest& request) override {
+        collectExpiredMemoryJobs();
         if (request.duration < std::chrono::seconds(1) || request.duration > std::chrono::seconds(300)) {
             return std::unexpected(failure("INVALID_DURATION", "duration_seconds must be between 1 and 300."));
         }
@@ -379,11 +382,15 @@ public:
         auto job = std::make_shared<Job>();
         job->snapshot.id        = makeJobId();
         job->snapshot.kind      = request.kind;
+        job->snapshot.storage   = request.storage;
         job->snapshot.state     = JobState::Starting;
         job->snapshot.createdAt = utcNow();
         job->request             = request;
         job->deadline            = Clock::now() + request.duration;
-        job->directory           = options_.storageRoot / job->snapshot.id;
+        job->lastAccess          = monotonicNow();
+        if (request.storage == ProfileStorage::Disk) {
+            job->directory = options_.storageRoot / job->snapshot.id;
+        }
         job->temporaryTrace      = options_.storageRoot / ".runtime" / job->snapshot.id / "capture.tracy";
 
         {
@@ -439,7 +446,7 @@ public:
             if (job->snapshot.state == JobState::Completed || job->snapshot.state == JobState::Failed
                 || job->snapshot.state == JobState::Discarded || job->snapshot.state == JobState::Aborted) {
                 std::error_code ignored;
-                std::filesystem::remove_all(job->directory, ignored);
+                if (!job->directory.empty()) std::filesystem::remove_all(job->directory, ignored);
                 job->snapshot.state = JobState::Discarded;
                 job->snapshot.statusMessage = "Capture artifacts were discarded.";
                 return {};
@@ -463,7 +470,18 @@ public:
         auto records = recordsFor(*job, request.view);
         if (!records) return std::unexpected(records.error());
         const auto filter = request.filter ? lower(*request.filter) : std::string{};
-        if (!filter.empty()) {
+        if (request.view == "calltree-children") {
+            if (filter.empty()) {
+                return std::unexpected(failure(
+                    "CALLTREE_PARENT_REQUIRED",
+                    "calltree-children requires filter to be one complete parent node id."
+                ));
+            }
+            std::erase_if(*records, [&](const QueryRecord& record) {
+                const auto parent = record.fields.find("parent_id");
+                return parent == record.fields.end() || lower(fieldText(parent->second)) != filter;
+            });
+        } else if (!filter.empty()) {
             std::erase_if(*records, [&](const QueryRecord& record) {
                 if (lower(record.id).find(filter) != std::string::npos) return false;
                 for (const auto& [name, field] : record.fields) {
@@ -566,12 +584,14 @@ public:
     }
 
     std::expected<HistoryPage, ProfilerError> history(const HistoryRequest& request) const override {
+        collectExpiredMemoryJobs();
         scanHistoryOnce();
         std::vector<JobSnapshot> values;
         {
             std::lock_guard lock(mutex_);
             values = historyCache_;
             for (const auto& [id, job] : jobs_) {
+                if (job->request.storage != ProfileStorage::Disk) continue;
                 const auto snapshot = job->snapshot;
                 const auto existing = std::find_if(values.begin(), values.end(), [&](const auto& item) { return item.id == id; });
                 if (existing == values.end()) values.push_back(snapshot);
@@ -605,19 +625,185 @@ public:
             return std::unexpected(failure("JOB_NOT_EXPORTABLE", "Only completed jobs can be exported.", true));
         }
         const bool svg = request.format == ExportFormat::Svg;
-        const auto path = job->directory / (svg ? "report.svg" : "report.md");
+        const auto reportDirectory = job->request.storage == ProfileStorage::Disk
+                                   ? job->directory
+                                   : options_.storageRoot / ".exports" / job->snapshot.id;
+        const auto path = reportDirectory / (svg ? "report.svg" : "report.md");
+        std::error_code createError;
+        std::filesystem::create_directories(reportDirectory, createError);
+        if (createError) {
+            return std::unexpected(failure("EXPORT_CREATE_FAILED", "Unable to create the controlled report directory."));
+        }
+
+        struct ReportRow {
+            std::string label;
+            std::string context;
+            std::string primaryText;
+            std::string secondaryText;
+            long double magnitude = 0;
+            bool negative = false;
+        };
+        const auto formatSeconds = [](double seconds) {
+            std::ostringstream value;
+            value << std::fixed << std::setprecision(3);
+            if (std::abs(seconds) >= 1.0) value << seconds << " s";
+            else if (std::abs(seconds) >= 0.001) value << seconds * 1000.0 << " ms";
+            else value << seconds * 1000000.0 << " us";
+            return value.str();
+        };
+        const auto formatNanoseconds = [](std::int64_t nanoseconds) {
+            std::ostringstream value;
+            value << std::fixed << std::setprecision(3);
+            const auto absolute = std::llabs(nanoseconds);
+            if (absolute >= 1000000000) value << static_cast<double>(nanoseconds) / 1000000000.0 << " s";
+            else if (absolute >= 1000000) value << static_cast<double>(nanoseconds) / 1000000.0 << " ms";
+            else if (absolute >= 1000) value << static_cast<double>(nanoseconds) / 1000.0 << " us";
+            else value << nanoseconds << " ns";
+            return value.str();
+        };
+        const auto formatBytes = [](std::int64_t bytes) {
+            std::ostringstream value;
+            if (bytes > 0) value << '+';
+            value << std::fixed << std::setprecision(2);
+            const auto absolute = std::llabs(bytes);
+            if (absolute >= 1024ll * 1024 * 1024) value << static_cast<double>(bytes) / (1024.0 * 1024 * 1024) << " GiB";
+            else if (absolute >= 1024ll * 1024) value << static_cast<double>(bytes) / (1024.0 * 1024) << " MiB";
+            else if (absolute >= 1024) value << static_cast<double>(bytes) / 1024.0 << " KiB";
+            else value << bytes << " B";
+            return value.str();
+        };
+        const auto markdownEscape = [](std::string value) {
+            value = replaceToken(std::move(value), "|", "\\|");
+            value = replaceToken(std::move(value), "\r", " ");
+            return replaceToken(std::move(value), "\n", " ");
+        };
+
+        std::vector<ReportRow> rows;
+        std::string title;
+        std::string primaryHeading;
+        std::string secondaryHeading;
+        if (job->request.kind == ProfilerKind::PythonCpu) {
+            title = "Python Performance Profile";
+            primaryHeading = "Total";
+            secondaryHeading = "Self";
+            for (const auto& row : job->data.value("nodes", Json::array())) {
+                if (!row.is_array() || row.size() < 11 || !row[6].is_number() || !row[7].is_number()) continue;
+                const auto self = row[6].get<double>();
+                const auto total = row[7].get<double>();
+                const auto module = row[1].is_string() ? row[1].get<std::string>() : std::string{};
+                const auto line = row[2].is_number_integer() ? row[2].get<std::int64_t>() : 0;
+                const auto name = row[3].is_string() ? row[3].get<std::string>() : "unknown";
+                const auto context = row[9].is_string() ? row[9].get<std::string>() : "Thread";
+                const auto target = row[10].is_string() ? row[10].get<std::string>() : "unknown";
+                rows.push_back({
+                    .label = name,
+                    .context = module + (line > 0 ? ":" + std::to_string(line) : "") + " | " + target + " / " + context,
+                    .primaryText = formatSeconds(total),
+                    .secondaryText = formatSeconds(self),
+                    .magnitude = std::max(0.0, total),
+                });
+            }
+        } else if (job->request.kind == ProfilerKind::PythonMemory) {
+            title = "Python Memory Profile";
+            primaryHeading = "Retained change";
+            secondaryHeading = "Current retained";
+            for (const auto& row : job->data.value("rows", Json::array())) {
+                if (!row.is_array() || row.size() < 6 || !row[1].is_number_integer() || !row[3].is_number_integer()) continue;
+                const auto difference = row[1].get<std::int64_t>();
+                const auto current = row[3].get<std::int64_t>();
+                std::string location = "unknown allocation site";
+                if (row[5].is_array() && !row[5].empty() && row[5][0].is_array() && row[5][0].size() >= 2) {
+                    const auto file = row[5][0][0].is_string() ? row[5][0][0].get<std::string>() : std::string{};
+                    const auto line = row[5][0][1].is_number_integer() ? row[5][0][1].get<std::int64_t>() : 0;
+                    location = file + (line > 0 ? ":" + std::to_string(line) : "");
+                }
+                const auto count = row[2].is_number_integer() ? row[2].get<std::int64_t>() : 0;
+                rows.push_back({
+                    .label = location,
+                    .context = (count > 0 ? "+" : "") + std::to_string(count) + " blocks",
+                    .primaryText = formatBytes(difference),
+                    .secondaryText = formatBytes(current),
+                    .magnitude = static_cast<long double>(std::llabs(difference)),
+                    .negative = difference < 0,
+                });
+            }
+        } else {
+            title = "Native Performance Profile";
+            primaryHeading = "Total";
+            secondaryHeading = "Self";
+            for (const auto& zone : job->data.value("zones", Json::array())) {
+                if (!zone.is_object()) continue;
+                const auto total = jsonInteger(zone, "totalNanoseconds");
+                const auto self = jsonInteger(zone, "selfNanoseconds");
+                const auto file = jsonString(zone, "sourceFile");
+                const auto line = jsonInteger(zone, "sourceLine");
+                const auto thread = jsonString(zone, "threadName", 512);
+                rows.push_back({
+                    .label = jsonString(zone, "name", 1024),
+                    .context = (thread.empty() ? jsonString(zone, "threadId", 128) : thread) + " | "
+                             + file + (line > 0 ? ":" + std::to_string(line) : ""),
+                    .primaryText = formatNanoseconds(total),
+                    .secondaryText = formatNanoseconds(self),
+                    .magnitude = static_cast<long double>(std::max<std::int64_t>(0, total)),
+                });
+            }
+        }
+        std::stable_sort(rows.begin(), rows.end(), [](const auto& left, const auto& right) {
+            return left.magnitude > right.magnitude;
+        });
+        if (rows.size() > 40) rows.resize(40);
+
         std::ostringstream output;
         if (svg) {
-            const auto title = std::string("mc_profiler ") + toString(job->snapshot.kind) + " " + job->snapshot.id;
-            const auto summary = xmlEscape(job->summary.dump());
-            output << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"960\" height=\"180\" viewBox=\"0 0 960 180\">"
-                   << "<rect width=\"960\" height=\"180\" fill=\"#f5f5f5\"/><text x=\"32\" y=\"55\" font-family=\"Segoe UI, sans-serif\" font-size=\"24\" fill=\"#171717\">"
-                   << xmlEscape(title) << "</text><text x=\"32\" y=\"96\" font-family=\"Consolas, monospace\" font-size=\"15\" fill=\"#404040\">"
-                   << summary << "</text></svg>";
+            constexpr int width = 1400;
+            constexpr int chartLeft = 540;
+            constexpr int chartRight = 110;
+            constexpr int rowHeight = 28;
+            constexpr int top = 116;
+            const auto height = std::max(250, top + static_cast<int>(rows.size()) * rowHeight + 54);
+            const auto chartWidth = width - chartLeft - chartRight;
+            const auto maximum = rows.empty() ? 1.0L : std::max(1.0L, rows.front().magnitude);
+            output << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                   << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width << "\" height=\"" << height
+                   << "\" viewBox=\"0 0 " << width << ' ' << height << "\">\n"
+                   << "<style>text{font-family:Segoe UI,Arial,sans-serif;letter-spacing:0}.title{font-size:20px;font-weight:600;fill:#f3f4f6}.meta,.value{font-size:12px;fill:#b9bec8}.label{font-size:12px;fill:#e5e7eb}g:hover rect{stroke:#fff;stroke-width:1}</style>\n"
+                   << "<defs><clipPath id=\"label-clip\"><rect x=\"20\" y=\"90\" width=\"500\" height=\"" << height << "\"/></clipPath>"
+                   << "<clipPath id=\"meta-clip\"><rect x=\"20\" y=\"0\" width=\"1360\" height=\"100\"/></clipPath></defs>\n"
+                   << "<rect width=\"" << width << "\" height=\"" << height << "\" fill=\"#1e1f23\"/>\n"
+                   << "<text x=\"20\" y=\"34\" class=\"title\">" << xmlEscape(title) << "</text>\n"
+                   << "<text x=\"20\" y=\"58\" class=\"meta\">" << xmlEscape(job->snapshot.completedAt + " | " + job->snapshot.id) << "</text>\n"
+                   << "<text x=\"20\" y=\"79\" class=\"meta\" clip-path=\"url(#meta-clip)\">" << xmlEscape(job->summary.dump()) << "</text>\n";
+            for (std::size_t index = 0; index < rows.size(); ++index) {
+                const auto& row = rows[index];
+                const auto y = top + static_cast<int>(index) * rowHeight;
+                const auto barWidth = std::max(1.0L, row.magnitude / maximum * chartWidth);
+                const auto color = row.negative ? "#a855b5" : "#3b82f6";
+                output << "<g><title>" << xmlEscape(row.label + "\n" + row.context + "\n" + primaryHeading + ": " + row.primaryText + "\n" + secondaryHeading + ": " + row.secondaryText) << "</title>"
+                       << "<text x=\"20\" y=\"" << y + 17 << "\" class=\"label\" clip-path=\"url(#label-clip)\">" << xmlEscape(row.label + " | " + row.context) << "</text>"
+                       << "<rect x=\"" << chartLeft << "\" y=\"" << y + 4 << "\" width=\"" << std::fixed << std::setprecision(2) << static_cast<double>(barWidth) << "\" height=\"18\" rx=\"3\" fill=\"" << color << "\"/>"
+                       << "<text x=\"" << width - 18 << "\" y=\"" << y + 17 << "\" text-anchor=\"end\" class=\"value\">" << xmlEscape(row.primaryText) << "</text></g>\n";
+            }
+            if (rows.empty()) output << "<text x=\"20\" y=\"150\" class=\"meta\">No retained profiler records were captured.</text>\n";
+            output << "</svg>\n";
         } else {
-            output << "# mc_profiler report\n\n- Job: `" << job->snapshot.id << "`\n- Kind: `"
-                   << toString(job->snapshot.kind) << "`\n- Captured: `" << job->snapshot.completedAt
-                   << "`\n\n```json\n" << job->summary.dump(2) << "\n```\n";
+            output << "# " << title << "\n\n- Job: `" << job->snapshot.id << "`\n- Kind: `"
+                   << toString(job->snapshot.kind) << "`\n- Storage: `" << toString(job->snapshot.storage)
+                   << "`\n- Captured: `" << job->snapshot.completedAt << "`\n\n## Summary\n\n```json\n"
+                   << job->summary.dump(2) << "\n```\n\n## Ranked Records\n\n| # | Entry | Context | "
+                   << primaryHeading << " | " << secondaryHeading << " |\n| -: | --- | --- | ---: | ---: |\n";
+            for (std::size_t index = 0; index < rows.size(); ++index) {
+                output << "| " << index + 1 << " | " << markdownEscape(rows[index].label) << " | "
+                       << markdownEscape(rows[index].context) << " | " << rows[index].primaryText << " | "
+                       << rows[index].secondaryText << " |\n";
+            }
+            if (rows.empty()) output << "| 1 | No retained profiler records were captured. | | | |\n";
+            output << "\n## Notes\n\n- The ranked table is intentionally bounded to 40 records.\n"
+                   << "- Query the job for paged server-side detail before drawing conclusions from this report.\n";
+            if (job->request.kind == ProfilerKind::PythonMemory) {
+                output << "- Python memory values cover tracemalloc allocations, not process RSS or native memory.\n";
+            } else if (job->request.kind == ProfilerKind::NativeCpu) {
+                output << "- Native rows are emitted Tracy zones; uninstrumented native work may not appear.\n";
+            }
         }
         if (!std::filesystem::is_regular_file(path)) {
             if (auto written = writeAtomic(path, output.str()); !written) return std::unexpected(written.error());
@@ -634,14 +820,26 @@ public:
     }
 
     std::expected<CleanupResult, ProfilerError> cleanup(const CleanupRequest& request) override {
+        collectExpiredMemoryJobs();
         scanHistoryOnce();
         CleanupResult result;
         std::vector<std::filesystem::directory_entry> directories;
         std::error_code error;
-        for (std::filesystem::directory_iterator it(options_.storageRoot, error), end; !error && it != end; it.increment(error)) {
-            if (!it->is_directory(error) || it->is_symlink(error) || it->path().filename() == ".runtime") continue;
-            directories.push_back(*it);
-        }
+        const auto appendDirectories = [&](const std::filesystem::path& root, bool skipInternal) {
+            std::error_code iterationError;
+            for (std::filesystem::directory_iterator it(root, iterationError), end;
+                 !iterationError && it != end;
+                 it.increment(iterationError)) {
+                const auto filename = it->path().filename().string();
+                if (!it->is_directory(iterationError) || it->is_symlink(iterationError)
+                    || (skipInternal && !filename.empty() && filename.front() == '.')) {
+                    continue;
+                }
+                directories.push_back(*it);
+            }
+        };
+        appendDirectories(options_.storageRoot, true);
+        appendDirectories(options_.storageRoot / ".exports", false);
         std::sort(directories.begin(), directories.end(), [](const auto& left, const auto& right) {
             std::error_code ignored;
             return left.last_write_time(ignored) > right.last_write_time(ignored);
@@ -669,6 +867,7 @@ public:
     }
 
     std::expected<Capabilities, ProfilerError> inspectCapabilities(const DoctorRequest& request) override {
+        collectExpiredMemoryJobs();
         Capabilities result;
         const bool ipcAvailable = static_cast<bool>(options_.executeCode);
         const auto add = [&](ProfilerKind kind, bool available, std::string reason) {
@@ -910,6 +1109,19 @@ private:
     }
 
     void persistAndComplete(const std::shared_ptr<Job>& job) {
+        if (job->request.storage == ProfileStorage::Memory) {
+            std::error_code ignored;
+            std::filesystem::remove_all(job->temporaryTrace.parent_path(), ignored);
+            const auto completedAt = utcNow();
+            std::lock_guard lock(mutex_);
+            job->snapshot.state = JobState::Completed;
+            job->snapshot.completedAt = completedAt;
+            job->snapshot.statusMessage =
+                "Capture completed in temporary memory; it expires after 20 minutes without access.";
+            job->lastAccess = monotonicNow();
+            if (active_ == job) active_.reset();
+            return;
+        }
         {
             std::lock_guard lock(mutex_);
             job->snapshot.state = JobState::Persisting;
@@ -942,6 +1154,7 @@ private:
         const auto completedAt = utcNow();
         Json manifest{
             {"schema", 1}, {"job_id", job->snapshot.id}, {"kind", toString(job->snapshot.kind)},
+            {"storage", "disk"},
             {"state", "completed"}, {"created_at", job->snapshot.createdAt}, {"completed_at", completedAt},
             {"partial", job->snapshot.partial}, {"artifacts", Json::array({"data.json", "summary.json"})}
         };
@@ -955,6 +1168,7 @@ private:
             job->snapshot.state = JobState::Completed;
             job->snapshot.completedAt = completedAt;
             job->snapshot.statusMessage = "Capture completed and committed to controlled storage.";
+            job->lastAccess = monotonicNow();
             if (active_ == job) active_.reset();
         }
     }
@@ -966,25 +1180,31 @@ private:
         job->snapshot.state = JobState::Failed;
         job->snapshot.statusMessage = error.code + ": " + error.message;
         job->snapshot.completedAt = utcNow();
+        job->lastAccess = monotonicNow();
         if (active_ == job) active_.reset();
     }
 
     void finishDiscarded(const std::shared_ptr<Job>& job, JobState state) {
         std::error_code ignored;
         std::filesystem::remove_all(job->temporaryTrace.parent_path(), ignored);
-        std::filesystem::remove_all(job->directory, ignored);
+        if (!job->directory.empty()) std::filesystem::remove_all(job->directory, ignored);
         std::lock_guard lock(mutex_);
         job->snapshot.state = state;
         job->snapshot.completedAt = utcNow();
+        job->lastAccess = monotonicNow();
         job->snapshot.statusMessage = state == JobState::Aborted ? "Capture was aborted during shutdown." : "Capture was discarded and artifacts were removed.";
         if (active_ == job) active_.reset();
     }
 
     std::shared_ptr<Job> findJob(const JobId& id) const {
+        collectExpiredMemoryJobs();
         {
             std::lock_guard lock(mutex_);
             const auto found = jobs_.find(id);
-            if (found != jobs_.end()) return found->second;
+            if (found != jobs_.end()) {
+                found->second->lastAccess = monotonicNow();
+                return found->second;
+            }
         }
         if (id.empty() || id.size() > 128 || !std::all_of(id.begin(), id.end(), [](unsigned char value) {
                 return std::isalnum(value) || value == '-';
@@ -1008,8 +1228,10 @@ private:
         job->snapshot.id = id;
         const auto kind = manifest.value("kind", "");
         job->snapshot.kind = kind == "python.memory" ? ProfilerKind::PythonMemory
-                          : kind == "native.cpu" ? ProfilerKind::NativeCpu : ProfilerKind::PythonCpu;
+                           : kind == "native.cpu" ? ProfilerKind::NativeCpu : ProfilerKind::PythonCpu;
         job->request.kind = job->snapshot.kind;
+        job->request.storage = ProfileStorage::Disk;
+        job->snapshot.storage = ProfileStorage::Disk;
         job->snapshot.state = JobState::Completed;
         job->snapshot.partial = manifest.value("partial", false);
         job->snapshot.createdAt = manifest.value("created_at", "");
@@ -1018,9 +1240,45 @@ private:
         job->directory = directory;
         job->data = std::move(data);
         job->summary = std::move(summary);
+        job->lastAccess = monotonicNow();
         std::lock_guard lock(mutex_);
         const auto [found, inserted] = jobs_.emplace(id, job);
+        found->second->lastAccess = monotonicNow();
         return inserted ? job : found->second;
+    }
+
+    [[nodiscard]] Clock::time_point monotonicNow() const {
+        return options_.monotonicNow ? options_.monotonicNow() : Clock::now();
+    }
+
+    static bool isTerminal(JobState state) noexcept {
+        return state == JobState::Completed || state == JobState::Failed || state == JobState::Discarded
+            || state == JobState::Aborted;
+    }
+
+    void collectExpiredMemoryJobs() const {
+        const auto now = monotonicNow();
+        std::vector<std::shared_ptr<Job>> expired;
+        {
+            std::lock_guard lock(mutex_);
+            for (auto it = jobs_.begin(); it != jobs_.end();) {
+                const auto& job = it->second;
+                const bool idleExpired = now >= job->lastAccess
+                    && now - job->lastAccess >= options_.memoryIdleTimeout;
+                if (job->request.storage == ProfileStorage::Memory && isTerminal(job->snapshot.state)
+                    && active_ != job && idleExpired) {
+                    expired.push_back(job);
+                    it = jobs_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (const auto& job : expired) {
+            if (job->worker.joinable() && job->worker.get_id() != std::this_thread::get_id()) {
+                job->worker.join();
+            }
+        }
     }
 
     JobSnapshot snapshotOf(const std::shared_ptr<Job>& job) const {
@@ -1170,6 +1428,7 @@ private:
             const auto kind = manifest.value("kind", "");
             snapshot.kind = kind == "python.memory" ? ProfilerKind::PythonMemory
                           : kind == "native.cpu" ? ProfilerKind::NativeCpu : ProfilerKind::PythonCpu;
+            snapshot.storage = ProfileStorage::Disk;
             snapshot.state = JobState::Completed;
             snapshot.partial = manifest.value("partial", false);
             snapshot.createdAt = manifest.value("created_at", "");
@@ -1194,6 +1453,9 @@ createProfilerService(ProfilerServiceOptions options) {
     try {
         if (options.storageRoot.empty() || options.executableDirectory.empty()) {
             return std::unexpected(failure("PROFILER_CONFIGURATION_INVALID", "Profiler storage and executable roots are required."));
+        }
+        if (options.memoryIdleTimeout <= Clock::duration::zero()) {
+            return std::unexpected(failure("PROFILER_CONFIGURATION_INVALID", "Memory idle timeout must be positive."));
         }
         return std::static_pointer_cast<ProfilerService>(std::make_shared<DefaultProfilerService>(std::move(options)));
     } catch (const std::exception& error) {

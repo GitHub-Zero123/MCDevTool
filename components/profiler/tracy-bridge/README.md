@@ -9,11 +9,13 @@ The root MCDevTool build owns normal integration:
 cmake --build <build-dir> --target mcdk
 ```
 
-Building `mcdk` also builds `mcdev-tracy-bridge.dll` and synchronizes the DLL, third-party licenses, and a SHA-256
-component manifest below the executable directory:
+Building `mcdk` also builds `mcdev-tracy-bridge.dll` and its SHA-256 component manifest directly beside `mcdk.exe`:
 
 ```text
-native-profiler/
+mcdk.exe
+mcdev-tracy-bridge.dll
+mcdev-tracy-bridge.json
+licenses/native-profiler/
 ```
 
 Tracy and Capstone are immutable FetchContent archives with SHA-256 verification. Downloads are shared through

@@ -516,6 +516,7 @@ void mcdk::launchGameExe(
                 },
                 .storageRoot = storageRoot,
                 .executableDirectory = currentExecutableDirectory(),
+                .memoryIdleTimeout = std::chrono::minutes(20),
             });
         }
     );

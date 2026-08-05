@@ -14,6 +14,16 @@ namespace mcdk::performance {
         return "unknown";
     }
 
+    const char* toString(ProfileStorage value) noexcept {
+        switch (value) {
+        case ProfileStorage::Memory:
+            return "memory";
+        case ProfileStorage::Disk:
+            return "disk";
+        }
+        return "unknown";
+    }
+
     const char* toString(JobState value) noexcept {
         switch (value) {
         case JobState::Created:

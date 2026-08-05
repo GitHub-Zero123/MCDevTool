@@ -31,6 +31,8 @@ namespace mcdk::performance {
         std::function<std::uint32_t()> currentGameProcessId;
         std::filesystem::path         storageRoot;
         std::filesystem::path         executableDirectory;
+        std::function<std::chrono::steady_clock::time_point()> monotonicNow;
+        std::chrono::steady_clock::duration memoryIdleTimeout = std::chrono::minutes(20);
     };
 
     [[nodiscard]] std::expected<std::shared_ptr<ProfilerService>, ProfilerError>

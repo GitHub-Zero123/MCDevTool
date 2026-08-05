@@ -95,7 +95,7 @@ set_target_properties(mcdev-tracy-bridge PROPERTIES
 add_custom_command(TARGET mcdev-tracy-bridge POST_BUILD
     COMMAND "${CMAKE_COMMAND}"
         "-DMCDEV_NATIVE_DLL=$<TARGET_FILE:mcdev-tracy-bridge>"
-        "-DMCDEV_NATIVE_MANIFEST=$<TARGET_FILE_DIR:mcdev-tracy-bridge>/component.json"
+        "-DMCDEV_NATIVE_MANIFEST=$<TARGET_FILE_DIR:mcdev-tracy-bridge>/mcdev-tracy-bridge.json"
         -P "${CMAKE_CURRENT_LIST_DIR}/cmake/WriteNativeProfilerManifest.cmake"
     COMMENT "Generating the Native profiler component manifest"
     VERBATIM
@@ -106,25 +106,24 @@ if(MSVC)
     target_link_options(mcdev-tracy-bridge PRIVATE $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
 endif()
 
-set(_mcdev_native_component_dir "${CMAKE_INSTALL_BINDIR}/native-profiler")
 install(TARGETS mcdev-tracy-bridge
-    RUNTIME DESTINATION "${_mcdev_native_component_dir}" COMPONENT native-profiler
-    LIBRARY DESTINATION "${_mcdev_native_component_dir}" COMPONENT native-profiler
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT native-profiler
+    LIBRARY DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT native-profiler
 )
 install(
-    FILES "$<TARGET_FILE_DIR:mcdev-tracy-bridge>/component.json"
-    DESTINATION "${_mcdev_native_component_dir}"
+    FILES "$<TARGET_FILE_DIR:mcdev-tracy-bridge>/mcdev-tracy-bridge.json"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT native-profiler
 )
 install(
     FILES "${tracy_SOURCE_DIR}/LICENSE"
-    DESTINATION "${_mcdev_native_component_dir}/licenses"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}/licenses/native-profiler"
     RENAME LICENSE-Tracy.txt
     COMPONENT native-profiler
 )
 install(
     FILES "${capstone_SOURCE_DIR}/LICENSE.TXT"
-    DESTINATION "${_mcdev_native_component_dir}/licenses"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}/licenses/native-profiler"
     RENAME LICENSE-Capstone.txt
     COMPONENT native-profiler
 )

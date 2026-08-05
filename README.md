@@ -264,6 +264,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 - `get_latest_logs` / `get_latest_error_logs`：读取游戏运行日志和 Python 错误输出。
 - `execute_code`：在客户端或服务端执行 Python 代码，适合触发开发期测试函数、查询运行时状态。
 - `jsonui_debugger`：读取 Minecraft JSON UI 运行时结构，支持 screen 列表、节点查询、子节点枚举、树结构、HTML-like 布局、SVG 布局图、节点搜索、Mod UI 状态分析和 UI 重载。
+- `mc_profiler`：通过单工具命令分析 Python CPU、Python 内存和可选的 Native CPU 性能，支持分页查询与 Markdown / SVG 报告。
 - `capture_game_window` / `click_game_window`：用于必要时的视觉确认和简单交互。
 - `reload_game`：触发完整游戏重载；资源级重载使用 `reload_game(reload_addons=true)`。
 
@@ -324,6 +325,14 @@ VSCode 暂不支持直接连接 SSE，需通过 `mcp-remote` 桥接，配置在 
 
 > MCP 服务器随 `MCDK/MC` 一起启停，游戏关闭后需重新连接。各客户端对自动重连的支持情况不同，请自行测试。
 
+### 性能分析
+
+`mc_profiler` 提供 Python CPU 热点、Python 内存增长和 Native CPU 分析。Native 模式读取 Tracy zone 调用树，可在游戏提供相应埋点时关联 Python 调用和 C++ 引擎阶段，用于继续定位数据驱动 JSON 解析、转换、对象构建或事件分发等底层耗时。
+
+分析任务具有服务端截止时间。结果默认只保存在进程内，连续 20 分钟未访问后由下一次性能分析请求惰性回收，不进入历史记录；需要跨进程恢复或前后对比时，可在启动任务时显式选择磁盘存储。Markdown 和 SVG 报告仅在显式导出时写入受控目录。
+
+Native 分析是可选能力，仅支持 Windows x64。`mcdev-tracy-bridge.dll` 及其校验清单必须与 `mcdk.exe` 位于同一目录；缺少或校验失败时 Native 分析直接不可用，不会回退为 Python 分析。
+
 ## MCP 游戏测试工作流策略
 
 MCDK MCP 的定位不是让通用 Agent 仅凭 LLM、截图和点击完成复杂游戏测试。现阶段更可靠的方式是：在开发代码时预留测试函数、诊断入口和结构化日志，再通过 MCP 客户端 / 服务端代码执行 Tool 触发这些入口，并用日志查询 Tool 收集结果做统计分析。
@@ -347,3 +356,5 @@ MCDK MCP 的定位不是让通用 Agent 仅凭 LLM、截图和点击完成复杂
 | [Zlib](https://zlib.net) | NBT 数据压缩与解压缩 | NBT 内部依赖 |
 | [CLI11](https://github.com/CLIUtils/CLI11) | 命令行参数解析 | Header-only |
 | [cpp-mcp](https://github.com/hkr04/cpp-mcp) | 实现 MCP 协议的服务器功能 | 魔改扩展协议 |
+| [Tracy](https://github.com/wolfpld/tracy) | Native CPU 采集、时间线与 zone 调用树解析 | 可选 Windows x64 组件，固定使用 0.11.1 |
+| [Capstone](https://github.com/capstone-engine/capstone) | Tracy Native 采集所需的指令解析支持 | 仅随可选 Native 组件构建 |

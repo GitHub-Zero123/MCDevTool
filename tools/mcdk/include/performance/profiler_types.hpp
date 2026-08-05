@@ -31,6 +31,11 @@ namespace mcdk::performance {
         Wall,
     };
 
+    enum class ProfileStorage {
+        Memory,
+        Disk,
+    };
+
     enum class JobState {
         Created,
         Starting,
@@ -54,6 +59,7 @@ namespace mcdk::performance {
         ProfilerKind         kind   = ProfilerKind::PythonCpu;
         ProfileTarget        target = ProfileTarget::Client;
         ProfileClock         clock  = ProfileClock::Wall;
+        ProfileStorage       storage = ProfileStorage::Memory;
         std::chrono::seconds duration{15};
         std::size_t          tracebackDepth = 8;
         bool                 collectGarbage = true;
@@ -62,6 +68,7 @@ namespace mcdk::performance {
     struct JobSnapshot {
         JobId        id;
         ProfilerKind kind    = ProfilerKind::PythonCpu;
+        ProfileStorage storage = ProfileStorage::Memory;
         JobState     state   = JobState::Created;
         bool         partial = false;
         std::string  statusMessage;
@@ -162,6 +169,7 @@ namespace mcdk::performance {
     };
 
     [[nodiscard]] const char* toString(ProfilerKind value) noexcept;
+    [[nodiscard]] const char* toString(ProfileStorage value) noexcept;
     [[nodiscard]] const char* toString(JobState value) noexcept;
 
 } // namespace mcdk::performance

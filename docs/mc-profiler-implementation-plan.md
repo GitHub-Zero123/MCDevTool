@@ -44,7 +44,7 @@ MCP / CLI / Host Bridge / future service
 - 核心库不得依赖 `cpp-mcp`。
 - 核心 API 不接收 MCP `op` 字符串，不返回 MCP `content` 或 `structuredContent`。
 - 核心错误使用稳定 domain error，由各协议适配器映射成 MCP、CLI 或其他协议错误。
-- 核心任务不得依赖 MCP session 生命周期；MCP client 断开后任务仍按 deadline 自主收尾。Python 必须完成清理和落盘；Native 超过收尾时限时按 10.1 进入 `cleanup_pending`。
+- 核心任务不得依赖 MCP session 生命周期；MCP client 断开后任务仍按 deadline 自主收尾。Python 必须完成清理并按 storage 策略提交内存结果或磁盘结果；Native 超过收尾时限时按 10.1 进入 `cleanup_pending`。
 - MCP adapter 只负责参数反序列化、调用 typed API、返回 envelope。
 - 每个游戏 runtime 只能由组合根创建一个 `ProfilerRuntimeOwner`；MCP 和其他业务通过它取得同一个 `ProfilerService` 共享引用，不建立本机 MCP 网络回环，也不得自行创建第二个绑定同一游戏进程的 service。
 
@@ -488,7 +488,7 @@ Native bridge 当前在同一 MCDK 进程内运行，`release()` 最终需要 jo
 | L0 | summary、关键指标、覆盖和截断 | 是 |
 | L1 | 服务端排序后的 Top-K | 按需 |
 | L2 | 稳定 ID 的局部详情和邻域 | 按需 |
-| L3 | 完整的已持久化有界数据集、Markdown、SVG、`.tracy` | 只落盘；文本使用 UTF-8，返回服务端生成的规范化绝对路径 |
+| L3 | 完整有界数据集、Markdown、SVG、`.tracy` | 数据集按 memory/disk 策略保留；报告与 disk trace 才落盘，路径由服务端生成 |
 
 ### 11.2 Views
 
@@ -515,7 +515,7 @@ Native bridge 当前在同一 MCDK 进程内运行，`release()` 最终需要 jo
 1. soft deadline 到达后先停止 Yappi/tracemalloc 采集。
 2. 游戏侧只保留项目相关记录，CPU 最多返回 512 个函数和 2048 条调用边，memory 最多返回 512 个 allocation site；traceback depth 最大 16，符号与路径字符串也有长度上限。
 3. 游戏侧响应显式包含 observed total 与 `truncated`，MCDK 不把采集阶段已截断的数据伪装成完整全集。
-4. MCDK 持久化该 job 的完整有界快照；Agent 后续只通过服务端 filter/sort/cursor 分页召回，单次最多 50 条且约 64 KiB。
+4. MCDK 按 memory/disk 策略保留该 job 的完整有界快照；Agent 后续只通过服务端 filter/sort/cursor 分页召回，单次最多 50 条且约 64 KiB。
 5. 成功、失败、提前 stop、discard 和 shutdown 均走幂等 cleanup；游戏侧另有 duration + 60 秒 hard TTL，即使 Agent 或 MCDK 不再调用也会释放 profiler 状态。
 
 采集预算：
@@ -529,15 +529,24 @@ Native bridge 当前在同一 MCDK 进程内运行，`release()` 最终需要 jo
 Native 数据契约不同：
 
 - `.tracy` 是完整 trace artifact，Native JSON index 是按服务端 capture budget 生成的有界分析索引。
-- `/query` 只查询已持久化索引，不能声称可分页召回索引生成时未保留的所有 zone。
+- `/query` 只查询已完成 job 的有界索引，不能声称可分页召回索引生成时未保留的所有 zone。
 - 返回 `index_truncated`、`indexed_zones`、`total_zones` 和 call-tree coverage。
 - 第一版不为了任意查询而重复解析 `.tracy`；需要扩大覆盖时调整服务端预算并重新采集。
 
-因此，本文中的“完整数据”统一表示“该 job 已持久化的完整有界数据集”，不表示进程运行期间产生的无限全集。扩大 Python 采集覆盖需要重新采集或后续引入多页 IPC snapshot 协议；当前实现不会假装能召回采集时未保留的记录。
+因此，本文中的“完整数据”统一表示“该 job 当前保留的完整有界数据集”，不表示进程运行期间产生的无限全集。扩大 Python 采集覆盖需要重新采集或后续引入多页 IPC snapshot 协议；当前实现不会假装能召回采集时未保留的记录。
 
-## 12. 受控落盘
+## 12. 临时内存与受控落盘
 
-默认目录：
+`StartRequest.storage` 使用 typed enum，MCP `/start.args.storage` 只接受：
+
+- `memory`：默认。完整有界结果只保存在 MCDK 进程内，不进入 history，不支持进程重启恢复。
+- `disk`：显式选择。按 manifest commit 协议持久化，可进入 history 并在进程重启后恢复。
+
+内存 job 在完成后连续 20 分钟没有成功访问即过期；每个 profiler API 请求入口惰性执行 GC，成功访问 job 会刷新其 idle TTL。运行中、收尾中或持久化中的 job 不参与该回收。GC 必须先在锁内摘除终态 job，再在锁外 join 已结束 worker，禁止在锁内等待线程，也禁止析构 joinable `std::thread`。
+
+Native capture 仍允许 bridge 在 `.runtime/<job-id>/capture.tracy` 写临时文件；`memory` 模式解析完成后必须删除该临时目录，不能提交 trace 或 manifest。显式 `/export` 可以为内存 job 在 `.exports/<job-id>/` 写 Markdown/SVG，但不能因此把 job 变成可恢复 history 项。
+
+`disk` job 目录：
 
 ```text
 <project>/.mcdev/profiles/<job-id>/
@@ -560,7 +569,7 @@ Native 数据契约不同：
 - Agent 只能选 export 格式，不能指定任意路径。
 - 路径执行 canonical/containment 校验，拒绝 storage root 下非服务端创建的 reparse-point/symlink job 目录；仅字符串前缀比较不足以防止链接逃逸和检查后替换竞态。
 - 返回 artifact path 时统一转换为 UTF-8 generic absolute path，并同时返回 artifact kind/size/hash；Agent 不需要也不能补全相对路径。
-- Native 临时 trace 复制到受控目录并验证非空后才删除临时目录。
+- Native `disk` 临时 trace 复制到受控目录并验证非空后才删除临时目录；`memory` 模式解析后直接删除。
 - retention 同时限制 job 数、总字节数、TTL 和单个 trace 大小。
 - 具体配额用真实 trace 样本确定，不能凭估计固化。
 - 首次 history 或首次写入时才扫描并恢复遗留 manifest。
@@ -574,7 +583,7 @@ Native 数据契约不同：
 源码单一权威
 + 独立 DLL
 + MCDK target 可依赖并联动构建 DLL
-+ 运行时首次 Native 调用才加载
++ 运行时首个 profiler op 探测并尝试加载
 + 发行包是否携带、用户是否下载由发行策略决定
 ```
 
@@ -589,15 +598,14 @@ Native 数据契约不同：
 
 ```text
 mcdk.exe
-native-profiler/
-  component.json
-  mcdev-tracy-bridge.dll
-  licenses/
+mcdev-tracy-bridge.dll
+mcdev-tracy-bridge.json
+licenses/native-profiler/
     LICENSE-Tracy.txt
     LICENSE-Capstone.txt
 ```
 
-`component.json`：
+`mcdev-tracy-bridge.json`：
 
 ```json
 {
@@ -612,7 +620,7 @@ native-profiler/
 
 ### 13.2 安全加载
 
-- 只从安装目录或受控组件根目录的固定相对位置加载。
+- 只加载与当前 `mcdk.exe` 同目录、固定文件名的 `mcdev-tracy-bridge.dll`；不枚举或尝试任意 DLL。
 - 使用绝对路径以及 `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32` 调用 `LoadLibraryExW`，避免当前目录和 `PATH` 搜索劫持。
 - 校验 manifest、文件 hash、C ABI version 和 Tracy protocol。相邻 manifest 中的 SHA-256 只用于检测文件损坏和版本错配，不是发布者身份的信任根。
 - 如果威胁模型包含安装目录被篡改，发行组件必须使用 Authenticode，或使用内置可信公钥验证签名 manifest；不能依赖攻击者可同时替换的 DLL 与相邻 hash 文件。
@@ -733,7 +741,7 @@ endif()
 
 - 构建 `mcdk` 时可自动构建 DLL。
 - `mcdk` 只动态加载 DLL，不链接 bridge C++ implementation。
-- build-tree 中将 DLL 复制到约定的 components 目录，便于本地联调。
+- build-tree 中让 DLL target 直接输出到 `mcdk.exe` 所在目录，不依赖构建后的多层复制。
 - CMake `install()` 使用独立 component，例如 `native-profiler`；只有后续实际采用 CPack 时，CPack 才映射同一 component。
 - 发行任务可以选择包含或排除该 install component。
 - 用户运行时没有安装 DLL，MCDK 仍可启动，只有 Native capability unavailable。
@@ -819,7 +827,7 @@ Preset 只描述构建环境，例如 generator、toolchain、architecture、bui
 ```text
 cmake build mcdk
   -> 可依赖并构建 mcdev-tracy-bridge.dll
-  -> 本地 components 目录可直接测试
+  -> DLL 和校验清单直接位于 mcdk.exe 同级
 
 cmake install / package
   -> core component 必选
@@ -836,13 +844,13 @@ Release 验证：
 - 运行 bridge C ABI tests。
 - 生成并校验 DLL SHA-256。
 - 安装 Tracy 和 Capstone license。
-- 生成 `component.json`。
+- 生成 `mcdev-tracy-bridge.json`。
 - 验证 core-only 包没有 DLL 仍能运行 Python profiler。
 - 验证 full 包在没有任何 profiler op 时不加载 DLL；首次 `/help` 后 probe 结果进入 runtime capability。
 
 ## 16. 实施状态
 
-Phase 0-5 与 Phase 6 的 help/guide 已落地。Debug/Release 离线构建、C ABI 测试、核心 typed API deadline/落盘/恢复测试、stdio 无游戏回退和安装树组件校验已通过。真实游戏中的 Python/Tracy 数据质量、插件侧 discovery golden cases 和 Agent 召回参数校准仍需游戏 E2E；不得把离线测试表述为游戏采集已验证。
+Phase 0-5 与 Phase 6 的 help/guide 已落地。Release 离线构建、C ABI、typed API deadline、memory TTL/惰性 GC、双格式导出、disk 恢复、stdio 转发和组件布局测试已通过。旧版运行进程中的 Python CPU、Python memory 与 Native Tracy 采集曾完成真实游戏 E2E；本轮同级 DLL 布局和 memory 默认值仍需重启 MCDK 后复验。
 
 ### Phase 0：领域 API 与测试骨架
 
@@ -867,7 +875,7 @@ Phase 0-5 与 Phase 6 的 help/guide 已落地。Debug/Release 离线构建、C 
 ### Phase 2：Python CPU
 
 - 迁移 Yappi start、marker、collect、cleanup。
-- 使用 512 functions / 2048 edges 的有界快照、稳定 ID、字符串上限和 hard TTL，由 MCDK 持久化后分页查询。
+- 使用 512 functions / 2048 edges 的有界快照、稳定 ID、字符串上限和 hard TTL，由 MCDK 按 storage 策略保留后分页查询。
 - 支持 client/server/all、CPU/WALL。
 - 实现 hotspots/functions/callers/callees/contexts 查询。
 - 迁移 parser 和 report golden tests。
@@ -876,7 +884,7 @@ Phase 0-5 与 Phase 6 的 help/guide 已落地。Debug/Release 离线构建、C 
 
 - 迁移 tracemalloc baseline/collect/cleanup。
 - 增加 duration 和 host watchdog。
-- 使用 512 allocation sites、最大 16 层 traceback、路径上限和 hard TTL 的有界快照，由 MCDK 持久化后分页查询。
+- 使用 512 allocation sites、最大 16 层 traceback、路径上限和 hard TTL 的有界快照，由 MCDK 按 storage 策略保留后分页查询。
 - 实现 allocations/growth/retained/traceback 查询。
 - 保证 IPC 失败走幂等 cleanup。
 
@@ -970,9 +978,9 @@ Phase 0-5 与 Phase 6 的 help/guide 已落地。Debug/Release 离线构建、C 
 - profiler core 可由 C++ 业务直接调用，不依赖 MCP 或网络回环。
 - 每个 game runtime 只有一个 owner；MCP 和其他业务共享同一个惰性 service。
 - 未调用时不创建 worker、不扫描端口、不加载 DLL、不扫描历史报告。
-- Python profiler 在 Agent 不再调用时仍须按 deadline 自动结束、清理并落盘；Native 须自动请求 stop 和持久化可得结果，若 in-process worker 未在 completion deadline 内退出，则进入 `cleanup_pending`、保持任务锁并等待 cooperative join，不能伪报已清理。
+- Python profiler 在 Agent 不再调用时仍须按 deadline 自动结束、清理并提交内存或磁盘结果；Native 须自动请求 stop 并按 storage 策略处理可得结果，若 in-process worker 未在 completion deadline 内退出，则进入 `cleanup_pending`、保持任务锁并等待 cooperative join，不能伪报已清理。
 - 默认最多一个 profiler 活动。
-- Agent 默认只收到摘要；Python 有界 snapshot 落盘后由 query 分页召回，Native 明确区分完整 trace 和有界分析 index。
+- Agent 默认只收到摘要；Python 有界 snapshot 完成后由 query 分页召回，Native 明确区分 disk 模式完整 trace 和有界分析 index。
 - 所有 query 支持服务端筛选、排序、分页和稳定 ID。
 - 所有路径受服务端控制，写入原子且有 retention。
 - Native DLL 缺失不影响 MCDK 和 Python profiler。
