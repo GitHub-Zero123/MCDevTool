@@ -788,11 +788,11 @@ void mcdk::launchGameExe(
         try {
             safaiaReceiver = std::make_unique<SafaiaLogReceiver>(pid);
             if (const auto error = safaiaReceiver->start()) {
-                throw std::system_error(error, "Failed to start the experimental Safaia log receiver");
+                throw std::system_error(error, "Failed to start the Safaia log receiver");
             }
             const auto endpoint = safaiaReceiver->localEndpoint();
             printColoredAtomic(
-                "[MCDK] Experimental Safaia log receiver listening on " + endpoint.address + ":"
+                "[MCDK] Safaia log receiver listening on " + endpoint.address + ":"
                     + std::to_string(endpoint.port),
                 ConsoleColor::Cyan
             );
