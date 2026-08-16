@@ -1,0 +1,3 @@
+[submodule "components/MCDevLink"]
+	path = components/MCDevLink
+	url = https://github.com/GitHub-Zero123/MCDevLink.git
