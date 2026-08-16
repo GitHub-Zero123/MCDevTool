@@ -52,7 +52,10 @@ target_link_libraries(mcdk_core PUBLIC mcdevtool mcdev_profiler_core mcp PRIVATE
 
 add_library(mcdk_runtime STATIC
     src/application.cpp
+    src/console/console_output.cpp
     src/game_process.cpp
+    src/game_process/logging.cpp
+    src/game_process/platform.cpp
     src/host_bridge.cpp
     src/mcp_server.cpp
 )

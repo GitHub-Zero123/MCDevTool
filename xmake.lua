@@ -194,7 +194,10 @@ if has_config("build_mcdk") then
         set_languages("c++23")
         add_files(
             "tools/mcdk/src/application.cpp",
+            "tools/mcdk/src/console/console_output.cpp",
             "tools/mcdk/src/game_process.cpp",
+            "tools/mcdk/src/game_process/logging.cpp",
+            "tools/mcdk/src/game_process/platform.cpp",
             "tools/mcdk/src/host_bridge.cpp",
             "tools/mcdk/src/mcp_server.cpp"
         )
