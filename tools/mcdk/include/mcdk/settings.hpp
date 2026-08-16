@@ -8,7 +8,7 @@
 #include <mcdevtool/level.h>
 #include <mcdevtool/style.h>
 
-#include "mod_dir_config.hpp"
+#include <mcdk/mod_dir_config.hpp>
 
 namespace mcdk {
 

@@ -1,4 +1,4 @@
-#include <performance/native_bridge_loader.hpp>
+#include <mcdk/performance/native_bridge_loader.hpp>
 
 #include <array>
 #include <fstream>

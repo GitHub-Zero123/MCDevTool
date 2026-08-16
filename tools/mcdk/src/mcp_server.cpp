@@ -1,4 +1,4 @@
-#include <mcp_server.hpp>
+#include <mcdk/mcp_server.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -10,11 +10,11 @@
 #include <memory>
 #include <cstdint>
 #include <functional>
-#include <log_buffer.hpp>
-#include <mcp_tool_definitions.hpp>
-#include <mc_profiler_mcp.hpp>
-#include <jsonui_debugger.hpp>
-#include <jsonui_reload_support.hpp>
+#include <mcdk/log_buffer.hpp>
+#include <mcdk/mcp_tool_definitions.hpp>
+#include <mcdk/mc_profiler_mcp.hpp>
+#include <mcdk/jsonui_debugger.hpp>
+#include <mcdk/jsonui_reload_support.hpp>
 #include <nlohmann/json.hpp>
 #include <mcp_server.h>
 #include <base64.hpp>

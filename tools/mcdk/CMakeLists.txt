@@ -28,6 +28,7 @@ endif()
 add_library(mcdk_core STATIC
     src/config.cpp
     src/env.cpp
+    src/game_environment.cpp
     src/hotreload.cpp
     src/ipc_code_execution.cpp
     src/json_diagnostics.cpp

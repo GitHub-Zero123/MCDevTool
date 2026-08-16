@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-#include "settings.hpp"
+#include <mcdk/settings.hpp>
 
 namespace mcdk {
 

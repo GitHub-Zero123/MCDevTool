@@ -1,11 +1,11 @@
-#include <application.hpp>
-#include <config.hpp>
-#include <game_process.hpp>
+#include <mcdk/application.hpp>
+#include <mcdk/config.hpp>
+#include <mcdk/game_process.hpp>
 
-#include <env.hpp>
-#include <level.hpp>
-#include <mod_register.hpp>
-#include <world_project.hpp>
+#include <mcdk/env.hpp>
+#include <mcdk/level.hpp>
+#include <mcdk/mod_register.hpp>
+#include <mcdk/world_project.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -60,7 +60,7 @@ void mcdk::startGame(const UserConfig& config) {
     }
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
     if (config.includeDebugMod) {
-        auto debugMod = mcdk::registerDebugMod(config.debugOptions, hotReloadModDirConfigs);
+        auto debugMod = mcdk::registerDebugMod();
         std::cout << "[MCDK] Addons\n";
         std::cout << "  Debug    UUID=" << debugMod.uuid << "\n";
         linkedPacks.push_back(std::move(debugMod));

@@ -1,6 +1,6 @@
-#include <material_reload_support.hpp>
-#include <particle_reload_support.hpp>
-#include <shader_reload_support.hpp>
+#include <mcdk/material_reload_support.hpp>
+#include <mcdk/particle_reload_support.hpp>
+#include <mcdk/shader_reload_support.hpp>
 
 #include <nlohmann/json.hpp>
 

@@ -12,8 +12,8 @@
 #include <io.h>
 #endif
 
-#include <mcp_tool_definitions.hpp>
-#include <mc_profiler_mcp.hpp>
+#include <mcdk/mcp_tool_definitions.hpp>
+#include <mcdk/mc_profiler_mcp.hpp>
 
 #include <httplib.h>
 #include <mcp_message.h>

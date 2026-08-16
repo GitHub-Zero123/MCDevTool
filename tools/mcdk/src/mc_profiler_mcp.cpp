@@ -1,6 +1,6 @@
-#include <mc_profiler_mcp.hpp>
+#include <mcdk/mc_profiler_mcp.hpp>
 
-#include <mcp_tool_definitions.hpp>
+#include <mcdk/mcp_tool_definitions.hpp>
 
 #include <array>
 #include <algorithm>

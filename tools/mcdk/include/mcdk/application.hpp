@@ -1,6 +1,6 @@
 #pragma once
 
-#include "settings.hpp"
+#include <mcdk/settings.hpp>
 
 namespace mcdk {
 

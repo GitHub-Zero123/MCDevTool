@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-#include "settings.hpp"
+#include <mcdk/settings.hpp>
 
 namespace mcdk {
 

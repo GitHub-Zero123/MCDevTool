@@ -1,4 +1,4 @@
-#include <jsonui_debugger.hpp>
+#include <mcdk/jsonui_debugger.hpp>
 
 #include <algorithm>
 #include <cctype>

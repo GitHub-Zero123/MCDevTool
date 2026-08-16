@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <performance/profiler_runtime_owner.hpp>
+#include <mcdk/performance/profiler_runtime_owner.hpp>
 
 namespace mcdk::mc_profiler_mcp {
 

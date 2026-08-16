@@ -1,4 +1,4 @@
-#include <config.hpp>
+#include <mcdk/config.hpp>
 
 #include <algorithm>
 #include <charconv>
@@ -14,7 +14,7 @@
 #include <mcdevtool/utils.h>
 #include <nlohmann/json.hpp>
 
-#include <env.hpp>
+#include <mcdk/env.hpp>
 
 namespace mcdk {
     namespace {

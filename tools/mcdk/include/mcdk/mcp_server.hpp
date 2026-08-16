@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "settings.hpp"
+#include <mcdk/settings.hpp>
 
 namespace mcdk {
 

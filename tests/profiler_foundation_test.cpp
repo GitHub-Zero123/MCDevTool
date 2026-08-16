@@ -1,7 +1,7 @@
-#include <mc_profiler_mcp.hpp>
-#include <mcp_tool_definitions.hpp>
-#include <performance/profiler_runtime_owner.hpp>
-#include <performance/profiler_service_factory.hpp>
+#include <mcdk/mc_profiler_mcp.hpp>
+#include <mcdk/mcp_tool_definitions.hpp>
+#include <mcdk/performance/profiler_runtime_owner.hpp>
+#include <mcdk/performance/profiler_service_factory.hpp>
 
 #include <atomic>
 #include <chrono>

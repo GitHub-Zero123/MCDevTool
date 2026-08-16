@@ -146,6 +146,7 @@ if has_config("build_mcdk") then
         add_files(
             "tools/mcdk/src/config.cpp",
             "tools/mcdk/src/env.cpp",
+            "tools/mcdk/src/game_environment.cpp",
             "tools/mcdk/src/hotreload.cpp",
             "tools/mcdk/src/ipc_code_execution.cpp",
             "tools/mcdk/src/json_diagnostics.cpp",

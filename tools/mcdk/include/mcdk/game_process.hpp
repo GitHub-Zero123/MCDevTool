@@ -6,8 +6,8 @@
 
 #include <mcdevtool/addon.h>
 
-#include "mod_dir_config.hpp"
-#include "settings.hpp"
+#include <mcdk/mod_dir_config.hpp>
+#include <mcdk/settings.hpp>
 
 namespace mcdk {
 

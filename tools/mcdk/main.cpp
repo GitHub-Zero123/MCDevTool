@@ -1,7 +1,7 @@
-#include <application.hpp>
-#include <config.hpp>
-#include <console_output.hpp>
-#include <env.hpp>
+#include <mcdk/application.hpp>
+#include <mcdk/config.hpp>
+#include <mcdk/console_output.hpp>
+#include <mcdk/env.hpp>
 
 #include <cstdio>
 #include <exception>

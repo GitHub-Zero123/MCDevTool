@@ -1,4 +1,4 @@
-#include <json_diagnostics.hpp>
+#include <mcdk/json_diagnostics.hpp>
 
 #include <fstream>
 #include <sstream>

@@ -5,16 +5,11 @@
 
 #include <mcdevtool/addon.h>
 
-#include "mod_dir_config.hpp"
-#include "settings.hpp"
+#include <mcdk/mod_dir_config.hpp>
 
 namespace mcdk {
 
-    [[nodiscard]] MCDevTool::Addon::PackInfo registerDebugMod(
-        const DebugModOptions&               options,
-        const std::vector<UserModDirConfig>& modDirectories,
-        std::filesystem::path*               outConfigFile = nullptr
-    );
+    [[nodiscard]] MCDevTool::Addon::PackInfo registerDebugMod();
 
     void linkUserConfigModDirs(
         std::vector<UserModDirConfig>&           configs,

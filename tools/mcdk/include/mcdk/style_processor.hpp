@@ -2,7 +2,7 @@
 
 #include <mcdevtool/style.h>
 
-#include "console.hpp"
+#include <mcdk/console.hpp>
 
 namespace mcdk {
 

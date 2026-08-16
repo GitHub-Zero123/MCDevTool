@@ -1,11 +1,11 @@
-#include <hotreload.hpp>
+#include <mcdk/hotreload.hpp>
 
 #include <system_error>
 #include <utility>
 
 #include <mcdevtool/utils.h>
 
-#include <json_diagnostics.hpp>
+#include <mcdk/json_diagnostics.hpp>
 
 namespace mcdk {
 

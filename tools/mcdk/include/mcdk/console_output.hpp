@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "console.hpp"
+#include <mcdk/console.hpp>
 
 namespace mcdk {
 

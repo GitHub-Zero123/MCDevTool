@@ -1,31 +1,16 @@
-#include <mod_register.hpp>
+#include <mcdk/mod_register.hpp>
 
 #include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <string>
 
 #include <INCLUDE_MOD.h>
 #include <mcdevtool/addon.h>
 #include <mcdevtool/env.h>
-#include <nlohmann/json.hpp>
-
-#include <utils.hpp>
 
 namespace mcdk {
-    namespace {
-        std::string toPythonJsonStringLiteral(const DebugModOptions& options) {
-            // Config.py calls json.loads; quote the JSON once so strings/keys containing true, false or null stay intact.
-            return nlohmann::json(options.serializedJson).dump();
-        }
-    } // namespace
-
-    MCDevTool::Addon::PackInfo registerDebugMod(
-        const DebugModOptions&               options,
-        const std::vector<UserModDirConfig>& modDirectories,
-        std::filesystem::path*               outConfigFile
-    ) {
+    MCDevTool::Addon::PackInfo registerDebugMod() {
         using namespace MCDevTool;
 
         const auto        manifest = INCLUDE_MOD_RES::resourceMap.at("manifest.json");
@@ -49,29 +34,14 @@ namespace mcdk {
             std::filesystem::remove_all(target);
         }
 
-        const auto debugOptions = toPythonJsonStringLiteral(options);
         for (const auto& [resourceName, resourceData] : INCLUDE_MOD_RES::resourceMap) {
             const auto resourcePath = target / std::filesystem::u8path(resourceName);
             std::filesystem::create_directories(resourcePath.parent_path());
             std::ofstream output(resourcePath, std::ios::binary);
-            if (resourceName.ends_with("Config.py")) {
-                std::string content(reinterpret_cast<const char*>(resourceData.first), resourceData.second);
-                stringReplace(content, "\"{#debug_options}\"", debugOptions);
-                stringReplace(
-                    content,
-                    "\"{#target_mod_dirs}\"",
-                    UserModDirConfig::toHotReloadListString(modDirectories)
-                );
-                output.write(content.data(), static_cast<std::streamsize>(content.size()));
-                if (outConfigFile != nullptr) {
-                    *outConfigFile = resourcePath;
-                }
-            } else {
-                output.write(
-                    reinterpret_cast<const char*>(resourceData.first),
-                    static_cast<std::streamsize>(resourceData.second)
-                );
-            }
+            output.write(
+                reinterpret_cast<const char*>(resourceData.first),
+                static_cast<std::streamsize>(resourceData.second)
+            );
         }
         return info;
     }

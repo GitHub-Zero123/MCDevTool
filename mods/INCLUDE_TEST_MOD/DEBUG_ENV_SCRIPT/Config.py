@@ -1,21 +1,42 @@
 # -*- coding: utf-8 -*-
-from json import loads
-_DEBUG_INFO = "{#debug_options}"
-_TARGET_MOD_DIRS = "{#target_mod_dirs}"
+import json
+import os
 
 try:
-    DEBUG_CONFIG = loads(_DEBUG_INFO) if not isinstance(_DEBUG_INFO, dict) else _DEBUG_INFO
-except:
-    DEBUG_CONFIG = {}
+    _TEXT_TYPE = unicode
+except NameError:
+    _TEXT_TYPE = str
 
-try:
-    TARGET_MOD_DIRS = loads(_TARGET_MOD_DIRS) if not isinstance(_TARGET_MOD_DIRS, list) else _TARGET_MOD_DIRS
-except:
-    TARGET_MOD_DIRS = []
+
+def _DECODE_ENV_TEXT(value):
+    if isinstance(value, _TEXT_TYPE):
+        return value
+    for encoding in ("mbcs", "utf-8"):
+        try:
+            return value.decode(encoding)
+        except (LookupError, UnicodeError):
+            pass
+    return value
+
+
+def _GET_JSON_ENV(name, expected_type, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        value = json.loads(_DECODE_ENV_TEXT(value))
+    except (TypeError, ValueError):
+        return default
+    return value if isinstance(value, expected_type) else default
+
+
+DEBUG_CONFIG = _GET_JSON_ENV("MCDEV_DEBUG_OPTIONS", dict, {})
+TARGET_MOD_DIRS = _GET_JSON_ENV("MCDEV_TARGET_MOD_DIRS", list, [])
 
 def GET_DEBUG_IPC_PORT():
-    import os
     port = os.getenv("MCDEV_DEBUG_IPC_PORT")
-    if port is None:
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
         return None
-    return int(port)
+    return port if 1 <= port <= 65535 else None

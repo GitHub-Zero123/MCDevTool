@@ -161,7 +161,7 @@ mcdev-tracy-bridge.dll
 实际文件：
 
 ```text
-tools/mcdk/include/performance/
+tools/mcdk/include/mcdk/performance/
   profiler_runtime_owner.hpp
   profiler_service.hpp
   profiler_service_factory.hpp

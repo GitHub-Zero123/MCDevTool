@@ -1,4 +1,4 @@
-#include <rpc_registry.hpp>
+#include <mcdk/rpc_registry.hpp>
 
 #include <algorithm>
 #include <vector>

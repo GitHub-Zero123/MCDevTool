@@ -1,6 +1,6 @@
-#include <performance/profiler_service_factory.hpp>
+#include <mcdk/performance/profiler_service_factory.hpp>
 
-#include <performance/native_bridge_loader.hpp>
+#include <mcdk/performance/native_bridge_loader.hpp>
 
 #include <algorithm>
 #include <array>

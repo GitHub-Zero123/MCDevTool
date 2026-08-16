@@ -7,9 +7,9 @@
 #include <optional>
 #include <string>
 
-#include "console.hpp"
-#include "env.hpp"
-#include "rpc_registry.hpp"
+#include <mcdk/console.hpp>
+#include <mcdk/env.hpp>
+#include <mcdk/rpc_registry.hpp>
 
 namespace mcdk {
 

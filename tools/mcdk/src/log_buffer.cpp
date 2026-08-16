@@ -1,4 +1,4 @@
-#include <log_buffer.hpp>
+#include <mcdk/log_buffer.hpp>
 
 #include <algorithm>
 #include <utility>

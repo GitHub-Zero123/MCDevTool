@@ -1,4 +1,4 @@
-#include <rpc_registry.hpp>
+#include <mcdk/rpc_registry.hpp>
 
 #include <iostream>
 #include <string>

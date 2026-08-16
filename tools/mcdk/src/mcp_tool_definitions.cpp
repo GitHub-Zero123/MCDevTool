@@ -1,6 +1,6 @@
-#include <mcp_tool_definitions.hpp>
+#include <mcdk/mcp_tool_definitions.hpp>
 
-#include <jsonui_debugger.hpp>
+#include <mcdk/jsonui_debugger.hpp>
 
 namespace mcdk::mcp_tool_definitions {
     namespace {

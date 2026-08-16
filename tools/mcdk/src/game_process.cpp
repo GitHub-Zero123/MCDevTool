@@ -1,6 +1,6 @@
 // MCDK
-#include <console_output.hpp>
-#include <game_process.hpp>
+#include <mcdk/console_output.hpp>
+#include <mcdk/game_process.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -25,27 +25,28 @@
 
 
 // mcdk modules
-#include <config.hpp>
-#include <console.hpp>
-#include <env.hpp>
-#include <hotreload.hpp>
-#include <host_bridge.hpp>
-#include <ipc_code_execution.hpp>
-#include <jsonui_reload_support.hpp>
-#include <level.hpp>
-#include <log_buffer.hpp>
-#include <material_reload_support.hpp>
-#include <mcp_server.hpp>
-#include <mod_dir_config.hpp>
-#include <mod_register.hpp>
-#include <particle_reload_support.hpp>
-#include <performance/profiler_runtime_owner.hpp>
-#include <performance/profiler_service_factory.hpp>
-#include <mc_profiler_mcp.hpp>
-#include <shader_reload_support.hpp>
-#include <style_processor.hpp>
-#include <utils.hpp>
-#include <world_project.hpp>
+#include <mcdk/config.hpp>
+#include <mcdk/console.hpp>
+#include <mcdk/env.hpp>
+#include <mcdk/game_environment.hpp>
+#include <mcdk/hotreload.hpp>
+#include <mcdk/host_bridge.hpp>
+#include <mcdk/ipc_code_execution.hpp>
+#include <mcdk/jsonui_reload_support.hpp>
+#include <mcdk/level.hpp>
+#include <mcdk/log_buffer.hpp>
+#include <mcdk/material_reload_support.hpp>
+#include <mcdk/mcp_server.hpp>
+#include <mcdk/mod_dir_config.hpp>
+#include <mcdk/mod_register.hpp>
+#include <mcdk/particle_reload_support.hpp>
+#include <mcdk/performance/profiler_runtime_owner.hpp>
+#include <mcdk/performance/profiler_service_factory.hpp>
+#include <mcdk/mc_profiler_mcp.hpp>
+#include <mcdk/shader_reload_support.hpp>
+#include <mcdk/style_processor.hpp>
+#include <mcdk/utils.hpp>
+#include <mcdk/world_project.hpp>
 
 
 // mcdevtool api
@@ -383,58 +384,6 @@ static std::wstring convertUtf8ToUtf16(const std::string& utf8Str) {
     return utf16Str;
 }
 
-// 生成新的环境变量w字符串（继承当前环境变量并添加新变量）
-static bool environmentVariableNameEquals(std::wstring_view entry, std::wstring_view expectedName) {
-    const auto separator = entry.find(L'=');
-    if (separator == std::wstring_view::npos || separator == 0) {
-        return false;
-    }
-    const auto name = entry.substr(0, separator);
-    return CompareStringOrdinal(
-               name.data(),
-               static_cast<int>(name.size()),
-               expectedName.data(),
-               static_cast<int>(expectedName.size()),
-               TRUE
-           ) == CSTR_EQUAL;
-}
-
-static std::wstring createNewEnvironmentBlock(const std::wstring& newVar, const std::wstring& newValue) {
-    // 获取当前环境变量块
-    auto envBlock = std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)>(
-        GetEnvironmentStringsW(),
-        FreeEnvironmentStringsW
-    );
-    if (!envBlock) {
-        throw std::runtime_error("Failed to get current environment strings.");
-    }
-
-    std::wstring newEnvBlock;
-    // 复制现有环境变量
-    // The API block now releases automatically even if growing newEnvBlock throws.
-    LPWCH current = envBlock.get();
-    while (*current) {
-        std::wstring varLine(current);
-        const bool isHostBridgeSecret = environmentVariableNameEquals(varLine, L"MCDEV_HOST_PORT")
-                                     || environmentVariableNameEquals(varLine, L"MCDEV_HOST_TOKEN");
-        const bool isReplacedVariable = !newVar.empty() && environmentVariableNameEquals(varLine, newVar);
-        if (!isHostBridgeSecret && !isReplacedVariable) {
-            newEnvBlock += varLine + L'\0';
-        }
-        current     += varLine.size() + 1;
-    }
-
-    // 添加新的环境变量
-    if (!newVar.empty()) {
-        newEnvBlock += newVar + L'=' + newValue + L'\0';
-    }
-
-    // 结束环境变量块
-    newEnvBlock += L'\0';
-
-    return newEnvBlock;
-}
-
 // 启动游戏可执行文件
 void mcdk::launchGameExe(
     const std::filesystem::path&                   exePath,
@@ -450,7 +399,14 @@ void mcdk::launchGameExe(
     const bool  autoHotReloadParticles = userConfig.hotReload.particles;
     const auto& mcpServerConfig        = userConfig.mcpServer;
     auto        hostBridgeConfig       = mcdk::getEnvHostBridgeConfig();
-    const bool  hostBridgeConfigured   = hostBridgeConfig.configured;
+    GameEnvironmentBuilder environment;
+
+    // The embedded Python Mod reads all launch-specific data from this child environment.
+    environment.setUtf8(GameEnvironmentVariables::DebugOptions, userConfig.debugOptions.serializedJson);
+    environment.setUtf8(
+        GameEnvironmentVariables::TargetModDirs,
+        modDirList != nullptr ? UserModDirConfig::toHotReloadListString(*modDirList) : "[]"
+    );
     auto        hotReloadDirs =
         modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList) : std::vector<std::filesystem::path>();
     auto hotReloadUiDirs         = autoHotReloadUi && linkedPacks != nullptr
@@ -474,7 +430,6 @@ void mcdk::launchGameExe(
                            || enableParticleHotReload;
     bool  enableIPC     = mcpServerConfig.enabled || enableAnyHotReload || hostBridgeConfig.enabled;
     bool  needLogBuffer = false;
-    void* lpEnvironment = nullptr;
 
     auto ipcServer = MCDevTool::Debug::createDebugServer();
     auto logBuffer = std::make_shared<mcdk::LogBuffer>(1000, 250);
@@ -1013,18 +968,11 @@ void mcdk::launchGameExe(
     styleProcessor.setOutputCallback(printColoredAtomic);
     hostBridgeTask.setOutputCallback(printColoredAtomic);
 
-    std::wstring newEnv;
     if (enableIPC) {
         ipcServer->start();
-        int port = ipcServer->getPort();
+        const int port = ipcServer->getPort();
         printColoredAtomic("[MCDK] IPC Bridge listening on port " + std::to_string(port), ConsoleColor::Green);
-        newEnv = createNewEnvironmentBlock(L"MCDEV_DEBUG_IPC_PORT", std::to_wstring(port));
-    } else if (hostBridgeConfigured) {
-        // A configured but invalid bridge is disabled, but its token must still not reach Minecraft.
-        newEnv = createNewEnvironmentBlock(L"", L"");
-    }
-    if (!newEnv.empty()) {
-        lpEnvironment = static_cast<void*>(newEnv.data());
+        environment.set(GameEnvironmentVariables::DebugIpcPort, std::to_wstring(port));
     }
 
     STARTUPINFOW        si = {sizeof(si)};
@@ -1103,14 +1051,15 @@ void mcdk::launchGameExe(
     }
 
     auto cmdUtf16 = convertUtf8ToUtf16(cmd);
+    auto gameEnvironment = std::move(environment).build();
     if (!CreateProcessW(
             nullptr,
             cmdUtf16.data(),
             nullptr,
             nullptr,
             TRUE, // 继承句柄
-            (lpEnvironment != nullptr ? CREATE_UNICODE_ENVIRONMENT : 0),
-            lpEnvironment,
+            CREATE_UNICODE_ENVIRONMENT,
+            gameEnvironment.data(),
             nullptr,
             &si,
             &pi

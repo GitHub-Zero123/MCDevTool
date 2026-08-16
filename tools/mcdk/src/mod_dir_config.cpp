@@ -1,4 +1,4 @@
-#include <mod_dir_config.hpp>
+#include <mcdk/mod_dir_config.hpp>
 
 #include <utility>
 
