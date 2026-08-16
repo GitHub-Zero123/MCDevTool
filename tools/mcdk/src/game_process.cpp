@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <sstream>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -15,7 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -82,7 +82,9 @@ namespace {
         std::vector<wchar_t> buffer(512);
         while (true) {
             const auto written = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-            if (written == 0) throw std::runtime_error("GetModuleFileNameW failed");
+            if (written == 0) {
+                throw std::runtime_error("GetModuleFileNameW failed");
+            }
             if (written < buffer.size() - 1) {
                 return std::filesystem::path(std::wstring(buffer.data(), written)).parent_path();
             }
@@ -227,32 +229,33 @@ void mcdk::printStartupLogo(bool pluginEnv) {
 }
 
 // 进程buffer行处理
+template<typename ProcessLine>
 static void processBufferAppend(
-    std::string&                                   lineBuf,
-    const char*                                    buf,
-    size_t                                         len,
-    bool                                           filterPython,
-    const std::function<void(std::string)>&        processLine
+    std::string& lineBuf,
+    const char* buf,
+    size_t len,
+    bool filterPython,
+    ProcessLine&& processLine
 ) {
     lineBuf.append(buf, len);
 
     size_t consumed = 0;
     size_t pos      = 0;
     while ((pos = lineBuf.find('\n', consumed)) != std::string::npos) {
-        std::string line = lineBuf.substr(consumed, pos - consumed);
-        consumed         = pos + 1;
-
-        // 去除行尾可能存在的 '\r'
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
+        // Strip CR before exposing the completed line to the callback.
+        std::size_t lineEnd = pos;
+        if (lineEnd != consumed && lineBuf[lineEnd - 1] == '\r') {
+            --lineEnd;
         }
+        const std::string_view line(lineBuf.data() + consumed, lineEnd - consumed);
+        consumed = pos + 1;
 
         // 过滤：若启用只保留 [Python] 则丢弃其它
         if (filterPython && line.find("[Python] ") == std::string::npos) {
             continue;
         }
 
-        processLine(std::move(line));
+        processLine(std::string(line));
     }
     if (consumed != 0) {
         // Remove all completed lines once instead of shifting the string after every newline.
@@ -370,13 +373,15 @@ namespace {
         explicit SafaiaLogReceiver(DWORD processId)
             : mService(mRuntime, createOptions(processId)) {
             mService.setLogHandler([this](const MCDevLink::LogEvent& event) {
-                auto& buffer = mLineBuffers[event.sessionId];
+                auto& stream = mStreams[event.sessionId];
                 processBufferAppend(
-                    buffer,
+                    stream.buffer,
                     event.message.data(),
                     event.message.size(),
                     false,
-                    mLineHandler
+                    [this, &stream](std::string line) {
+                        dispatchLine(stream, std::move(line));
+                    }
                 );
             });
             mService.setSessionHandler([this](const MCDevLink::SessionEvent& event) {
@@ -395,8 +400,9 @@ namespace {
             });
         }
 
-        void setLineHandler(LineHandler handler) {
-            mLineHandler = std::move(handler);
+        void setLineHandlers(LineHandler outputHandler, LineHandler tracebackHandler) {
+            mOutputHandler    = std::move(outputHandler);
+            mTracebackHandler = std::move(tracebackHandler);
         }
 
         [[nodiscard]] std::error_code start() {
@@ -418,6 +424,11 @@ namespace {
         }
 
     private:
+        struct StreamState {
+            std::string buffer;
+            bool tracebackActive = false;
+        };
+
         static MCDevLink::Protocol::SafaiaOptions createOptions(DWORD processId) {
             MCDevLink::Protocol::SafaiaOptions options;
             options.targetProcessId = processId;
@@ -434,29 +445,147 @@ namespace {
             }
         }
 
+        static std::string_view stripPythonPrefix(std::string_view line) {
+            constexpr std::string_view prefix = "[Python] ";
+            if (line.starts_with(prefix)) {
+                line.remove_prefix(prefix.size());
+            }
+            return line;
+        }
+
+        static bool startsTraceback(std::string_view line) {
+            line = stripPythonPrefix(line);
+            return line == "Traceback (most recent call last):";
+        }
+
+        static bool isTracebackChainSeparator(std::string_view line) {
+            line = stripPythonPrefix(line);
+            return line == "During handling of the above exception, another exception occurred:"
+                || line == "The above exception was the direct cause of the following exception:";
+        }
+
+        static bool isIdentifierStart(char value) {
+            return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') || value == '_';
+        }
+
+        static bool isIdentifierContinuation(char value) {
+            return isIdentifierStart(value) || (value >= '0' && value <= '9');
+        }
+
+        static bool isQualifiedIdentifier(std::string_view value) {
+            bool atSegmentStart = true;
+            for (const char current : value) {
+                if (atSegmentStart) {
+                    if (!isIdentifierStart(current)) {
+                        return false;
+                    }
+                    atSegmentStart = false;
+                } else if (current == '.') {
+                    atSegmentStart = true;
+                } else if (!isIdentifierContinuation(current)) {
+                    return false;
+                }
+            }
+            return !value.empty() && !atSegmentStart;
+        }
+
+        static bool hasKnownExceptionSuffix(std::string_view name) {
+            constexpr std::string_view suffixes[] = {
+                "Error",
+                "Exception",
+                "Interrupt",
+                "Exit",
+                "StopIteration",
+            };
+            for (const auto suffix : suffixes) {
+                if (name.ends_with(suffix)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static bool isExceptionTerminator(std::string_view line) {
+            line = stripPythonPrefix(line);
+            if (line.empty() || !isIdentifierStart(line.front())) {
+                return false;
+            }
+            const auto colon = line.find(':');
+            const auto name  = line.substr(0, colon);
+            if (!isQualifiedIdentifier(name)) {
+                return false;
+            }
+            const auto classSeparator = name.rfind('.');
+            const auto className      = name.substr(
+                classSeparator == std::string_view::npos ? 0 : classSeparator + 1
+            );
+            if (hasKnownExceptionSuffix(className)) {
+                return true;
+            }
+            return colon != std::string_view::npos
+                && !className.empty()
+                && className.front() >= 'A'
+                && className.front() <= 'Z';
+        }
+
+        static bool isIndentedTracebackLine(std::string_view line) {
+            line = stripPythonPrefix(line);
+            return !line.empty() && (line.front() == ' ' || line.front() == '\t');
+        }
+
+        static bool startsMidTraceback(std::string_view line) {
+            line = stripPythonPrefix(line);
+            while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
+                line.remove_prefix(1);
+            }
+            return line.starts_with("File \"");
+        }
+
+        void dispatchLine(StreamState& stream, std::string line) {
+            const bool header         = startsTraceback(line);
+            const bool chainSeparator = isTracebackChainSeparator(line);
+            if (header) {
+                stream.tracebackActive = true;
+            } else if (!stream.tracebackActive && startsMidTraceback(line)) {
+                stream.tracebackActive = true;
+            }
+
+            const bool terminator = stream.tracebackActive && isExceptionTerminator(line);
+            const bool tracebackLine = header || terminator || chainSeparator
+                                    || (stream.tracebackActive && isIndentedTracebackLine(line));
+            auto& handler = tracebackLine ? mTracebackHandler : mOutputHandler;
+            if (handler) {
+                handler(std::move(line));
+            }
+            if (terminator) {
+                stream.tracebackActive = false;
+            }
+        }
+
         void flush(MCDevLink::SessionId sessionId) {
-            const auto found = mLineBuffers.find(sessionId);
-            if (found == mLineBuffers.end()) {
+            const auto found = mStreams.find(sessionId);
+            if (found == mStreams.end()) {
                 return;
             }
-            if (!found->second.empty() && mLineHandler) {
-                auto line = std::move(found->second);
+            if (!found->second.buffer.empty()) {
+                auto line = std::move(found->second.buffer);
                 if (!line.empty() && line.back() == '\r') {
                     line.pop_back();
                 }
-                mLineHandler(std::move(line));
+                dispatchLine(found->second, std::move(line));
             }
-            mLineBuffers.erase(found);
+            mStreams.erase(found);
         }
 
         void flushAll() {
-            while (!mLineBuffers.empty()) {
-                flush(mLineBuffers.begin()->first);
+            while (!mStreams.empty()) {
+                flush(mStreams.begin()->first);
             }
         }
 
-        LineHandler mLineHandler;
-        std::unordered_map<MCDevLink::SessionId, std::string> mLineBuffers;
+        LineHandler mOutputHandler;
+        LineHandler mTracebackHandler;
+        std::unordered_map<MCDevLink::SessionId, StreamState> mStreams;
         MCDevLink::Runtime mRuntime;
         MCDevLink::Protocol::SafaiaService mService;
     };
@@ -1293,46 +1422,55 @@ void mcdk::launchGameExe(
 
     // stderr 处理回调
     auto processStderr = [needLogBuffer, logBuffer, errBuffer](std::string line) {
-        static std::regex fileRe(R"(File \"([A-Za-z0-9_\.]+)\", line (\d+))");
+        constexpr std::string_view filePrefix = "File \"";
+        constexpr std::string_view lineMarker = "\", line ";
+        std::size_t searchFrom = 0;
+        while (true) {
+            const auto prefix = line.find(filePrefix, searchFrom);
+            if (prefix == std::string::npos) {
+                break;
+            }
+            const auto pathStart = prefix + filePrefix.size();
+            const auto pathEnd   = line.find(lineMarker, pathStart);
+            if (pathEnd == std::string::npos) {
+                break;
+            }
 
-        std::string out;
-        out.reserve(line.size());
-
-        std::sregex_iterator cur(line.begin(), line.end(), fileRe);
-        std::sregex_iterator end;
-
-        size_t lastPos = 0;
-
-        for (; cur != end; ++cur) {
-            const std::smatch& m = *cur;
-
-            // 追加前面的普通内容
-            out.append(line, lastPos, m.position() - lastPos);
-
-            // 动态构造替换内容
-            std::string dotted  = m[1].str();
-            std::string slashed = dotted;
-            std::replace(slashed.begin(), slashed.end(), '.', '/');
-            slashed += ".py";
-
-            out += "File \"" + slashed + "\", line " + m[2].str();
-
-            lastPos = m.position() + m.length();
+            const auto pathLength   = pathEnd - pathStart;
+            const bool hasBackslash = line.find('\\', pathStart) < pathEnd;
+            const bool hasSlash     = line.find('/', pathStart) < pathEnd;
+            if (hasBackslash) {
+                std::replace(
+                    line.begin() + static_cast<std::ptrdiff_t>(pathStart),
+                    line.begin() + static_cast<std::ptrdiff_t>(pathEnd),
+                    '\\',
+                    '/'
+                );
+            } else if (!hasSlash
+                       && (pathLength < 3 || line.compare(pathEnd - 3, 3, ".py") != 0)) {
+                std::replace(
+                    line.begin() + static_cast<std::ptrdiff_t>(pathStart),
+                    line.begin() + static_cast<std::ptrdiff_t>(pathEnd),
+                    '.',
+                    '/'
+                );
+                line.insert(pathEnd, ".py");
+                searchFrom = pathEnd + 3 + lineMarker.size();
+                continue;
+            }
+            searchFrom = pathEnd + lineMarker.size();
         }
 
-        // 拼接剩余部分
-        out.append(line, lastPos);
-
-        printColoredAtomic(out, ConsoleColor::Red);
+        printColoredAtomic(line, ConsoleColor::Red);
         if (needLogBuffer) {
-            logBuffer->add(out);
-            errBuffer->add(std::move(out));
+            logBuffer->add(line);
+            errBuffer->add(std::move(line));
         }
     };
 
     // ===================== 用户配置后置处理 =====================
     if (safaiaReceiver) {
-        safaiaReceiver->setLineHandler(processStdout);
+        safaiaReceiver->setLineHandlers(processStdout, processStderr);
     }
     // 是否过滤非Python输出
     bool filterPython = userConfig.includeDebugMod;
