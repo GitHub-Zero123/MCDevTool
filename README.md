@@ -146,6 +146,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "auto_join_game": true,
     // 是否附加调试MOD(boolean)，若启用将在生成的世界中包含热更新脚本(R键触发检测)并重定向输出流使其附加[Python]前缀可供筛选搜索。
     "include_debug_mod": true,
+    // 日志处理策略  0.PIPE方案（默认）  1.Safaia协议（实验性）
+    "log_protocol": 0,
     // 是否自动热更新MOD
     "auto_hot_reload_mods": true,
     // 是否自动热更新 JSON UI，默认关闭。开启后，资源包 ui 目录下的 json 修改会在回到游戏前台时触发 UI 热重载

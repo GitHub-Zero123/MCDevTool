@@ -139,6 +139,28 @@ target("mcdev_mod_resource")
     end)
 target_end()
 
+target("MCDevLink")
+    set_kind("static")
+    set_default(false)
+    set_languages("c++20")
+    add_files(
+        "components/MCDevLink/src/Runtime.cpp",
+        "components/MCDevLink/src/Detail/ProtocolFrame.cpp",
+        "components/MCDevLink/src/Protocol/Safaia/SafaiaService.cpp"
+    )
+    add_includedirs("components/MCDevLink/include", {public = true})
+    add_includedirs(
+        "components/MCDevLink/src",
+        "components/MCDevLink/third_party/asio/include",
+        "libs/nlohmann"
+    )
+    add_defines("ASIO_STANDALONE", "ASIO_NO_DEPRECATED")
+    if is_plat("windows") then
+        add_defines("WIN32_LEAN_AND_MEAN", "NOMINMAX")
+        add_syslinks("iphlpapi", "ws2_32", {public = true})
+    end
+target_end()
+
 if has_config("build_mcdk") then
     target("mcdk_core")
         set_kind("static")
@@ -176,7 +198,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/host_bridge.cpp",
             "tools/mcdk/src/mcp_server.cpp"
         )
-        add_deps("mcdk_core", "mcp")
+        add_deps("mcdk_core", "mcp", "MCDevLink")
         if is_plat("windows") then
             add_syslinks("ws2_32")
         end

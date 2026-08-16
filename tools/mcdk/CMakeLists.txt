@@ -57,7 +57,7 @@ add_library(mcdk_runtime STATIC
     src/mcp_server.cpp
 )
 target_compile_features(mcdk_runtime PUBLIC cxx_std_23)
-target_link_libraries(mcdk_runtime PUBLIC mcdk_core PRIVATE mcp)
+target_link_libraries(mcdk_runtime PUBLIC mcdk_core PRIVATE mcp MCDevLink::MCDevLink)
 if(WIN32)
     target_link_libraries(mcdk_runtime PRIVATE ws2_32)
 endif()

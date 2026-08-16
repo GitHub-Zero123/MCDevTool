@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -11,6 +12,11 @@
 #include <mcdk/mod_dir_config.hpp>
 
 namespace mcdk {
+
+    enum class GameLogProtocol : std::uint8_t {
+        Stdio = 0,
+        Safaia = 1,
+    };
 
     struct HotReloadConfig {
         bool mods      = true;
@@ -89,6 +95,7 @@ namespace mcdk {
         MCDevTool::Style::StyleConfig windowStyle;
         NeteaseConfig                 netease;
         McpServerConfig               mcpServer;
+        GameLogProtocol               logProtocol = GameLogProtocol::Stdio;
     };
 
 } // namespace mcdk

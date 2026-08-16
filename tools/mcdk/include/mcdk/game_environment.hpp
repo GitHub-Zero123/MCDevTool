@@ -10,6 +10,7 @@ namespace mcdk {
         inline constexpr auto DebugOptions = L"MCDEV_DEBUG_OPTIONS";
         inline constexpr auto TargetModDirs = L"MCDEV_TARGET_MOD_DIRS";
         inline constexpr auto DebugIpcPort = L"MCDEV_DEBUG_IPC_PORT";
+        inline constexpr auto LogProtocol = L"MCDEV_LOG_PROTOCOL";
     } // namespace GameEnvironmentVariables
 
     class GameEnvironmentBuilder final {

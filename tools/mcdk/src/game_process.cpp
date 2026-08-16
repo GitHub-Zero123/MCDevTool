@@ -19,7 +19,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -57,6 +59,8 @@
 #include <mcdevtool/level.h>
 #include <mcdevtool/style.h>
 #include <nlohmann/json.hpp>
+#include <MCDevLink/Protocol/Safaia.hpp>
+#include <MCDevLink/Runtime.hpp>
 
 
 // 默认使用"\n"而非std::endl输出日志，避免大量log的性能开销
@@ -244,7 +248,9 @@ static void processBufferAppend(
         }
 
         // 过滤：若启用只保留 [Python] 则丢弃其它
-        if (filterPython && line.find("[Python] ") == std::string::npos) continue;
+        if (filterPython && line.find("[Python] ") == std::string::npos) {
+            continue;
+        }
 
         processLine(std::move(line));
     }
@@ -274,7 +280,9 @@ readPipeThread(HANDLE hPipe, bool filterPython, const std::function<void(std::st
                 if (!lineBuf.empty()) {
                     // 没有换行但还有内容，作为最后一行处理
                     std::string lastLine = lineBuf;
-                    if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
+                    if (!lastLine.empty() && lastLine.back() == '\r') {
+                        lastLine.pop_back();
+                    }
                     if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) {
                         processLine(std::move(lastLine));
                     }
@@ -292,7 +300,9 @@ readPipeThread(HANDLE hPipe, bool filterPython, const std::function<void(std::st
             // 处理残留并退出
             if (!lineBuf.empty()) {
                 std::string lastLine = lineBuf;
-                if (!lastLine.empty() && lastLine.back() == '\r') lastLine.pop_back();
+                if (!lastLine.empty() && lastLine.back() == '\r') {
+                    lastLine.pop_back();
+                }
                 if (!(filterPython && lastLine.find("[Python] ") == std::string::npos)) {
                     processLine(std::move(lastLine));
                 }
@@ -327,13 +337,19 @@ namespace {
         }
 
         void join() {
-            if (mStdout.joinable()) mStdout.join();
-            if (mStderr.joinable()) mStderr.join();
+            if (mStdout.joinable()) {
+                mStdout.join();
+            }
+            if (mStderr.joinable()) {
+                mStderr.join();
+            }
         }
 
     private:
         static void cancelAndJoin(std::thread& thread) noexcept {
-            if (!thread.joinable()) return;
+            if (!thread.joinable()) {
+                return;
+            }
             CancelSynchronousIo(thread.native_handle());
             try {
                 thread.join();
@@ -345,6 +361,104 @@ namespace {
 
         std::thread mStdout;
         std::thread mStderr;
+    };
+
+    class SafaiaLogReceiver {
+    public:
+        using LineHandler = std::function<void(std::string)>;
+
+        explicit SafaiaLogReceiver(DWORD processId)
+            : mService(mRuntime, createOptions(processId)) {
+            mService.setLogHandler([this](const MCDevLink::LogEvent& event) {
+                auto& buffer = mLineBuffers[event.sessionId];
+                processBufferAppend(
+                    buffer,
+                    event.message.data(),
+                    event.message.size(),
+                    false,
+                    mLineHandler
+                );
+            });
+            mService.setSessionHandler([this](const MCDevLink::SessionEvent& event) {
+                if (event.state == MCDevLink::SessionState::disconnected) {
+                    flush(event.sessionId);
+                }
+            });
+            mService.setDiagnosticHandler([](const MCDevLink::DiagnosticEvent& event) {
+                if (event.level == MCDevLink::DiagnosticLevel::info) {
+                    return;
+                }
+                const auto color = event.level == MCDevLink::DiagnosticLevel::warning
+                                     ? ConsoleColor::Yellow
+                                     : ConsoleColor::Red;
+                printColoredAtomic(event.message, color);
+            });
+        }
+
+        void setLineHandler(LineHandler handler) {
+            mLineHandler = std::move(handler);
+        }
+
+        [[nodiscard]] std::error_code start() {
+            return mService.start();
+        }
+
+        [[nodiscard]] MCDevLink::Endpoint localEndpoint() const {
+            return mService.localEndpoint();
+        }
+
+        void poll() {
+            (void)mRuntime.poll({256, std::chrono::microseconds{1000}});
+        }
+
+        void stop() {
+            mService.stop();
+            drain();
+            flushAll();
+        }
+
+    private:
+        static MCDevLink::Protocol::SafaiaOptions createOptions(DWORD processId) {
+            MCDevLink::Protocol::SafaiaOptions options;
+            options.targetProcessId = processId;
+            return options;
+        }
+
+        void drain() {
+            constexpr int maxDrainPolls = 16;
+            for (int attempt = 0; attempt < maxDrainPolls; ++attempt) {
+                const auto result = mRuntime.poll({256, std::chrono::microseconds{1000}});
+                if (result.eventsProcessed == 0) {
+                    break;
+                }
+            }
+        }
+
+        void flush(MCDevLink::SessionId sessionId) {
+            const auto found = mLineBuffers.find(sessionId);
+            if (found == mLineBuffers.end()) {
+                return;
+            }
+            if (!found->second.empty() && mLineHandler) {
+                auto line = std::move(found->second);
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+                mLineHandler(std::move(line));
+            }
+            mLineBuffers.erase(found);
+        }
+
+        void flushAll() {
+            while (!mLineBuffers.empty()) {
+                flush(mLineBuffers.begin()->first);
+            }
+        }
+
+        LineHandler mLineHandler;
+        std::unordered_map<MCDevLink::SessionId, std::string> mLineBuffers;
+        MCDevLink::Runtime mRuntime;
+        MCDevLink::Protocol::SafaiaService mService;
     };
 } // namespace
 
@@ -397,6 +511,7 @@ void mcdk::launchGameExe(
     const bool  autoHotReloadShaders   = userConfig.hotReload.shaders;
     const bool  autoHotReloadMaterials = userConfig.hotReload.materials;
     const bool  autoHotReloadParticles = userConfig.hotReload.particles;
+    const bool  useSafaiaLogs          = userConfig.logProtocol == GameLogProtocol::Safaia;
     const auto& mcpServerConfig        = userConfig.mcpServer;
     auto        hostBridgeConfig       = mcdk::getEnvHostBridgeConfig();
     GameEnvironmentBuilder environment;
@@ -407,6 +522,7 @@ void mcdk::launchGameExe(
         GameEnvironmentVariables::TargetModDirs,
         modDirList != nullptr ? UserModDirConfig::toHotReloadListString(*modDirList) : "[]"
     );
+    environment.set(GameEnvironmentVariables::LogProtocol, useSafaiaLogs ? L"1" : L"0");
     auto        hotReloadDirs =
         modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList) : std::vector<std::filesystem::path>();
     auto hotReloadUiDirs         = autoHotReloadUi && linkedPacks != nullptr
@@ -989,26 +1105,41 @@ void mcdk::launchGameExe(
     UniqueHandle outWrite;
     UniqueHandle errRead;
     UniqueHandle errWrite;
+    UniqueHandle nullOutput;
 
-    if (!CreatePipe(outRead.receive(), outWrite.receive(), &sa, 0)) {
-        throw std::runtime_error("CreatePipe(stdout) failed");
+    if (useSafaiaLogs) {
+        nullOutput.reset(CreateFileW(
+            L"NUL",
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            &sa,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr
+        ));
+        if (nullOutput.get() == INVALID_HANDLE_VALUE) {
+            throw std::runtime_error("CreateFileW(NUL output) failed");
+        }
+        si.hStdOutput = nullOutput.get();
+        si.hStdError  = nullOutput.get();
+    } else {
+        if (!CreatePipe(outRead.receive(), outWrite.receive(), &sa, 0)) {
+            throw std::runtime_error("CreatePipe(stdout) failed");
+        }
+        if (!SetHandleInformation(outRead.get(), HANDLE_FLAG_INHERIT, 0)) {
+            throw std::runtime_error("SetHandleInformation(stdout) failed");
+        }
+        if (!CreatePipe(errRead.receive(), errWrite.receive(), &sa, 0)) {
+            throw std::runtime_error("CreatePipe(stderr) failed");
+        }
+        if (!SetHandleInformation(errRead.get(), HANDLE_FLAG_INHERIT, 0)) {
+            throw std::runtime_error("SetHandleInformation(stderr) failed");
+        }
+        si.hStdOutput = outWrite.get();
+        si.hStdError  = errWrite.get();
     }
 
-    if (!SetHandleInformation(outRead.get(), HANDLE_FLAG_INHERIT, 0)) {
-        throw std::runtime_error("SetHandleInformation(stdout) failed");
-    }
-
-    if (!CreatePipe(errRead.receive(), errWrite.receive(), &sa, 0)) {
-        throw std::runtime_error("CreatePipe(stderr) failed");
-    }
-
-    if (!SetHandleInformation(errRead.get(), HANDLE_FLAG_INHERIT, 0)) {
-        throw std::runtime_error("SetHandleInformation(stderr) failed");
-    }
-
-    si.dwFlags    |= STARTF_USESTDHANDLES;
-    si.hStdOutput  = outWrite.get();
-    si.hStdError   = errWrite.get();
+    si.dwFlags |= STARTF_USESTDHANDLES;
 
     // Do not expose MCDK's terminal as Minecraft stdin. A Mod calling input()
     // would otherwise block the game thread while waiting for terminal input.
@@ -1052,13 +1183,14 @@ void mcdk::launchGameExe(
 
     auto cmdUtf16 = convertUtf8ToUtf16(cmd);
     auto gameEnvironment = std::move(environment).build();
+    const DWORD creationFlags = CREATE_UNICODE_ENVIRONMENT | (useSafaiaLogs ? CREATE_SUSPENDED : 0);
     if (!CreateProcessW(
             nullptr,
             cmdUtf16.data(),
             nullptr,
             nullptr,
             TRUE, // 继承句柄
-            CREATE_UNICODE_ENVIRONMENT,
+            creationFlags,
             gameEnvironment.data(),
             nullptr,
             &si,
@@ -1070,8 +1202,34 @@ void mcdk::launchGameExe(
     UniqueHandle processHandle(pi.hProcess);
     UniqueHandle primaryThreadHandle(pi.hThread);
     nullInput.reset();
+    nullOutput.reset();
 
-    DWORD pid = pi.dwProcessId;
+    const DWORD pid = pi.dwProcessId;
+    std::unique_ptr<SafaiaLogReceiver> safaiaReceiver;
+    if (useSafaiaLogs) {
+        try {
+            safaiaReceiver = std::make_unique<SafaiaLogReceiver>(pid);
+            if (const auto error = safaiaReceiver->start()) {
+                throw std::system_error(error, "Failed to start the experimental Safaia log receiver");
+            }
+            const auto endpoint = safaiaReceiver->localEndpoint();
+            printColoredAtomic(
+                "[MCDK] Experimental Safaia log receiver listening on " + endpoint.address + ":"
+                    + std::to_string(endpoint.port),
+                ConsoleColor::Cyan
+            );
+            if (ResumeThread(primaryThreadHandle.get()) == static_cast<DWORD>(-1)) {
+                throw std::runtime_error("ResumeThread failed for the Safaia game launch");
+            }
+        } catch (...) {
+            if (safaiaReceiver) {
+                safaiaReceiver->stop();
+            }
+            TerminateProcess(processHandle.get(), static_cast<UINT>(-1));
+            WaitForSingleObject(processHandle.get(), INFINITE);
+            throw;
+        }
+    }
     profilerGamePid->store(pid, std::memory_order_release);
     // 设置样式处理器PID
     styleProcessor.setPid(pid);
@@ -1173,6 +1331,9 @@ void mcdk::launchGameExe(
     };
 
     // ===================== 用户配置后置处理 =====================
+    if (safaiaReceiver) {
+        safaiaReceiver->setLineHandler(processStdout);
+    }
     // 是否过滤非Python输出
     bool filterPython = userConfig.includeDebugMod;
     // 调试器端口（0为不启用）
@@ -1185,7 +1346,9 @@ void mcdk::launchGameExe(
 
     // 启动两个线程并行读取（避免任何死锁）
     PipeReaderThreads pipeReaders;
-    pipeReaders.start(outRead.get(), errRead.get(), filterPython, processStdout, processStderr);
+    if (!useSafaiaLogs) {
+        pipeReaders.start(outRead.get(), errRead.get(), filterPython, processStdout, processStderr);
+    }
 
     if (debuggerPort > 0) {
         // 尝试启动mcdbg调试器附加（在官方调试器之前的历史产物）
@@ -1248,7 +1411,27 @@ void mcdk::launchGameExe(
 
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
     // ERROR_BROKEN_PIPE）
-    WaitForSingleObject(processHandle.get(), INFINITE);
+    if (safaiaReceiver) {
+        constexpr DWORD safaiaTicksPerSecond = 20;
+        constexpr DWORD safaiaTickMilliseconds = 1000 / safaiaTicksPerSecond;
+        while (true) {
+            const auto waitResult = WaitForSingleObject(processHandle.get(), safaiaTickMilliseconds);
+            safaiaReceiver->poll();
+            if (waitResult == WAIT_OBJECT_0) {
+                break;
+            }
+            if (waitResult == WAIT_FAILED) {
+                throw std::system_error(
+                    static_cast<int>(GetLastError()),
+                    std::system_category(),
+                    "WaitForSingleObject failed while polling Safaia"
+                );
+            }
+        }
+        safaiaReceiver->stop();
+    } else {
+        WaitForSingleObject(processHandle.get(), INFINITE);
+    }
 
     DWORD minecraftExitCode = 0;
     if (!GetExitCodeProcess(processHandle.get(), &minecraftExitCode)) {

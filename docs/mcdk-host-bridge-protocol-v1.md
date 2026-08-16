@@ -83,7 +83,7 @@ v1 的地址固定为 IPv4 `127.0.0.1`，禁止从环境变量接受非 loopback
 
 ### 4.2 环境变量隔离
 
-MCDK 构造 Minecraft 子进程环境块时会继承普通父环境，但必须隔离父环境中的全部 `MCDEV_*` 变量。各业务层只向同一个环境构造器加入本次游戏明确需要的变量，并在调用 `CreateProcessW` 前统一构建；当前包括 `MCDEV_DEBUG_OPTIONS`、`MCDEV_TARGET_MOD_DIRS` 和启用 IPC 时的 `MCDEV_DEBUG_IPC_PORT`。
+MCDK 构造 Minecraft 子进程环境块时会继承普通父环境，但必须隔离父环境中的全部 `MCDEV_*` 变量。各业务层只向同一个环境构造器加入本次游戏明确需要的变量，并在调用 `CreateProcessW` 前统一构建；当前包括 `MCDEV_DEBUG_OPTIONS`、`MCDEV_TARGET_MOD_DIRS`、`MCDEV_LOG_PROTOCOL` 和启用 IPC 时的 `MCDEV_DEBUG_IPC_PORT`。
 
 认证令牌只允许存在于 Host 和 MCDK 中，不应传递给 Minecraft 或玩法脚本。
 

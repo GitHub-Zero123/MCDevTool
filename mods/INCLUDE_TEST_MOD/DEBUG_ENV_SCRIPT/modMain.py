@@ -7,7 +7,7 @@ from .Game import (
     RELOAD_WORLD,
     RELOAD_SHADERS,
 )
-from .Config import DEBUG_CONFIG
+from .Config import DEBUG_CONFIG, LOG_PROTOCOL
 import threading
 import sys
 
@@ -52,15 +52,18 @@ class STD_OUT_WRAPPER(object):
 
 stdout = sys.stdout
 stderr = sys.stderr
+STDIO_CAPTURE_ENABLED = LOG_PROTOCOL == 0
 
 
 def REST_STDOUT():
-    sys.stdout = stdout
-    sys.stderr = stderr
+    if STDIO_CAPTURE_ENABLED:
+        sys.stdout = stdout
+        sys.stderr = stderr
 
 
-sys.stdout = STD_OUT_WRAPPER(sys.stdout)
-sys.stderr = STD_OUT_WRAPPER(sys.stderr)
+if STDIO_CAPTURE_ENABLED:
+    sys.stdout = STD_OUT_WRAPPER(sys.stdout)
+    sys.stderr = STD_OUT_WRAPPER(sys.stderr)
 
 
 @PRE_SERVER_LOADER_HOOK

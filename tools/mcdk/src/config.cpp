@@ -99,6 +99,25 @@ namespace mcdk {
             options.serializedJson = value->dump();
         }
 
+        GameLogProtocol parseLogProtocol(const Json& root) {
+            const auto value = root.find("log_protocol");
+            if (value == root.end()) {
+                return GameLogProtocol::Stdio;
+            }
+            if (!value->is_number_integer()) {
+                throw std::runtime_error("log_protocol must be an integer: 0 (stdio) or 1 (Safaia).");
+            }
+
+            switch (value->get<int>()) {
+                case 0:
+                    return GameLogProtocol::Stdio;
+                case 1:
+                    return GameLogProtocol::Safaia;
+                default:
+                    throw std::runtime_error("log_protocol must be 0 (stdio) or 1 (Safaia).");
+            }
+        }
+
         void parseWindowStyle(const Json& root, MCDevTool::Style::StyleConfig& style) {
             const auto value = root.find("window_style");
             if (value == root.end()) {
@@ -173,6 +192,7 @@ namespace mcdk {
             config.hotReload.materials = root.value("auto_hot_reload_materials", false);
             config.hotReload.particles = root.value("auto_hot_reload_particles", false);
             parseDebugOptions(root, config.debugOptions);
+            config.logProtocol = parseLogProtocol(root);
 
             if (const auto debugger = root.find("modpc_debugger"); debugger != root.end() && debugger->is_object()) {
                 config.modPcDebugger.enabled = debugger->value("enabled", false);
@@ -207,6 +227,7 @@ namespace mcdk {
                 {"world_source_path", "auto"},
                 {"auto_join_game", config.world.autoJoin},
                 {"include_debug_mod", config.includeDebugMod},
+                {"log_protocol", static_cast<int>(config.logProtocol)},
                 {"auto_hot_reload_mods", config.hotReload.mods},
                 {"auto_hot_reload_ui", config.hotReload.ui},
                 {"auto_hot_reload_shaders", config.hotReload.shaders},

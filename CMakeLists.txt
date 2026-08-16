@@ -24,6 +24,18 @@ add_subdirectory(libs/nbt)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
 add_subdirectory(libs/cpp-mcp)
 
+add_subdirectory(components/MCDevLink EXCLUDE_FROM_ALL)
+# The integrated build has one canonical nlohmann/json copy. MCDevLink keeps its
+# bundled header only as a fallback for standalone builds.
+get_target_property(_mcdevlink_include_dirs MCDevLink INCLUDE_DIRECTORIES)
+list(REMOVE_ITEM
+    _mcdevlink_include_dirs
+    "${CMAKE_CURRENT_SOURCE_DIR}/components/MCDevLink/third_party/nlohmann/include"
+)
+set_property(TARGET MCDevLink PROPERTY INCLUDE_DIRECTORIES "${_mcdevlink_include_dirs}")
+target_include_directories(MCDevLink PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann")
+unset(_mcdevlink_include_dirs)
+
 add_library(mcdevtool_utils STATIC src/utils.cpp)
 set_target_properties(mcdevtool_utils PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(mcdevtool_utils PRIVATE cxx_std_23)

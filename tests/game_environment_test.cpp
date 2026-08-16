@@ -1,3 +1,4 @@
+#include <mcdk/config.hpp>
 #include <mcdk/game_environment.hpp>
 
 #include <map>
@@ -43,6 +44,7 @@ int main() {
     environment.setUtf8(mcdk::GameEnvironmentVariables::DebugOptions, R"({"reload_key":"192","name":"热更新"})");
     environment.setUtf8(mcdk::GameEnvironmentVariables::TargetModDirs, R"(["D:/模组/src"])");
     environment.set(mcdk::GameEnvironmentVariables::DebugIpcPort, L"43210");
+    environment.set(mcdk::GameEnvironmentVariables::LogProtocol, L"1");
 
     const auto values = parseEnvironmentBlock(std::move(environment).build());
     require(!values.contains(L"MCDEV_HOST_PORT"), "Host port leaked into the game environment.");
@@ -50,6 +52,7 @@ int main() {
     require(!values.contains(L"mcdev_debug_ipc_port"), "Inherited IPC port was not replaced case-insensitively.");
     require(values.at(L"MCDK_ENVIRONMENT_TEST_INHERITED") == L"kept", "Parent environment was not inherited.");
     require(values.at(L"MCDEV_DEBUG_IPC_PORT") == L"43210", "IPC port override is incorrect.");
+    require(values.at(L"MCDEV_LOG_PROTOCOL") == L"1", "Log protocol override is incorrect.");
     require(
         values.at(L"MCDEV_DEBUG_OPTIONS") == LR"({"reload_key":"192","name":"热更新"})",
         "UTF-8 debug options conversion is incorrect."
@@ -63,6 +66,20 @@ int main() {
     const auto valuesWithoutIpc = parseEnvironmentBlock(std::move(withoutIpc).build());
     require(!valuesWithoutIpc.contains(L"MCDEV_DEBUG_IPC_PORT"), "Unexpected uppercase IPC port was inherited.");
     require(!valuesWithoutIpc.contains(L"mcdev_debug_ipc_port"), "Unexpected lowercase IPC port was inherited.");
+
+    const auto safaiaConfig = mcdk::parseUserConfig(R"({"log_protocol":1})");
+    require(
+        safaiaConfig.logProtocol == mcdk::GameLogProtocol::Safaia,
+        "Safaia log protocol configuration was not parsed."
+    );
+
+    bool rejectedInvalidProtocol = false;
+    try {
+        (void)mcdk::parseUserConfig(R"({"log_protocol":2})");
+    } catch (const std::runtime_error&) {
+        rejectedInvalidProtocol = true;
+    }
+    require(rejectedInvalidProtocol, "Invalid log protocol configuration was accepted.");
 
     return 0;
 }
