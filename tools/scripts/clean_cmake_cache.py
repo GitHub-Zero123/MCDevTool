@@ -15,6 +15,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BUILD_ROOT = (REPOSITORY_ROOT / "build").resolve()
 DOWNLOAD_CACHE = REPOSITORY_ROOT / ".cache" / "mcdev-deps" / "downloads"
 CMAKE_HOME_PREFIX = "CMAKE_HOME_DIRECTORY:INTERNAL="
+DEFAULT_BUILD_NAME = "x64-msvc-release"
 
 
 def same_path(left: Path, right: Path) -> bool:
@@ -78,20 +79,26 @@ def parse_arguments() -> argparse.Namespace:
         ),
         epilog=(
             "examples:\n"
+            "  python tools/scripts/clean_cmake_cache.py\n"
             "  python tools/scripts/clean_cmake_cache.py --dry-run x64-msvc-release\n"
             "  python tools/scripts/clean_cmake_cache.py x64-msvc-release\n"
             "  python tools/scripts/clean_cmake_cache.py --all"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("build_names", nargs="*", metavar="BUILD_NAME")
+    parser.add_argument(
+        "build_names",
+        nargs="*",
+        metavar="BUILD_NAME",
+        help=f"build tree under build/ (default: {DEFAULT_BUILD_NAME})",
+    )
     parser.add_argument("--all", action="store_true", help="clean every validated build tree")
     parser.add_argument("--dry-run", action="store_true", help="show validated targets without deleting them")
     arguments = parser.parse_args()
     if arguments.all and arguments.build_names:
         parser.error("BUILD_NAME and --all cannot be used together")
     if not arguments.all and not arguments.build_names:
-        parser.error("provide at least one BUILD_NAME or use --all")
+        arguments.build_names = [DEFAULT_BUILD_NAME]
     return arguments
 
 
