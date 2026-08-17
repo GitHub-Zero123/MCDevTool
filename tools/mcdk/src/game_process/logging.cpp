@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -253,7 +254,7 @@ namespace mcdk::detail {
     }
 
     void SafaiaLogReceiver::poll() {
-        (void)mRuntime.poll({256, std::chrono::microseconds{1000}});
+        drain();
     }
 
     void SafaiaLogReceiver::stop() {
@@ -269,11 +270,17 @@ namespace mcdk::detail {
     }
 
     void SafaiaLogReceiver::drain() {
-        constexpr int maxDrainPolls = 16;
-        for (int attempt = 0; attempt < maxDrainPolls; ++attempt) {
-            const auto result = mRuntime.poll({256, std::chrono::microseconds{1000}});
-            if (result.eventsProcessed == 0) {
-                break;
+        constexpr auto maxTimeBudget = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::duration::max()
+        );
+        constexpr MCDevLink::PollOptions batchOptions{
+            .maxEvents = std::numeric_limits<std::size_t>::max(),
+            .timeBudget = maxTimeBudget,
+        };
+        while (true) {
+            const auto result = mRuntime.poll(batchOptions);
+            if (!result.eventLimitReached && !result.timeLimitReached) {
+                return;
             }
         }
     }
