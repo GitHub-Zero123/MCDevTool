@@ -28,9 +28,14 @@ namespace mcdk {
         [[nodiscard]] static std::vector<std::filesystem::path>
         toPathList(const std::vector<UserModDirConfig>& configs);
 
-        [[nodiscard]] static std::vector<std::filesystem::path> collectHotReloadResourceSubdirPaths(
-            const std::vector<MCDevTool::Addon::PackInfo>& sourcePacks,
-            std::string_view                               subdirName
+        [[nodiscard]] static std::vector<std::filesystem::path> collectHotReloadResourcePackPaths(
+            const std::vector<UserModDirConfig>&           configs,
+            const std::vector<MCDevTool::Addon::PackInfo>& sourcePacks
+        );
+
+        [[nodiscard]] static std::vector<std::filesystem::path> collectResourceSubdirPaths(
+            const std::vector<std::filesystem::path>& resourcePackPaths,
+            std::string_view                          subdirName
         );
     };
 

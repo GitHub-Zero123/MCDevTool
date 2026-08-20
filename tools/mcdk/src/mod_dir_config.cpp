@@ -1,10 +1,20 @@
 #include <mcdk/mod_dir_config.hpp>
 
+#include <algorithm>
 #include <utility>
 
 #include <nlohmann/json.hpp>
 
 namespace mcdk {
+    namespace {
+        bool isPathInsideDirectory(const std::filesystem::path& child, const std::filesystem::path& parent) {
+            const auto relative = child.lexically_relative(parent);
+            if (relative.empty() || relative == ".") {
+                return child == parent;
+            }
+            return *relative.begin() != "..";
+        }
+    } // namespace
 
     UserModDirConfig::UserModDirConfig(std::filesystem::path path, bool hotReload, bool enabled)
     : path(std::move(path)),
@@ -36,7 +46,7 @@ namespace mcdk {
     std::string UserModDirConfig::toHotReloadListString(const std::vector<UserModDirConfig>& configs) {
         auto paths = nlohmann::json::array();
         for (const auto& config : configs) {
-            if (config.hotReload) {
+            if (config.enabled && config.hotReload) {
                 paths.push_back(config.getAbsoluteU8String());
             }
         }
@@ -47,28 +57,50 @@ namespace mcdk {
         std::vector<std::filesystem::path> paths;
         paths.reserve(configs.size());
         for (const auto& config : configs) {
-            if (config.hotReload) {
+            if (config.enabled && config.hotReload) {
                 paths.push_back(config.getAbsolutePath());
             }
         }
         return paths;
     }
 
-    std::vector<std::filesystem::path> UserModDirConfig::collectHotReloadResourceSubdirPaths(
-        const std::vector<MCDevTool::Addon::PackInfo>& sourcePacks,
-        std::string_view                               subdirName
+    std::vector<std::filesystem::path> UserModDirConfig::collectHotReloadResourcePackPaths(
+        const std::vector<UserModDirConfig>&           configs,
+        const std::vector<MCDevTool::Addon::PackInfo>& sourcePacks
     ) {
+        const auto                         hotReloadRoots = toPathList(configs);
         std::vector<std::filesystem::path> paths;
+        paths.reserve(sourcePacks.size());
         for (const auto& pack : sourcePacks) {
-            if (pack.type != MCDevTool::Addon::PackType::RESOURCE || pack.srcPath.empty() || subdirName.empty()) {
+            if (pack.type != MCDevTool::Addon::PackType::RESOURCE || pack.srcPath.empty()) {
                 continue;
             }
-            const auto      targetPath = pack.srcPath / std::filesystem::u8path(std::string(subdirName));
+            const auto packPath = std::filesystem::absolute(pack.srcPath).lexically_normal();
+            if (std::ranges::any_of(hotReloadRoots, [&packPath](const auto& root) {
+                    return isPathInsideDirectory(packPath, root);
+                })) {
+                paths.push_back(packPath);
+            }
+        }
+        return paths;
+    }
+
+    std::vector<std::filesystem::path> UserModDirConfig::collectResourceSubdirPaths(
+        const std::vector<std::filesystem::path>& resourcePackPaths,
+        std::string_view                          subdirName
+    ) {
+        std::vector<std::filesystem::path> paths;
+        if (subdirName.empty()) {
+            return paths;
+        }
+        paths.reserve(resourcePackPaths.size());
+        for (const auto& resourcePackPath : resourcePackPaths) {
+            const auto      targetPath = resourcePackPath / std::filesystem::u8path(std::string(subdirName));
             std::error_code error;
             if (!std::filesystem::is_directory(targetPath, error)) {
                 continue;
             }
-            paths.push_back(std::filesystem::absolute(targetPath).lexically_normal());
+            paths.push_back(targetPath);
         }
         return paths;
     }

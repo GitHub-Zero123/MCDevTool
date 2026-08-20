@@ -103,17 +103,23 @@ void mcdk::launchGameExe(
     environment.set(GameEnvironmentVariables::LogProtocol, useSafaiaLogs ? L"1" : L"0");
     auto        hotReloadDirs =
         modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList) : std::vector<std::filesystem::path>();
-    auto hotReloadUiDirs         = autoHotReloadUi && linkedPacks != nullptr
-                                     ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "ui")
+    const bool enableResourceHotReload =
+        autoHotReloadUi || autoHotReloadShaders || autoHotReloadMaterials || autoHotReloadParticles;
+    const auto hotReloadResourcePackDirs =
+        enableResourceHotReload && modDirList != nullptr && linkedPacks != nullptr
+            ? UserModDirConfig::collectHotReloadResourcePackPaths(*modDirList, *linkedPacks)
+            : std::vector<std::filesystem::path>();
+    auto hotReloadUiDirs         = autoHotReloadUi
+                                     ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "ui")
                                      : std::vector<std::filesystem::path>();
-    auto hotReloadShaderDirs     = autoHotReloadShaders && linkedPacks != nullptr
-                                     ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "shaders")
+    auto hotReloadShaderDirs     = autoHotReloadShaders
+                                     ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "shaders")
                                      : std::vector<std::filesystem::path>();
-    auto hotReloadMaterialDirs   = autoHotReloadMaterials && linkedPacks != nullptr
-                                     ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "materials")
+    auto hotReloadMaterialDirs   = autoHotReloadMaterials
+                                     ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "materials")
                                      : std::vector<std::filesystem::path>();
-    auto hotReloadParticleDirs   = autoHotReloadParticles && linkedPacks != nullptr
-                                     ? UserModDirConfig::collectHotReloadResourceSubdirPaths(*linkedPacks, "particles")
+    auto hotReloadParticleDirs   = autoHotReloadParticles
+                                     ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "particles")
                                      : std::vector<std::filesystem::path>();
     bool enablePyHotReload       = autoHotReload && !hotReloadDirs.empty();
     bool enableUiHotReload       = autoHotReloadUi && !hotReloadUiDirs.empty();

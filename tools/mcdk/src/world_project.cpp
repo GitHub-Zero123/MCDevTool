@@ -194,10 +194,10 @@ namespace mcdk {
     }
 
     void appendWorldHotReloadModDir(std::vector<UserModDirConfig>& configs, const fs::path& worldSourcePath) {
-        const bool alreadyWatched = std::ranges::any_of(configs, [&worldSourcePath](const auto& config) {
-            return config.hotReload && isSamePath(config.getAbsolutePath(), worldSourcePath);
+        const bool alreadyConfigured = std::ranges::any_of(configs, [&worldSourcePath](const auto& config) {
+            return isSamePath(config.getAbsolutePath(), worldSourcePath);
         });
-        if (!alreadyWatched) {
+        if (!alreadyConfigured) {
             configs.emplace_back(worldSourcePath, true, true);
         }
     }

@@ -21,9 +21,10 @@ add_executable(captureTest captureTest.cpp)
 target_compile_features(captureTest PRIVATE cxx_std_23)
 target_link_libraries(captureTest PRIVATE mcdevtool)
 
-add_executable(py_hot_reload_filter_test py_hot_reload_filter_test.cpp)
-target_compile_features(py_hot_reload_filter_test PRIVATE cxx_std_23)
-target_link_libraries(py_hot_reload_filter_test PRIVATE mcdk_core)
+add_executable(hot_reload_filter_test hot_reload_filter_test.cpp)
+target_compile_features(hot_reload_filter_test PRIVATE cxx_std_23)
+target_link_libraries(hot_reload_filter_test PRIVATE mcdk_core)
+add_test(NAME hot-reload-filters COMMAND hot_reload_filter_test)
 
 add_executable(game_environment_test game_environment_test.cpp)
 target_compile_features(game_environment_test PRIVATE cxx_std_23)
