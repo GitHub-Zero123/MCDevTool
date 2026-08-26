@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <vector>
 #include <string_view>
 #include <cstdint>
@@ -6,6 +7,8 @@
 #include <filesystem>
 
 namespace MCDevTool::Level {
+    using ClientVersion = std::array<int32_t, 3>;
+
     // 实验性功能选项
     struct ExperimentsOptions {
         bool enable                     = false;
@@ -36,6 +39,11 @@ namespace MCDevTool::Level {
         bool                            init = true
     );
 
+    // Synchronize version metadata with the selected Minecraft client. When the
+    // version changes, the stale network protocol is removed so the client can
+    // regenerate it when saving the world.
+    void updateLevelDatVersion(std::vector<uint8_t>& levelDatData, const ClientVersion& clientVersion);
+
     // 创建一个默认存档level.dat数据
     std::vector<uint8_t> createDefaultLevelDat(
         std::string_view    worldName, // 世界名称
@@ -54,6 +62,8 @@ namespace MCDevTool::Level {
         std::optional<std::string_view> worldName,
         const LevelOptions&             options = {}
     );
+
+    void updateLevelDatVersionInFile(const std::filesystem::path& filePath, const ClientVersion& clientVersion);
 
     // 获取level.dat模板
     std::vector<uint8_t>& getLevelDatTemplate();

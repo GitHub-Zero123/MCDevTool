@@ -34,6 +34,7 @@ void mcdk::startGame(const UserConfig& config) {
             throw std::runtime_error("未能找到有效的游戏exe文件。");
         }
     }
+    const auto clientVersion = mcdk::readClientVersion(gameExePath);
 
     auto _isSubprocessMode = mcdk::getEnvIsSubprocessMode();
 
@@ -88,7 +89,7 @@ void mcdk::startGame(const UserConfig& config) {
         }
         std::filesystem::create_directories(worldsPath);
         std::ofstream levelFile(worldsPath / "level.dat", std::ios::binary);
-        auto          levelDat = mcdk::createUserLevel(config.world);
+        auto          levelDat = mcdk::createUserLevel(config.world, clientVersion);
         levelFile.write(reinterpret_cast<const char*>(levelDat.data()), levelDat.size());
         levelFile.close();
     } else {
@@ -101,6 +102,7 @@ void mcdk::startGame(const UserConfig& config) {
             MCDevTool::Level::updateLevelDatLastPlayedInFile(worldsPath / "level.dat");
         }
     }
+    MCDevTool::Level::updateLevelDatVersionInFile(worldsPath / "level.dat", clientVersion);
 
     // netease_world_behavior_packs.json / netease_world_resource_packs.json
     auto autoJoinGame = config.world.autoJoin;

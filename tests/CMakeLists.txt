@@ -31,6 +31,11 @@ target_compile_features(game_environment_test PRIVATE cxx_std_23)
 target_link_libraries(game_environment_test PRIVATE mcdk_core)
 add_test(NAME game-environment COMMAND game_environment_test)
 
+add_executable(level_version_test level_version_test.cpp)
+target_compile_features(level_version_test PRIVATE cxx_std_23)
+target_link_libraries(level_version_test PRIVATE mcdk_core)
+add_test(NAME level-version COMMAND level_version_test)
+
 add_executable(rpc_registry_test rpc_registry_test.cpp)
 target_compile_features(rpc_registry_test PRIVATE cxx_std_23)
 target_link_libraries(rpc_registry_test PRIVATE mcdk_core)

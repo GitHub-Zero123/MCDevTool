@@ -4,6 +4,7 @@
 #include <iterator>
 #include <fstream>
 #include <random>
+#include <sstream>
 #include <nbt/NBT.hpp>
 
 using namespace nbt::literals;
@@ -20,6 +21,36 @@ static int64_t generateRandomSeed() {
 }
 
 namespace MCDevTool::Level {
+    namespace {
+        std::string formatClientVersion(const ClientVersion& version) {
+            std::ostringstream result;
+            result << version[0] << '.' << version[1] << '.' << version[2];
+            return result.str();
+        }
+
+        void writeLevelDatFile(const std::filesystem::path& filePath, const std::vector<uint8_t>& fileData) {
+            std::ofstream outputFile(filePath, std::ios::binary | std::ios::trunc);
+            if (!outputFile) {
+                throw std::runtime_error("无法打开level.dat文件进行写入: " + Utils::pathToUtf8(filePath));
+            }
+            outputFile.write(
+                reinterpret_cast<const char*>(fileData.data()),
+                static_cast<std::streamsize>(fileData.size())
+            );
+            if (!outputFile) {
+                throw std::runtime_error("无法写入level.dat文件: " + Utils::pathToUtf8(filePath));
+            }
+        }
+
+        std::vector<uint8_t> readLevelDatFile(const std::filesystem::path& filePath) {
+            std::ifstream inputFile(filePath, std::ios::binary);
+            if (!inputFile) {
+                throw std::runtime_error("无法打开level.dat文件进行读取: " + Utils::pathToUtf8(filePath));
+            }
+            return {(std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>()};
+        }
+    } // namespace
+
     // 更新level.dat数据中的世界选项
     void updateLevelDatWorldData(
         std::vector<uint8_t>&           levelDatData,
@@ -72,16 +103,46 @@ namespace MCDevTool::Level {
             if (compoundTag.items().contains("experiments")) {
                 experimentsTag = compoundTag["experiments"].as<nbt::CompoundTag>();
             }
-            experimentsTag["data_driven_biomes"]          = nbt::ByteTag(options.experimentsOptions.dataDrivenBiomes ? 1 : 0);
-            experimentsTag["upcoming_creator_features"]   = nbt::ByteTag(options.experimentsOptions.upcomingCreatorFeatures ? 1 : 0);
-            experimentsTag["experimental_creator_cameras"] = nbt::ByteTag(options.experimentsOptions.experimentalCreatorCameras ? 1 : 0);
-            experimentsTag["gametest"]                    = nbt::ByteTag(options.experimentsOptions.gametest ? 1 : 0);
-            experimentsTag["deferred_technical_preview"]  = nbt::ByteTag(options.experimentsOptions.deferredTechnicalPreview ? 1 : 0);
+            experimentsTag["data_driven_biomes"] = nbt::ByteTag(options.experimentsOptions.dataDrivenBiomes ? 1 : 0);
+            experimentsTag["upcoming_creator_features"] =
+                nbt::ByteTag(options.experimentsOptions.upcomingCreatorFeatures ? 1 : 0);
+            experimentsTag["experimental_creator_cameras"] =
+                nbt::ByteTag(options.experimentsOptions.experimentalCreatorCameras ? 1 : 0);
+            experimentsTag["gametest"] = nbt::ByteTag(options.experimentsOptions.gametest ? 1 : 0);
+            experimentsTag["deferred_technical_preview"] =
+                nbt::ByteTag(options.experimentsOptions.deferredTechnicalPreview ? 1 : 0);
             compoundTag["experiments"] = std::move(experimentsTag);
         }
         auto release = compoundTag.toBinaryNbtWithHeader();
         // 更新输入数据
         bytes.assign(std::make_move_iterator(release.begin()), std::make_move_iterator(release.end()));
+    }
+
+    void updateLevelDatVersion(std::vector<uint8_t>& levelDatData, const ClientVersion& clientVersion) {
+        auto content        = std::string_view{reinterpret_cast<const char*>(levelDatData.data()), levelDatData.size()};
+        auto compoundTagOpt = nbt::io::parseFromContent(content);
+        if (!compoundTagOpt.has_value()) {
+            throw std::runtime_error("无法解析level.dat数据");
+        }
+
+        auto&      compoundTag    = compoundTagOpt.value();
+        const auto versionText    = formatClientVersion(clientVersion);
+        const auto currentVersion = compoundTag.getString("InventoryVersion");
+        if (currentVersion == nullptr || currentVersion->view() != versionText) {
+            compoundTag.items().erase("NetworkVersion");
+        }
+
+        compoundTag["InventoryVersion"]               = nbt::StringTag(versionText);
+        compoundTag["MinimumCompatibleClientVersion"] = nbt::ListTag{
+            nbt::IntTag(clientVersion[0]),
+            nbt::IntTag(clientVersion[1]),
+            nbt::IntTag(clientVersion[2]),
+            nbt::IntTag(0),
+            nbt::IntTag(0),
+        };
+
+        auto release = compoundTag.toBinaryNbtWithHeader();
+        levelDatData.assign(std::make_move_iterator(release.begin()), std::make_move_iterator(release.end()));
     }
 
     // 创建一个默认存档level.dat数据
@@ -109,24 +170,12 @@ namespace MCDevTool::Level {
 
     // 更新文件level.dat的时间轴并立即保存
     void updateLevelDatLastPlayedInFile(const std::filesystem::path& filePath) {
-        // 读取文件内容
-        std::ifstream inputFile(filePath, std::ios::binary);
-        if (!inputFile) {
-            throw std::runtime_error("无法打开level.dat文件进行读取: " + Utils::pathToUtf8(filePath));
-        }
-        std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
-        inputFile.close();
+        auto fileData = readLevelDatFile(filePath);
 
         // 更新 LastPlayed 字段
         updateLevelDatLastPlayed(fileData);
 
-        // 写回文件
-        std::ofstream outputFile(filePath, std::ios::binary | std::ios::trunc);
-        if (!outputFile) {
-            throw std::runtime_error("无法打开level.dat文件进行写入: " + Utils::pathToUtf8(filePath));
-        }
-        outputFile.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
-        outputFile.close();
+        writeLevelDatFile(filePath, fileData);
     }
 
     // 更新文件level.dat的世界数据选项并立即保存
@@ -135,24 +184,18 @@ namespace MCDevTool::Level {
         std::optional<std::string_view> worldName,
         const LevelOptions&             options
     ) {
-        // 读取文件内容
-        std::ifstream inputFile(filePath, std::ios::binary);
-        if (!inputFile) {
-            throw std::runtime_error("无法打开level.dat文件进行读取: " + Utils::pathToUtf8(filePath));
-        }
-        std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
-        inputFile.close();
+        auto fileData = readLevelDatFile(filePath);
 
         // 更新世界数据选项
         updateLevelDatWorldData(fileData, worldName, options, false);
 
-        // 写回文件
-        std::ofstream outputFile(filePath, std::ios::binary | std::ios::trunc);
-        if (!outputFile) {
-            throw std::runtime_error("无法打开level.dat文件进行写入: " + Utils::pathToUtf8(filePath));
-        }
-        outputFile.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
-        outputFile.close();
+        writeLevelDatFile(filePath, fileData);
+    }
+
+    void updateLevelDatVersionInFile(const std::filesystem::path& filePath, const ClientVersion& clientVersion) {
+        auto fileData = readLevelDatFile(filePath);
+        updateLevelDatVersion(fileData, clientVersion);
+        writeLevelDatFile(filePath, fileData);
     }
 
     // 获取level.dat模板
