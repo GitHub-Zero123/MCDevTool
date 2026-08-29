@@ -180,10 +180,13 @@ void mcdk::launchGameExe(
         // 若启用MCP服务器将自动启用IPC调试功能
         enableIPC     = true;
         needLogBuffer = true;
-        printColoredAtomic(
-            "[MCDK] MCP Server " + mcpServerConfig.serverIp + ":" + std::to_string(mcpServerConfig.serverPort),
-            ConsoleColor::Green
-        );
+        mcpServer.setInstanceInfo({
+            .mcdkPid         = GetCurrentProcessId(),
+            .projectRoot     = std::filesystem::current_path(),
+            .worldName       = userConfig.world.name,
+            .worldFolderName = userConfig.world.folderName,
+            .startedAt       = mcdk::utcTimestampNow(),
+        });
         mcpServer.setLogBuffer(logBuffer);
         mcpServer.setErrBuffer(errBuffer);
         mcpServer.setProfilerHandler([profilerRuntime](const nlohmann::json& arguments) {
@@ -299,6 +302,19 @@ void mcdk::launchGameExe(
         });
         // Publish the MCP server only after every buffer and callback has been configured.
         mcpServer.start();
+        // 端口在区间内择一绑定，这里公布的必须是真实绑定到的端口。
+        if (const int boundPort = mcpServer.getBoundPort(); boundPort != 0) {
+            printColoredAtomic(
+                "[MCDK] MCP Server " + mcpServerConfig.serverIp + ":" + std::to_string(boundPort),
+                ConsoleColor::Green
+            );
+        } else {
+            printColoredAtomic(
+                "[MCDK] MCP Server 启动失败：端口区间 " + mcpServerConfig.serverPorts.toString()
+                    + " 内没有可用端口（可能已被其他实例占用）",
+                ConsoleColor::Red
+            );
+        }
     }
     mcdk::PyReloadWatcherTask       pyReloadTask;
     mcdk::UiReloadWatcherTask       uiReloadTask;

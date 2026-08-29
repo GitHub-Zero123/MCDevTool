@@ -1,5 +1,7 @@
 #include <mcdk/host_bridge.hpp>
 
+#include <mcdk/utils.hpp>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -60,22 +62,7 @@ namespace mcdk {
             return output.str();
         }
 
-        [[nodiscard]] std::string utcNow() {
-            const auto now          = std::chrono::system_clock::now();
-            const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch())
-                                    % 1000;
-            const auto time = std::chrono::system_clock::to_time_t(now);
-            std::tm    utc{};
-#ifdef _WIN32
-            gmtime_s(&utc, &time);
-#else
-            gmtime_r(&time, &utc);
-#endif
-            std::ostringstream output;
-            output << std::put_time(&utc, "%Y-%m-%dT%H:%M:%S") << '.' << std::setw(3) << std::setfill('0')
-                   << milliseconds.count() << 'Z';
-            return output.str();
-        }
+        [[nodiscard]] std::string utcNow() { return mcdk::utcTimestampNow(); }
 
         [[nodiscard]] std::vector<std::uint8_t> encodeFrame(const nlohmann::json& message) {
             const auto payload = message.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);

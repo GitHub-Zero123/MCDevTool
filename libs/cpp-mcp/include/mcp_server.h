@@ -236,6 +236,27 @@ namespace mcp {
         ~server();
 
         /**
+         * @brief Bind the listening socket without serving requests yet
+         *
+         * Binding is the only step that can fail because of a port conflict. Doing it separately
+         * lets a caller detect "port already taken" synchronously and retry on another port,
+         * which start() cannot report in non-blocking mode because listening happens on a
+         * background thread. Calling start() afterwards reuses the socket bound here.
+         *
+         * A failed bind permanently decommissions the underlying HTTP server, so retrying a
+         * different port requires a new server instance.
+         *
+         * @return True if the configured host:port was bound successfully
+         */
+        bool bind_to_port();
+
+        /**
+         * @brief Check whether the listening socket is already bound
+         * @return True if bind_to_port() has succeeded
+         */
+        bool is_bound() const;
+
+        /**
          * @brief Start the server
          * @param blocking If true, this call blocks until the server stops
          * @return True if the server started successfully
@@ -338,6 +359,7 @@ namespace mcp {
     private:
         std::string host_;
         int         port_;
+        bool        bound_ = false;
         std::string name_;
         std::string version_;
         json        capabilities_ = json::object();

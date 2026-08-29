@@ -241,7 +241,12 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         "enabled": false,
         // 服务器IP地址
         "server_ip": "localhost",
-        // 服务器端口
+        // 服务器端口。写单个数字即固定端口（默认行为）；
+        // 多开测试时可写端口区间，mcdk 会在区间内挑一个空闲端口：
+        //   "server_port": "19133-19142"    区间字符串
+        //   "server_port": [19133, 19142]   区间数组
+        //   "server_port": 19133, "server_port_end": 19142
+        // 区间起止写反会自动按升序处理，跨度上限 32。
         "server_port": 19133
     }
 }
@@ -269,6 +274,7 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 - `mc_profiler`：通过单工具命令分析 Python CPU、Python 内存和可选的 Native CPU 性能，支持分页查询与 Markdown / SVG 报告。
 - `capture_game_window` / `click_game_window`：用于必要时的视觉确认和简单交互。
 - `reload_game`：触发完整游戏重载；资源级重载使用 `reload_game(reload_addons=true)`。
+- `mcdk_instance_info`：返回当前连接背后是哪个游戏实例（端口、世界名、Minecraft 进程号、工程目录），多开测试时用于确认操作目标。
 
 `jsonui_debugger` 是推荐用于 UI 开发反馈的主入口。常用命令：
 
@@ -326,6 +332,12 @@ VSCode 暂不支持直接连接 SSE，需通过 `mcp-remote` 桥接，配置在 
 ```
 
 > MCP 服务器随 `MCDK/MC` 一起启停，游戏关闭后需重新连接。各客户端对自动重连的支持情况不同，请自行测试。
+
+### 多开测试与端口区间
+
+默认情况下 `server_port` 是单个固定端口，第二个实例会因为端口被占用而启动不了 MCP。需要同时跑多个游戏实例时，把 `server_port` 写成区间，每个实例会自动占用区间内的下一个空闲端口，实际绑定到的端口会打印在启动横幅上。
+
+区间模式下客户端不再有固定端口可连，推荐改用 [`mcdk_stdio_bridge`](tools/mcdk_stdio_bridge/README.md)：它会在区间内发现所有正在运行的实例，单实例时自动连接，多实例时由 AI 通过 `mcdk_instances` / `mcdk_use` 选择目标。
 
 ### 性能分析
 

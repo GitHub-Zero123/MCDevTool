@@ -1,6 +1,6 @@
 project(MC_DEV_TOOL_MCDK_STDIO_BRIDGE)
 
-add_executable(mcdk_stdio_bridge main.cpp)
+add_executable(mcdk_stdio_bridge main.cpp discovery.cpp)
 target_compile_features(mcdk_stdio_bridge PRIVATE cxx_std_20)
 target_link_libraries(mcdk_stdio_bridge PRIVATE mcdk_core mcp)
 include(GNUInstallDirs)

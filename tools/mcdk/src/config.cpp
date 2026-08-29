@@ -161,6 +161,56 @@ namespace mcdk {
             }
         }
 
+        // server_port 兼容三种写法：数字(旧版单值)、"19133-19142" 字符串区间、[19133, 19142] 数组区间。
+        // 数字写法还可以配合 server_port_end 组成区间。区间起止顺序颠倒会被归一化为升序。
+        PortRange parseMcpPortRange(const Json& mcp) {
+            const PortRange fallback = PortRange::single(DefaultMcpPort);
+
+            const auto report = [](const PortRangeParseResult& result, const PortRange& used) {
+                if (!result.error.empty()) {
+                    std::cerr << "[MCDK] mcp_server_config.server_port 解析失败：" << result.error << "，回退为 "
+                              << used.toString() << "\n";
+                } else if (!result.warning.empty()) {
+                    std::cerr << "[MCDK] mcp_server_config.server_port " << result.warning << "\n";
+                }
+            };
+
+            const auto port = mcp.find("server_port");
+            if (port == mcp.end()) {
+                return fallback;
+            }
+
+            if (port->is_string()) {
+                const auto parsed = parsePortRange(port->get<std::string>(), fallback);
+                report(parsed, parsed.range);
+                return parsed.range;
+            }
+
+            if (port->is_array()) {
+                if (port->size() != 2 || !(*port)[0].is_number_integer() || !(*port)[1].is_number_integer()) {
+                    std::cerr << "[MCDK] mcp_server_config.server_port 数组写法必须是 [起始端口, 结束端口]，回退为 "
+                              << fallback.toString() << "\n";
+                    return fallback;
+                }
+                const auto parsed = makePortRange((*port)[0].get<int>(), (*port)[1].get<int>());
+                report(parsed, parsed.range);
+                return parsed.range;
+            }
+
+            if (!port->is_number_integer()) {
+                std::cerr << "[MCDK] mcp_server_config.server_port 类型无法识别，回退为 " << fallback.toString()
+                          << "\n";
+                return fallback;
+            }
+
+            // 旧版单值端口；仅在显式给出 server_port_end 时才扩展成区间。
+            const int  begin  = port->get<int>();
+            const int  end    = mcp.value("server_port_end", begin);
+            const auto parsed = makePortRange(begin, end);
+            report(parsed, parsed.range);
+            return parsed.range;
+        }
+
         UserConfig parseUserConfigJson(const Json& root) {
             if (!root.is_object()) {
                 throw std::runtime_error("配置文件根节点必须是 JSON 对象。");
@@ -210,9 +260,9 @@ namespace mcdk {
                 config.netease.chatExtension = netease->value("chat_extension", false);
             }
             if (const auto mcp = root.find("mcp_server_config"); mcp != root.end() && mcp->is_object()) {
-                config.mcpServer.enabled    = mcp->value("enabled", false);
-                config.mcpServer.serverIp   = mcp->value("server_ip", "localhost");
-                config.mcpServer.serverPort = mcp->value("server_port", 19133);
+                config.mcpServer.enabled     = mcp->value("enabled", false);
+                config.mcpServer.serverIp    = mcp->value("server_ip", "localhost");
+                config.mcpServer.serverPorts = parseMcpPortRange(*mcp);
             }
             return config;
         }

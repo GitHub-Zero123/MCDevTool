@@ -31,6 +31,11 @@ target_compile_features(game_environment_test PRIVATE cxx_std_23)
 target_link_libraries(game_environment_test PRIVATE mcdk_core)
 add_test(NAME game-environment COMMAND game_environment_test)
 
+add_executable(port_range_test port_range_test.cpp)
+target_compile_features(port_range_test PRIVATE cxx_std_23)
+target_link_libraries(port_range_test PRIVATE mcdk_core)
+add_test(NAME port-range COMMAND port_range_test)
+
 add_executable(rpc_registry_test rpc_registry_test.cpp)
 target_compile_features(rpc_registry_test PRIVATE cxx_std_23)
 target_link_libraries(rpc_registry_test PRIVATE mcdk_core)
@@ -44,6 +49,22 @@ if(TARGET mcdk_native_profiler_component)
     target_compile_definitions(profiler_foundation_test PRIVATE
         MCDEV_TEST_MCDK_DIR="$<TARGET_FILE_DIR:mcdk>"
     )
+endif()
+
+add_executable(mcp_port_range_bind_test mcp_port_range_bind_test.cpp)
+target_compile_features(mcp_port_range_bind_test PRIVATE cxx_std_23)
+target_link_libraries(mcp_port_range_bind_test PRIVATE mcdk_runtime)
+add_test(NAME mcp-port-range-bind COMMAND mcp_port_range_bind_test)
+
+if(TARGET mcdk_stdio_bridge)
+    add_executable(mcp_bridge_discovery_test mcp_bridge_discovery_test.cpp)
+    target_compile_features(mcp_bridge_discovery_test PRIVATE cxx_std_23)
+    target_link_libraries(mcp_bridge_discovery_test PRIVATE mcdk_runtime)
+    add_dependencies(mcp_bridge_discovery_test mcdk_stdio_bridge)
+    target_compile_definitions(mcp_bridge_discovery_test PRIVATE
+        MCDEV_TEST_BRIDGE_EXE="$<TARGET_FILE:mcdk_stdio_bridge>"
+    )
+    add_test(NAME mcp-bridge-discovery COMMAND mcp_bridge_discovery_test)
 endif()
 
 add_executable(host_bridge_test host_bridge_test.cpp)

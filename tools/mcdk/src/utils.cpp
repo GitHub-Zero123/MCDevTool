@@ -1,6 +1,28 @@
 #include <mcdk/utils.hpp>
 
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+
 namespace mcdk {
+
+    std::string utcTimestampNow() {
+        const auto now = std::chrono::system_clock::now();
+        const auto milliseconds =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+        const auto time = std::chrono::system_clock::to_time_t(now);
+        std::tm    utc{};
+#ifdef _WIN32
+        gmtime_s(&utc, &time);
+#else
+        gmtime_r(&time, &utc);
+#endif
+        std::ostringstream output;
+        output << std::put_time(&utc, "%Y-%m-%dT%H:%M:%S") << '.' << std::setw(3) << std::setfill('0')
+               << milliseconds.count() << 'Z';
+        return output.str();
+    }
 
     void stringReplace(std::string& value, const std::string& from, const std::string& to) {
         std::size_t startPosition = 0;

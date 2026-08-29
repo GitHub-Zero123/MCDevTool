@@ -50,10 +50,28 @@ namespace mcp {
 
     server::~server() { stop(); }
 
+    bool server::bind_to_port() {
+        if (bound_) {
+            return true;
+        }
+        bound_ = http_server_->bind_to_port(host_, port_);
+        if (!bound_) {
+            LOG_ERROR("Failed to bind server socket on ", host_, ":", port_);
+        }
+        return bound_;
+    }
+
+    bool server::is_bound() const { return bound_; }
 
     bool server::start(bool blocking) {
         if (running_) {
             return true; // Already running
+        }
+
+        // Bind before anything else so a port conflict is reported to the caller instead of being
+        // swallowed by the background listener thread in non-blocking mode.
+        if (!bind_to_port()) {
+            return false;
         }
 
         LOG_INFO("Starting MCP server on ", host_, ":", port_);
@@ -147,7 +165,7 @@ namespace mcp {
         if (blocking) {
             running_ = true;
             LOG_INFO("Starting server in blocking mode");
-            if (!http_server_->listen(host_.c_str(), port_)) {
+            if (!http_server_->listen_after_bind()) {
                 running_ = false;
                 LOG_ERROR("Failed to start server on ", host_, ":", port_);
                 return false;
@@ -157,7 +175,7 @@ namespace mcp {
             // Start server in a separate thread
             server_thread_ = std::make_unique<std::thread>([this]() {
                 LOG_INFO("Starting server in separate thread");
-                if (!http_server_->listen(host_.c_str(), port_)) {
+                if (!http_server_->listen_after_bind()) {
                     LOG_ERROR("Failed to start server on ", host_, ":", port_);
                     running_ = false;
                     return;
@@ -300,6 +318,9 @@ namespace mcp {
         } else {
             http_server_->stop();
         }
+
+        // The listening socket is gone; a later start() has to bind again.
+        bound_ = false;
 
         LOG_INFO("MCP server stopped");
     }

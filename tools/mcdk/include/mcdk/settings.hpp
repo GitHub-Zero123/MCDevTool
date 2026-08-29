@@ -10,6 +10,7 @@
 #include <mcdevtool/style.h>
 
 #include <mcdk/mod_dir_config.hpp>
+#include <mcdk/port_range.hpp>
 
 namespace mcdk {
 
@@ -77,9 +78,10 @@ namespace mcdk {
     };
 
     struct McpServerConfig {
-        bool        enabled    = false;
-        std::string serverIp   = "localhost";
-        int         serverPort = 19133;
+        bool        enabled  = false;
+        std::string serverIp = "localhost";
+        // 候选端口区间 单值配置退化为 begin == end 与旧版本的固定端口行为一致
+        PortRange   serverPorts{DefaultMcpPort, DefaultMcpPort};
     };
 
     struct UserConfig {

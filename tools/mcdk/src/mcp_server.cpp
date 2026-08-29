@@ -15,10 +15,12 @@
 #include <mcdk/mc_profiler_mcp.hpp>
 #include <mcdk/jsonui_debugger.hpp>
 #include <mcdk/jsonui_reload_support.hpp>
+#include <mcdk/net_listeners.hpp>
 #include <nlohmann/json.hpp>
 #include <mcp_server.h>
 #include <base64.hpp>
 #include <mcdevtool/style.h>
+#include <mcdevtool/utils.h>
 
 namespace mcdk {
 
@@ -82,6 +84,9 @@ namespace mcdk {
         SimpleHandler                reloadUiHandler;    // 重载 UI definition 处理器
         // The process id is published after server startup and read by HTTP worker threads.
         std::atomic<int>             mcPid = 0;
+        // Set once binding succeeds; HTTP worker threads read it through the instance info tool.
+        std::atomic<int>             boundPort = 0;
+        McpInstanceInfo              instanceInfo;
 
     public:
         explicit Impl(const McpServerConfig& cfg) : config(cfg) {}
@@ -95,6 +100,9 @@ namespace mcdk {
         void setReloadUiHandler(SimpleHandler handler) { reloadUiHandler = std::move(handler); }
         void setMinecraftProcessId(int pid) { mcPid.store(pid, std::memory_order_relaxed); }
         int  getMinecraftProcessId() const { return mcPid.load(std::memory_order_relaxed); }
+        // Instance metadata is fixed before start(); worker threads only ever read it.
+        void setInstanceInfo(McpInstanceInfo info) { instanceInfo = std::move(info); }
+        int  getBoundPort() const { return boundPort.load(std::memory_order_relaxed); }
 
         static nlohmann::json _logVectorToJson(const std::vector<std::string>& logVector) {
             nlohmann::json jsonArray = nlohmann::json::array();
@@ -619,6 +627,31 @@ namespace mcdk {
             );
         }
 
+        // 实例标识工具：多开时用于分辨这一路 MCP 背后是哪个游戏
+        void initInstanceInfoTool() {
+            mcp::tool instanceTool = mcp_tool_definitions::buildInstanceInfoTool();
+            server->register_tool(
+                instanceTool,
+                [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
+                    nlohmann::json info{
+                        {"mcp_port", getBoundPort()},
+                        {"mcdk_pid", instanceInfo.mcdkPid},
+                        {"minecraft_pid", getMinecraftProcessId()},
+                        {"project_root", MCDevTool::Utils::pathToGenericUtf8(instanceInfo.projectRoot)},
+                        {"world_name", instanceInfo.worldName},
+                        {"world_folder_name", instanceInfo.worldFolderName},
+                        {"started_at", instanceInfo.startedAt},
+                    };
+                    return nlohmann::json{
+                        {"isError", false},
+                        {"content",
+                         nlohmann::json::array({{{"type", "text"}, {"text", info.dump(2)}}})},
+                        {"structuredContent", std::move(info)}
+                    };
+                }
+            );
+        }
+
         // 初始化所有工具
         void initTools() {
             initLogTool();
@@ -627,21 +660,41 @@ namespace mcdk {
             initJsonUiDebuggerTool();
             initGameTools();
             initGameWindowTools();
+            initInstanceInfoTool();
         }
 
-        // 启动MCP服务器
+        // 在配置的端口区间内依次尝试启动 单值端口即 begin == end 的退化区间 行为与旧版本一致
         void start() {
             if (!config.enabled || server.get() != nullptr) {
                 return;
             }
-            mcp::server::configuration srv_conf;
-            srv_conf.host = config.serverIp;
-            srv_conf.port = config.serverPort;
-            server        = std::make_shared<mcp::server>(srv_conf);
-            server->set_server_info("Minecraft(BE) MCP Server(MCDK)", "0.1.0");
-            // 注册API
-            initTools();
-            server->start(false); // 非阻塞启动
+
+            const auto candidates = config.serverPorts.ports();
+            for (const int port : candidates) {
+                // 先查监听表：绑定用的是 httplib 默认的 SO_REUSEADDR，在 Windows 上不会因端口被占用而失败，
+                // 所以必须靠监听表识别"已经有实例占着这个端口"。表读不到时退回纯 bind 判定。
+                if (mcdk::net::listenerEnumerationSupported() && mcdk::net::isPortListening(port)) {
+                    continue;
+                }
+
+                mcp::server::configuration srv_conf;
+                srv_conf.host = config.serverIp;
+                srv_conf.port = port;
+
+                auto candidate = std::make_shared<mcp::server>(srv_conf);
+                candidate->set_server_info("Minecraft(BE) MCP Server(MCDK)", "0.1.0");
+                server = candidate;
+                // 注册API
+                initTools();
+                // start() 会先同步绑定端口 绑定失败直接返回 false 不会留下半启动状态
+                if (candidate->start(false)) {
+                    boundPort.store(port, std::memory_order_relaxed);
+                    return;
+                }
+                server.reset();
+            }
+
+            boundPort.store(0, std::memory_order_relaxed);
         }
 
         // 停止MCP服务器
@@ -651,6 +704,7 @@ namespace mcdk {
             }
             server->stop();
             server.reset();
+            boundPort.store(0, std::memory_order_relaxed);
         }
     };
 
@@ -697,6 +751,10 @@ namespace mcdk {
     void MCPServer::setReloadGameHandler(BoolParamHandler handler) { mImpl->setReloadGameHandler(std::move(handler)); }
 
     void MCPServer::setReloadUiHandler(SimpleHandler handler) { mImpl->setReloadUiHandler(std::move(handler)); }
+
+    void MCPServer::setInstanceInfo(McpInstanceInfo info) { mImpl->setInstanceInfo(std::move(info)); }
+
+    int MCPServer::getBoundPort() const { return mImpl->getBoundPort(); }
 
     void MCPServer::setMinecraftProcessId(int processId) { mImpl->setMinecraftProcessId(processId); }
 

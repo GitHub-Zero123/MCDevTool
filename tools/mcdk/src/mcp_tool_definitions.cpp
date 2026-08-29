@@ -60,6 +60,14 @@ Parameters:
             "checks first; use screenshots only when the task explicitly requires visual confirmation or logs cannot "
             "answer the question.";
 
+        constexpr auto InstanceInfoDescription =
+            R"(Returns identity information for the MCDK instance backing this MCP connection.
+
+Use it when several Minecraft instances are running at once (multi-instance testing) to tell which game
+a connection is attached to, or to confirm the current target before running stateful tools.
+
+Returned fields: mcp_port, mcdk_pid, minecraft_pid, project_root, world_name, world_folder_name, started_at.)";
+
         constexpr auto ClickGameWindowName = "click_game_window";
         constexpr auto ClickGameWindowDescription =
             R"(Simulates a left mouse click at a specific position on the Minecraft game window.
@@ -142,6 +150,13 @@ Parameters:
             .build();
     }
 
+    mcp::tool buildInstanceInfoTool() {
+        return mcp::tool_builder(InstanceInfoName)
+            .with_description(InstanceInfoDescription)
+            .with_read_only_hint(true)
+            .build();
+    }
+
     mcp::tool buildJsonUiDebuggerTool() {
         return mcp::tool_builder(jsonui_debugger::ToolName)
             .with_description(jsonui_debugger::ToolDescription)
@@ -157,6 +172,7 @@ Parameters:
             buildGetLatestErrorLogsTool(),
             buildExecuteCodeTool(),
             buildJsonUiDebuggerTool(),
+            buildInstanceInfoTool(),
             buildReloadGameTool(),
             buildCaptureGameWindowTool(),
             buildClickGameWindowTool(),
