@@ -76,7 +76,6 @@ namespace mcdk::detail {
 
         static MCDevLink::Protocol::SafaiaOptions createOptions(DWORD processId);
         void drain();
-        static std::string_view stripPythonPrefix(std::string_view line);
         static bool startsTraceback(std::string_view line);
         static bool isTracebackChainSeparator(std::string_view line);
         static bool isIdentifierStart(char value);
