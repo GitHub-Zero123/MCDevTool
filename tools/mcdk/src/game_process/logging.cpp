@@ -285,20 +285,11 @@ namespace mcdk::detail {
         }
     }
 
-    std::string_view SafaiaLogReceiver::stripPythonPrefix(std::string_view line) {
-        constexpr std::string_view prefix = "[Python] ";
-        if (line.starts_with(prefix)) {
-            line.remove_prefix(prefix.size());
-        }
-        return line;
-    }
-
     bool SafaiaLogReceiver::startsTraceback(std::string_view line) {
-        return stripPythonPrefix(line) == "Traceback (most recent call last):";
+        return line.find("Traceback (most recent call last):") != std::string_view::npos;
     }
 
     bool SafaiaLogReceiver::isTracebackChainSeparator(std::string_view line) {
-        line = stripPythonPrefix(line);
         return line == "During handling of the above exception, another exception occurred:"
             || line == "The above exception was the direct cause of the following exception:";
     }
@@ -345,7 +336,6 @@ namespace mcdk::detail {
     }
 
     bool SafaiaLogReceiver::isExceptionTerminator(std::string_view line) {
-        line = stripPythonPrefix(line);
         if (line.empty() || !isIdentifierStart(line.front())) {
             return false;
         }
@@ -366,12 +356,10 @@ namespace mcdk::detail {
     }
 
     bool SafaiaLogReceiver::isIndentedTracebackLine(std::string_view line) {
-        line = stripPythonPrefix(line);
         return !line.empty() && (line.front() == ' ' || line.front() == '\t');
     }
 
     bool SafaiaLogReceiver::startsMidTraceback(std::string_view line) {
-        line = stripPythonPrefix(line);
         while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
             line.remove_prefix(1);
         }
