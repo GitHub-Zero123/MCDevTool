@@ -36,6 +36,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+          submodules: recursive
 
       - name: Generate embedded resources
         shell: bash
@@ -54,16 +55,28 @@ jobs:
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DMC_DEV_TOOL_BUILD_TEST=OFF \
+            -DMC_DEV_TOOL_BUILD_TEST=ON \
             -DMC_DEV_TOOL_BUILD_MCDK=ON \
             -DMC_DEV_TOOL_BUILD_MCDK_STDIO_BRIDGE=ON \
-            -DMC_DEV_TOOL_MCDK_ENABLE_CLI=OFF \
+            -DMC_DEV_TOOL_MCDK_ENABLE_CLI=ON \
             ${{ matrix.configure_extra }}
 
       - name: Build
         shell: bash
         run: |
-          cmake --build build --config Release --target mcdk mcdk_stdio_bridge --parallel --verbose
+          cmake --build build --config Release --target mcdk mcdk_stdio_bridge project_operations_test --parallel --verbose
+
+      - name: Verify project CLI
+        shell: bash
+        run: |
+          MCDK="$(find build -type f \( -name mcdk -o -name mcdk.exe \) -print -quit)"
+          test -n "$MCDK"
+          "$MCDK" project --help
+
+      - name: Test project operations
+        shell: bash
+        run: |
+          ctest --test-dir build --build-config Release --output-on-failure -R '^project-'
 
       - name: Package Unix
         if: runner.os != 'Windows'

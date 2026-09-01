@@ -45,7 +45,7 @@ option("build_mcdk")
 option_end()
 
 option("mcdk_enable_cli")
-    set_default(false)
+    set_default(true)
     set_showmenu(true)
     set_description("Enable CLI for MCDK")
 option_end()
@@ -54,7 +54,6 @@ option_end()
 if is_plat("windows") then
     add_cxflags("/utf-8", "/EHsc")
     add_defines("_CRT_SECURE_NO_WARNINGS")
-    add_defines("_HAS_CXX23=1")
     add_defines("UNICODE", "_UNICODE")
 end
 
@@ -72,6 +71,7 @@ target("mcp")
     add_includedirs(
         "libs/cpp-mcp/include",
         "libs/cpp-mcp/common",
+        "libs/nlohmann",
         {public = true}
     )
     if is_plat("windows") then
@@ -81,6 +81,7 @@ target_end()
 
 target("mcdevtool")
     set_kind("object")
+    set_languages("c++23")
     add_files(
         "src/env.cpp",
         "src/level.cpp",
@@ -177,8 +178,14 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/level.cpp",
             "tools/mcdk/src/log_buffer.cpp",
             "tools/mcdk/src/mcp_tool_definitions.cpp",
+            "tools/mcdk/src/mc_profiler_mcp.cpp",
             "tools/mcdk/src/mod_dir_config.cpp",
             "tools/mcdk/src/mod_register.cpp",
+            "tools/mcdk/src/performance/native_bridge_loader.cpp",
+            "tools/mcdk/src/performance/profiler_runtime_owner.cpp",
+            "tools/mcdk/src/performance/profiler_service.cpp",
+            "tools/mcdk/src/performance/profiler_types.cpp",
+            "tools/mcdk/src/project_operations.cpp",
             "tools/mcdk/src/reload_code.cpp",
             "tools/mcdk/src/rpc_registry.cpp",
             "tools/mcdk/src/style_processor.cpp",
@@ -187,7 +194,26 @@ if has_config("build_mcdk") then
         )
         add_includedirs("tools/mcdk/include", {public = true})
         add_deps("mcdevtool", "mcp", "mcdev_mod_resource")
+        if is_plat("windows") then
+            add_syslinks("bcrypt", "gdi32", "iphlpapi", "ws2_32", {public = true})
+        end
     target_end()
+
+    if has_config("build_test") then
+        target("mcdk_project_test_core")
+            set_kind("static")
+            set_languages("c++23")
+            add_files(
+                "tools/mcdk/src/project_operations.cpp"
+            )
+            add_includedirs("tools/mcdk/include", {public = true})
+            add_defines("MCDK_PROJECT_TEST_HOOKS")
+            add_deps("mcdevtool")
+            if is_plat("windows") then
+                add_syslinks("bcrypt", {public = true})
+            end
+        target_end()
+    end
 
     target("mcdk_runtime")
         set_kind("static")
@@ -264,6 +290,14 @@ if has_config("build_test") then
                 add_syslinks("ws2_32")
             end
         target_end()
+
+        target("project_operations_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/project_operations_test.cpp")
+            add_deps("mcdk_project_test_core")
+        target_end()
+
     end
 
 end

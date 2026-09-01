@@ -73,8 +73,8 @@ int main() {
     }
 
     const std::vector<mcdk::UserModDirConfig> modConfigs{
-        {enabledResourceRoot.parent_path(), true, true},
-        {disabledResourceRoot.parent_path(), false, true},
+        mcdk::UserModDirConfig(enabledResourceRoot.parent_path(), true, true),
+        mcdk::UserModDirConfig(disabledResourceRoot.parent_path(), false, true),
     };
     const std::vector<MCDevTool::Addon::PackInfo> resourcePacks{
         resourcePack(enabledResourceRoot),
@@ -115,7 +115,8 @@ int main() {
               && passed;
     }
 
-    auto worldConfigs = std::vector<mcdk::UserModDirConfig>{{temp.path, false, true}};
+    auto worldConfigs =
+        std::vector<mcdk::UserModDirConfig>{mcdk::UserModDirConfig(temp.path, false, true)};
     mcdk::appendWorldHotReloadModDir(worldConfigs, temp.path);
     passed = expect(
                  worldConfigs.size() == 1 && !worldConfigs.front().hotReload,

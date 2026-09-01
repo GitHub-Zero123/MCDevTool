@@ -31,6 +31,21 @@ target_compile_features(game_environment_test PRIVATE cxx_std_23)
 target_link_libraries(game_environment_test PRIVATE mcdk_core)
 add_test(NAME game-environment COMMAND game_environment_test)
 
+add_executable(project_operations_test project_operations_test.cpp)
+target_compile_features(project_operations_test PRIVATE cxx_std_23)
+target_link_libraries(project_operations_test PRIVATE mcdk_project_test_core)
+add_test(NAME project-operations COMMAND project_operations_test)
+
+if(TARGET mcdk AND MC_DEV_TOOL_MCDK_ENABLE_CLI)
+    add_test(
+        NAME project-cli-protocol
+        COMMAND ${CMAKE_COMMAND}
+            "-DMCDK_EXE=$<TARGET_FILE:mcdk>"
+            "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-project-fixture"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_project_test.cmake
+    )
+endif()
+
 add_executable(rpc_registry_test rpc_registry_test.cpp)
 target_compile_features(rpc_registry_test PRIVATE cxx_std_23)
 target_link_libraries(rpc_registry_test PRIVATE mcdk_core)

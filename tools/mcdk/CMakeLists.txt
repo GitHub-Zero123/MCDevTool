@@ -1,6 +1,6 @@
 project(MC_DEV_TOOL_MCDK)
 
-option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" OFF)
+option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" ON)
 
 set(_mcdk_native_profiler_supported OFF)
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -40,6 +40,7 @@ add_library(mcdk_core STATIC
     src/mod_dir_config.cpp
     src/mod_register.cpp
     src/mc_profiler_mcp.cpp
+    src/project_operations.cpp
     src/reload_code.cpp
     src/rpc_registry.cpp
     src/style_processor.cpp
@@ -49,6 +50,19 @@ add_library(mcdk_core STATIC
 target_compile_features(mcdk_core PUBLIC cxx_std_23)
 target_include_directories(mcdk_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(mcdk_core PUBLIC mcdevtool mcdev_profiler_core mcp PRIVATE MCDEV_MOD_RESOURCE)
+
+if(MC_DEV_TOOL_BUILD_TEST)
+    add_library(mcdk_project_test_core STATIC
+        src/project_operations.cpp
+    )
+    target_compile_features(mcdk_project_test_core PUBLIC cxx_std_23)
+    target_compile_definitions(mcdk_project_test_core PRIVATE MCDK_PROJECT_TEST_HOOKS)
+    target_include_directories(mcdk_project_test_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(mcdk_project_test_core PUBLIC mcdevtool)
+    if(WIN32)
+        target_link_libraries(mcdk_project_test_core PUBLIC bcrypt)
+    endif()
+endif()
 
 add_library(mcdk_runtime STATIC
     src/application.cpp
