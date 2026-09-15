@@ -543,7 +543,9 @@ namespace mcdk {
                                  {{{"type", "text"},
                                    {"text",
                                     "Failed to capture game window. "
-                                    "The game window does not exist or is minimized."}}}
+                                    "The window may be missing or minimized, Windows Graphics Capture may be "
+                                    "unavailable or blocked, or no valid frame arrived within 3 seconds. "
+                                    "Window capture requires Windows 10 1903 or later."}}}
                              )}
                         };
                     }

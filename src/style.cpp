@@ -12,9 +12,8 @@
 #include <dwmapi.h>
 #include <objidl.h>
 #include <shobjidl.h>
-#include <gdiplus.h>
+#include "window_capture.h"
 #pragma comment(lib, "dwmapi.lib")
-#pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "uuid.lib")
 #endif
@@ -318,173 +317,12 @@ namespace MCDevTool::Style {
     // 根据指定pid获取窗口内的画面信息 返回压缩480p的jpg数据
     std::optional<std::vector<uint8_t>> captureMinecraftWindow480p(int pid) {
 #ifdef _WIN32
-        // 延迟初始化 GDI+ (线程安全, 仅一次)
-        static ULONG_PTR s_gdipToken = []() {
-            ULONG_PTR                    token = 0;
-            Gdiplus::GdiplusStartupInput input;
-            Gdiplus::GdiplusStartup(&token, &input, nullptr);
-            return token;
-        }();
-        (void)s_gdipToken;
-
-        // 查找 Minecraft 窗口
         static const std::wstring keyword = L"Minecraft";
-        HWND                      hwnd    = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
+        HWND                     hwnd    = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
         if (!hwnd || IsIconic(hwnd)) {
-            return std::nullopt; // 窗口不存在或最小化
-        }
-
-        // ---- 临时切换到 Per-Monitor DPI 感知，获取物理像素尺寸 ----
-        // 避免 DPI 虚拟化导致 GetWindowRect/GetClientRect 返回缩放后的逻辑坐标
-        using SetThreadDpiAwarenessContext_t      = DPI_AWARENESS_CONTEXT(WINAPI*)(DPI_AWARENESS_CONTEXT);
-        SetThreadDpiAwarenessContext_t pSetDpiCtx = nullptr;
-        DPI_AWARENESS_CONTEXT          oldDpiCtx  = nullptr;
-
-        if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
-            pSetDpiCtx = reinterpret_cast<SetThreadDpiAwarenessContext_t>(
-                GetProcAddress(user32, "SetThreadDpiAwarenessContext")
-            );
-        }
-        if (pSetDpiCtx) {
-            oldDpiCtx = pSetDpiCtx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        }
-
-        // 获取客户区尺寸（物理像素）
-        RECT clientRect{};
-        if (!GetClientRect(hwnd, &clientRect)) {
-            if (pSetDpiCtx && oldDpiCtx) pSetDpiCtx(oldDpiCtx);
             return std::nullopt;
         }
-        int srcW = clientRect.right;
-        int srcH = clientRect.bottom;
-        if (srcW <= 0 || srcH <= 0) {
-            if (pSetDpiCtx && oldDpiCtx) pSetDpiCtx(oldDpiCtx);
-            return std::nullopt;
-        }
-
-        // 获取窗口整体尺寸（物理像素, PrintWindow 需要）
-        RECT windowRect{};
-        GetWindowRect(hwnd, &windowRect);
-        int winW = windowRect.right - windowRect.left;
-        int winH = windowRect.bottom - windowRect.top;
-
-        // 计算客户区在窗口中的偏移（物理像素）
-        POINT clientOrigin = {0, 0};
-        ClientToScreen(hwnd, &clientOrigin);
-        int offsetX = clientOrigin.x - windowRect.left;
-        int offsetY = clientOrigin.y - windowRect.top;
-
-        // 恢复原 DPI 感知上下文
-        if (pSetDpiCtx && oldDpiCtx) {
-            pSetDpiCtx(oldDpiCtx);
-        }
-
-        // --- 使用屏幕 DC 以确保位图使用物理像素分辨率 ---
-        HDC hdcScreen = GetDC(nullptr);
-        if (!hdcScreen) return std::nullopt;
-
-        // 1. 捕获整个窗口（物理像素尺寸）
-        HDC     hdcCapture = CreateCompatibleDC(hdcScreen);
-        HBITMAP hCapBmp    = CreateCompatibleBitmap(hdcScreen, winW, winH);
-        HGDIOBJ hOldCap    = SelectObject(hdcCapture, hCapBmp);
-
-        // PrintWindow: PW_RENDERFULLCONTENT(0x02) 支持窗口被遮挡时也能捕获
-        if (!PrintWindow(hwnd, hdcCapture, 0x02)) {
-            // 回退到 BitBlt（窗口被遮挡时可能无法获取完整画面）
-            HDC hdcWindow = GetDC(hwnd);
-            if (hdcWindow) {
-                BitBlt(hdcCapture, 0, 0, winW, winH, hdcWindow, 0, 0, SRCCOPY);
-                ReleaseDC(hwnd, hdcWindow);
-            }
-        }
-
-        // 2. 计算目标 480p 尺寸 (基于客户区保持宽高比)
-        constexpr int TARGET_H = 480;
-        int           dstW, dstH;
-        if (srcH <= TARGET_H) {
-            dstW = srcW;
-            dstH = srcH;
-        } else {
-            double scale = static_cast<double>(TARGET_H) / srcH;
-            dstW         = static_cast<int>(srcW * scale + 0.5);
-            dstH         = TARGET_H;
-        }
-
-        // 3. 从捕获位图中裁剪客户区 -> 缩放到目标尺寸
-        HDC     hdcScaled = CreateCompatibleDC(hdcScreen);
-        HBITMAP hScaleBmp = CreateCompatibleBitmap(hdcScreen, dstW, dstH);
-        HGDIOBJ hOldScale = SelectObject(hdcScaled, hScaleBmp);
-
-        SetStretchBltMode(hdcScaled, HALFTONE);
-        SetBrushOrgEx(hdcScaled, 0, 0, nullptr);
-        StretchBlt(hdcScaled, 0, 0, dstW, dstH, hdcCapture, offsetX, offsetY, srcW, srcH, SRCCOPY);
-
-        // GDI+ Bitmap 从 HBITMAP 构建
-        Gdiplus::Bitmap bitmap(hScaleBmp, nullptr);
-
-        // 查找 JPEG 编码器 CLSID
-        CLSID jpegClsid{};
-        bool  foundEncoder = false;
-        {
-            UINT num = 0, size = 0;
-            Gdiplus::GetImageEncodersSize(&num, &size);
-            if (size > 0) {
-                auto buf    = std::make_unique<uint8_t[]>(size);
-                auto codecs = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buf.get());
-                Gdiplus::GetImageEncoders(num, size, codecs);
-                for (UINT i = 0; i < num; i++) {
-                    if (wcscmp(codecs[i].MimeType, L"image/jpeg") == 0) {
-                        jpegClsid    = codecs[i].Clsid;
-                        foundEncoder = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        std::optional<std::vector<uint8_t>> result = std::nullopt;
-
-        if (foundEncoder) {
-            // JPEG 质量参数
-            Gdiplus::EncoderParameters params;
-            ULONG                      quality = 75;
-            params.Count                       = 1;
-            params.Parameter[0].Guid           = Gdiplus::EncoderQuality;
-            params.Parameter[0].Type           = Gdiplus::EncoderParameterValueTypeLong;
-            params.Parameter[0].NumberOfValues = 1;
-            params.Parameter[0].Value          = &quality;
-
-            // 编码到内存流
-            IStream* pStream = nullptr;
-            if (SUCCEEDED(CreateStreamOnHGlobal(nullptr, TRUE, &pStream)) && pStream) {
-                if (bitmap.Save(pStream, &jpegClsid, &params) == Gdiplus::Ok) {
-                    // 读取流数据
-                    STATSTG stat{};
-                    pStream->Stat(&stat, STATFLAG_NONAME);
-                    ULONG dataSize = static_cast<ULONG>(stat.cbSize.QuadPart);
-                    if (dataSize > 0) {
-                        std::vector<uint8_t> jpegData(dataSize);
-                        LARGE_INTEGER        li{};
-                        pStream->Seek(li, STREAM_SEEK_SET, nullptr);
-                        ULONG bytesRead = 0;
-                        pStream->Read(jpegData.data(), dataSize, &bytesRead);
-                        result = std::move(jpegData);
-                    }
-                }
-                pStream->Release();
-            }
-        }
-
-        // 清理 GDI 资源
-        SelectObject(hdcCapture, hOldCap);
-        DeleteObject(hCapBmp);
-        DeleteDC(hdcCapture);
-        SelectObject(hdcScaled, hOldScale);
-        DeleteObject(hScaleBmp);
-        DeleteDC(hdcScaled);
-        ReleaseDC(nullptr, hdcScreen);
-
-        return result;
+        return Detail::captureWindow480p(hwnd);
 #else
         (void)pid;
         return std::nullopt;

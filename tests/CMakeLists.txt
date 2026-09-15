@@ -21,6 +21,13 @@ add_executable(captureTest captureTest.cpp)
 target_compile_features(captureTest PRIVATE cxx_std_23)
 target_link_libraries(captureTest PRIVATE mcdevtool)
 
+if(WIN32)
+    # 需要交互式桌面及可用的 WGC / OpenGL 环境，按需运行。
+    add_executable(window_capture_test window_capture_test.cpp)
+    target_compile_features(window_capture_test PRIVATE cxx_std_23)
+    target_link_libraries(window_capture_test PRIVATE mcdevtool opengl32 gdi32)
+endif()
+
 add_executable(hot_reload_filter_test hot_reload_filter_test.cpp)
 target_compile_features(hot_reload_filter_test PRIVATE cxx_std_23)
 target_link_libraries(hot_reload_filter_test PRIVATE mcdk_core)

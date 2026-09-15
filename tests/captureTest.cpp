@@ -44,24 +44,33 @@ static int findMinecraftWindowPid() {
     return static_cast<int>(ctx.pid); // 0表示未找到
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     SetConsoleCP(CP_UTF8);
     SetConsoleOutputCP(CP_UTF8);
 
-    auto pid  = findMinecraftWindowPid();
+    auto pid = findMinecraftWindowPid();
+    if (pid == 0) {
+        std::cerr << "Minecraft window not found." << std::endl;
+        return 1;
+    }
     auto data = MCDevTool::Style::captureMinecraftWindow480p(pid);
     if (!data.has_value()) {
         std::cerr << "Failed to capture Minecraft window." << std::endl;
         return 1;
     }
-    auto          outPut = "D:\\Zero123\\CPP\\CMAKE\\MCDevTool\\.roo\\test.jpg";
-    std::ofstream file(outPut, std::ios::binary);
-    if (file.is_open()) {
-        file.write(reinterpret_cast<const char*>(data->data()), data->size());
-        file.close();
+    const std::filesystem::path outPut = argc > 1 ? argv[1] : "capture.jpg";
+    std::ofstream               file(outPut, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open output file: " << outPut << std::endl;
+        return 1;
     }
-
-    std::cout << MCDevTool::Style::clickMinecraftWindowAt(pid, 0.5, 0.5) << std::endl; // 点击窗口中心
+    file.write(reinterpret_cast<const char*>(data->data()), static_cast<std::streamsize>(data->size()));
+    file.close();
+    if (!file) {
+        std::cerr << "Failed to write screenshot: " << outPut << std::endl;
+        return 1;
+    }
+    std::cout << "Screenshot saved to: " << std::filesystem::absolute(outPut) << std::endl;
 
     return 0;
 }

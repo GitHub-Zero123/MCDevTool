@@ -54,6 +54,7 @@ add_library(mcdevtool OBJECT
     src/reload.cpp
     src/debug.cpp
     src/style.cpp
+    src/window_capture.cpp
 )
 set_target_properties(mcdevtool PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(mcdevtool PRIVATE cxx_std_23)
@@ -63,6 +64,9 @@ target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nlohmann)
 # target_include_directories(mcdevtool PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/nbt/include)
 target_link_libraries(mcdevtool PUBLIC NBT mcdevtool_game_discovery)
+if(WIN32)
+    target_link_libraries(mcdevtool PUBLIC d3d11 dwmapi windowsapp windowscodecs ole32)
+endif()
 
 add_subdirectory(mods)
 add_subdirectory(tools)

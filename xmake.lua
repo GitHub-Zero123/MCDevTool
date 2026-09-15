@@ -89,6 +89,7 @@ target("mcdevtool")
         "src/reload.cpp",
         "src/debug.cpp",
         "src/style.cpp",
+        "src/window_capture.cpp",
         "src/game_discovery.cpp"
     )
     add_includedirs("include", {public = true})
@@ -98,7 +99,7 @@ target("mcdevtool")
     add_deps("NBT")
     
     if is_plat("windows") then
-        add_syslinks("user32", "shell32", {public = true})
+        add_syslinks("user32", "shell32", "d3d11", "dwmapi", "windowsapp", "windowscodecs", "ole32", {public = true})
     end
 target_end()
 
@@ -230,6 +231,16 @@ if has_config("build_mcdk") then
 end
 
 if has_config("build_test") then
+    if is_plat("windows") then
+        target("window_capture_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/window_capture_test.cpp")
+            add_deps("mcdevtool")
+            add_syslinks("opengl32", "gdi32")
+        target_end()
+    end
+
     target("test1")
         set_kind("binary")
         set_languages("c++20")
