@@ -31,6 +31,8 @@
 
 拖拽按 Minecraft 的判定方式实现：移动到起点 → 按下 → 停顿 → 插值移动 → 停顿 → 松开。中间的插值移动是必需的，只有起止两个事件会被游戏当成一次普通点击。
 
+输入结束后默认保留光标位置，便于继续拖拽、悬停或放置鼠标携带的物品。`restore_cursor` 默认值为 `false`；只有显式设置为 `true` 时，才会在批次结束后将光标移回调用前的位置。
+
 ## 输入法处理
 
 游戏中的 WASD 是动作输入而非打字，输入法开启时按键会被 IME 吞掉或转为候选词。新增 `ime` 选项，默认 `suppress`：批次期间将目标窗口切换到英数直通模式并关闭输入法，结束后恢复原状。`text` 步骤走 Unicode 通道，不受此项影响，中文照常输入。如需保留原有输入法状态，设置 `ime: "keep"`。
@@ -44,6 +46,10 @@
 * 结构化错误：失败时返回明确错误码（`FOCUS_DENIED` / `FOCUS_LOST` / `POINTER_MODE_MISMATCH` / `PRIVILEGE_BLOCKED` / `DESKTOP_UNAVAILABLE` 等）与恢复建议，并说明执行到第几步、哪些输入已被释放。
 
 单批次上限 64 步，默认时间预算 30 秒。`capture: "end"` 可在同一次调用中附带一张执行后的截图。
+
+`logs: "end"` 可同时附带返回时最近的游戏日志，`logs_max_count` 默认 20，范围 1–200，按时间从旧到新排列。日志来自与 `get_latest_logs` 相同的缓冲区，包含历史日志，不保证每条都由本次操作触发。需要等待游戏异步输出时，可在步骤末尾增加 `wait`。
+
+日志同时出现在文本内容和 `data.logs` 中；输入执行失败时放在 `error.progress.logs`，保留原有错误。`logs.available` 区分缓冲区不可用和没有日志。参数校验失败或 `dry_run` 不附带日志，默认 `logs: "none"`。
 
 ## 使用方式
 
@@ -59,7 +65,9 @@
             {"do": "text",  "value": "/gamemode creative"},
             {"do": "key",   "keys": "enter"}
         ],
-        "capture": "end"
+        "capture": "end",
+        "logs": "end",
+        "logs_max_count": 20
     }
 }
 ```

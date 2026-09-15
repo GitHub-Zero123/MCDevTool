@@ -132,6 +132,15 @@ namespace {
 
     json makeTextContent(const std::string& text) { return json::array({{{"type", "text"}, {"text", text}}}); }
 
+    // 取出工具结果里的首段文本，用于把传输层原因透传给结构化错误。
+    std::string firstTextOf(const json& result) {
+        const auto content = result.find("content");
+        if (content == result.end() || !content->is_array() || content->empty()) {
+            return {};
+        }
+        return content->front().value("text", std::string{});
+    }
+
     json makeToolErrorResult(const std::string& text) {
         return json{{"isError", true}, {"content", makeTextContent(text)}};
     }
@@ -472,14 +481,16 @@ namespace {
                             json::parse(mcdk::mc_input_mcp::handleRequest(0, arguments).dump())
                         );
                     }
-                    // 除此之外桥接进程从不自己注入输入：抵达不了 MCDK 就如实返回结构化错误。
+                    // 除此之外桥接进程从不自己注入输入：抵达不了 MCDK 就如实返回结构化错误，
+                    // 并带上传输层的具体原因（目标端点、游戏是否通过 MCDK 启动）。
                     return makeSuccessResponse(
                         id,
                         json::parse(
                             mcdk::mc_input_mcp::buildErrorResult(
                                 arguments.value("op", ""),
                                 "BACKEND_UNAVAILABLE",
-                                "The stdio bridge could not reach MCDK, so no input was sent to the game window.",
+                                "The stdio bridge could not reach MCDK, so no input was sent to the game window. "
+                                    + firstTextOf(remoteResult),
                                 true
                             ).dump()
                         )

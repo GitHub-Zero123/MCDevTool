@@ -566,7 +566,7 @@ namespace mcdk {
             server->register_tool(
                 mcp_tool_definitions::buildMcInputTool(),
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
-                    return mc_input_mcp::handleRequest(mcPid.load(std::memory_order_relaxed), params);
+                    return mc_input_mcp::handleRequest(mcPid.load(std::memory_order_relaxed), params, logBuffer.get());
                 }
             );
         }

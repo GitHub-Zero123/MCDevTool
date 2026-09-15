@@ -1,4 +1,5 @@
 #include <mcdk/mc_input_mcp.hpp>
+#include <mcdk/log_buffer.hpp>
 
 #include <mcdk/mcp_tool_definitions.hpp>
 
@@ -394,7 +395,7 @@ namespace {
          "结束后恢复原状。text 步骤走 Unicode 通道，不受此项影响"},
         {"step_delay_ms", FieldType::Int, false, 0, 2000, {}, "步骤之间的间隔，默认 60（约一个游戏刻）"},
         {"budget_ms", FieldType::Int, false, 100, MaxBudgetMs, {}, "整批时间上限，默认 30000"},
-        {"restore_cursor", FieldType::Bool, false, 0, 0, {}, "结束后把鼠标放回原处，默认 true"},
+        {"restore_cursor", FieldType::Bool, false, 0, 0, {}, "结束后把鼠标放回原处，默认 false，保留操作结束时的位置"},
         {"restore_if_minimized", FieldType::Bool, false, 0, 0, {}, "窗口最小化时先还原，默认 true"},
         {"leave_held",
          FieldType::Bool,
@@ -405,6 +406,14 @@ namespace {
          "批次结束后保持按下状态，默认 false；必须用 /release-all 收尾"},
         {"dry_run", FieldType::Bool, false, 0, 0, {}, "只校验并换算坐标，不投递任何输入"},
         {"capture", FieldType::Enum, false, 0, 0, CaptureNames, "end=结束后附带一张截图，默认 none"},
+        {"logs",
+         FieldType::Enum,
+         false,
+         0,
+         0,
+         CaptureNames,
+         "end=结束后附带最近日志（包含历史日志），默认 none；dry_run 不附带"},
+        {"logs_max_count", FieldType::Int, false, 1, 200, {}, "附带日志的最大条数，默认 20，按时间从旧到新排列"},
     };
 
     constexpr FieldSpec StepsField[]{
@@ -417,7 +426,7 @@ namespace {
         options.ime                = enumField(args, "ime", ImeNames, Engine::ImePolicy::Suppress);
         options.stepDelayMs        = intField(args, "step_delay_ms", 60);
         options.budgetMs           = intField(args, "budget_ms", 30000);
-        options.restoreCursor      = boolField(args, "restore_cursor", true);
+        options.restoreCursor      = boolField(args, "restore_cursor", options.restoreCursor);
         options.restoreIfMinimized = boolField(args, "restore_if_minimized", true);
         options.leaveHeld          = boolField(args, "leave_held", false);
         options.dryRun             = boolField(args, "dry_run", false);
@@ -588,6 +597,16 @@ namespace {
         if (image.has_value()) {
             content.push_back(Json{{"type", "image"}, {"data", *image}, {"mimeType", "image/jpeg"}});
         }
+        const auto& data = body.at("ok").get<bool>() ? body.at("data") : body.at("error").at("progress");
+        if (data.is_object() && data.contains("logs")) {
+            const auto& logs = data.at("logs");
+            std::string text =
+                logs.at("available").get<bool>() ? "Recent game logs (oldest first):" : "Game log buffer unavailable.";
+            for (const auto& line : logs.at("entries")) {
+                text += "\n" + line.get<std::string>();
+            }
+            content.push_back(Json{{"type", "text"}, {"text", std::move(text)}});
+        }
         return Json{
             {"isError", !body.at("ok").get<bool>()},
             {"content", std::move(content)},
@@ -620,8 +639,23 @@ namespace {
     // --- 操作实现 ---
 
     struct Context {
-        int pid = 0;
+        int              pid       = 0;
+        mcdk::LogBuffer* logBuffer = nullptr;
     };
+
+    void appendLogs(const Context& context, const Json& args, Json& data) {
+        if (args.value("logs", "none") != "end" || boolField(args, "dry_run", false)) {
+            return;
+        }
+        const auto maxCount = static_cast<std::size_t>(intField(args, "logs_max_count", 20));
+        data["logs"]        = Json{
+                   {"available", context.logBuffer != nullptr},
+                   {"entries",
+             context.logBuffer != nullptr ? context.logBuffer->getLatest(maxCount) : std::vector<std::string>{}},
+                   {"order", "asc"},
+                   {"max_count", maxCount},
+        };
+    }
 
     Json fieldsJson(std::span<const FieldSpec> fields) {
         Json listed = Json::array();
@@ -876,14 +910,20 @@ namespace {
                                       + " step(s) to the game window. Input is queued, not confirmed — verify with "
                                         "capture_game_window or logs.";
 
+                        Json data = reportJson(report);
+                        appendLogs(context, args, data);
                         return Payload{
-                            reportJson(report),
+                            std::move(data),
                             buildWarnings(report, wanted, image.has_value()),
                             summary,
                             std::move(image),
                         };
                     })
-                    .transform_error(toFailure);
+                    .transform_error([&](const Engine::Error& error) {
+                        auto failure = toFailure(error);
+                        appendLogs(context, args, failure.progress);
+                        return failure;
+                    });
             });
     }
 
@@ -998,9 +1038,9 @@ namespace mcdk::mc_input_mcp {
     }
 
     // 全工具唯一的 try：任何未归类的异常都在这里变成 INTERNAL 错误信封。
-    nlohmann::json handleRequest(int pid, const nlohmann::json& arguments) noexcept {
+    nlohmann::json handleRequest(int pid, const nlohmann::json& arguments, LogBuffer* logBuffer) noexcept {
         try {
-            const auto result = dispatch(Context{pid}, arguments);
+            const auto result = dispatch(Context{pid, logBuffer}, arguments);
             return result.has_value() ? renderPayload(opOf(arguments), std::move(*result))
                                       : renderFailure(opOf(arguments), result.error());
         } catch (const std::exception& error) {
@@ -1019,7 +1059,8 @@ namespace mcdk::mcp_tool_definitions {
         tool.name = std::string(mc_input_mcp::ToolName);
         tool.description =
             "Drives the Minecraft game window through keyboard and mouse input. One call can run a whole ordered "
-            "sequence: clicks, long presses, drags, wheel, camera motion, text and waits. Call /help first; /state "
+            "sequence: clicks, long presses, drags, wheel, camera motion, text and waits. "
+            "Use capture='end' and logs='end' to attach a screenshot and recent logs. Call /help first; /state "
             "reports window geometry and whether the game currently holds the pointer. Coordinates default to the "
             "0.0-1.0 percentage space shared with capture_game_window. A successful result means input was dispatched "
             "to the system queue, not that the game reacted - verify with capture_game_window or logs. Input uses "

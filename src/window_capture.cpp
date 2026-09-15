@@ -45,6 +45,22 @@ namespace MCDevTool::Style::Detail {
             }
         };
 
+        void keepCaptureModuleLoaded(IUnknown* factory) {
+            // WGC 的 Close 返回后仍可能有系统后台任务。最后一个 MTA 注销时卸载
+            // 实现 DLL，会使这些任务执行已卸载的代码，导致整个宿主进程访问冲突。
+            // 根据工厂虚表定位实际实现模块，固定到进程结束，不依赖系统 DLL 文件名。
+            [[maybe_unused]] static const HMODULE captureModule = [factory] {
+                const auto vtable = *reinterpret_cast<const void* const* const*>(factory);
+                HMODULE    module = nullptr;
+                winrt::check_bool(GetModuleHandleExW(
+                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                    reinterpret_cast<LPCWSTR>(vtable),
+                    &module
+                ));
+                return module;
+            }();
+        }
+
         struct DpiContext {
             DPI_AWARENESS_CONTEXT previous = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             ~DpiContext() {
@@ -204,6 +220,7 @@ namespace MCDevTool::Style::Detail {
             }
 
             auto interop = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+            keepCaptureModuleLoaded(interop.get());
             GraphicsCaptureItem item{nullptr};
             winrt::check_hresult(
                 interop->CreateForWindow(hwnd, winrt::guid_of<GraphicsCaptureItem>(), winrt::put_abi(item))

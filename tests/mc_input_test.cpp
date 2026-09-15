@@ -1,4 +1,5 @@
 #include <mcdk/mc_input_mcp.hpp>
+#include <mcdk/log_buffer.hpp>
 
 #include <iostream>
 #include <string>
@@ -164,6 +165,64 @@ int main() {
         }
     );
     passed &= expect(errorCode(holdAndDrag) == "WINDOW_NOT_FOUND", "a full hold/drag batch passes validation");
+
+    // --- 结束附带日志：窗口失败仍能读取日志，不改变原有错误语义 ---
+    mcdk::LogBuffer logs;
+    for (int index = 0; index < 25; ++index) {
+        logs.add("line " + std::to_string(index));
+    }
+    Json       logArgs{{"ms", 0}, {"logs", "end"}, {"logs_max_count", 2}};
+    const auto withLogs = [&](const Json& args) {
+        return mcdk::mc_input_mcp::handleRequest(0, Json{{"op", "/wait"}, {"args", args}}, &logs);
+    };
+    const auto logged     = withLogs(logArgs);
+    passed               &= expect(errorCode(logged) == "WINDOW_NOT_FOUND", "logs preserve the input failure");
+    const auto& attached  = logged["structuredContent"]["error"]["progress"]["logs"];
+    passed               &= expect(attached["available"] == true, "the configured log buffer is available");
+    passed               &= expect(
+        attached["entries"] == Json::array({"line 23", "line 24"}) && attached["order"] == "asc",
+        "logs return the requested tail in chronological order"
+    );
+    passed &= expect(
+        logged["content"].back()["text"].get<std::string>().find("line 23\nline 24") != std::string::npos,
+        "logs are also readable by clients that only consume text content"
+    );
+    logArgs.erase("logs_max_count");
+    const auto defaultLogs  = withLogs(logArgs);
+    passed                 &= expect(
+        defaultLogs["structuredContent"]["error"]["progress"]["logs"]["entries"].size() == 20,
+        "the default log limit is 20"
+    );
+    const auto unavailable  = call(Json{{"op", "/wait"}, {"args", logArgs}});
+    passed                 &= expect(
+        unavailable["structuredContent"]["error"]["progress"]["logs"]["available"] == false,
+        "an absent log buffer is reported without replacing the input error"
+    );
+    logs.clear();
+    const auto emptyLogs  = withLogs(logArgs);
+    passed               &= expect(
+        emptyLogs["structuredContent"]["error"]["progress"]["logs"]["entries"].empty(),
+        "an empty log buffer produces an empty list"
+    );
+    logArgs["dry_run"]  = true;
+    passed             &= expect(
+        !withLogs(logArgs)["structuredContent"]["error"]["progress"].contains("logs"),
+        "dry_run does not attach logs"
+    );
+    logArgs.erase("dry_run");
+    logArgs["logs"]  = "none";
+    passed          &= expect(
+        !withLogs(logArgs)["structuredContent"]["error"]["progress"].contains("logs"),
+        "logs=none leaves the existing response unchanged"
+    );
+    logArgs["logs"] = "end";
+    for (const auto& value : Json::array({0, 201, "20"})) {
+        logArgs["logs_max_count"] = value;
+        passed &= expect(errorCode(withLogs(logArgs)) == "INVALID_ARGUMENT", "invalid log limits are rejected");
+    }
+    logArgs.erase("logs_max_count");
+    logArgs["logs"]  = "invalid";
+    passed          &= expect(errorCode(withLogs(logArgs)) == "INVALID_ARGUMENT", "unknown log modes are rejected");
 
     std::cout << (passed ? "mc_input tests passed" : "mc_input tests failed") << '\n';
     return passed ? 0 : 1;

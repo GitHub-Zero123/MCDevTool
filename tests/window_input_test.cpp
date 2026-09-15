@@ -159,8 +159,7 @@ namespace {
 
     Engine::Options baseOptions() {
         Engine::Options options;
-        options.stepDelayMs   = 30;
-        options.restoreCursor = false; // 断言依赖注入结束时的指针位置
+        options.stepDelayMs = 30;
         return options;
     }
 
@@ -351,6 +350,7 @@ int main() {
             reportError("leave_held", report.error());
         } else {
             expect(report->held.size() == 1 && report->held[0] == "shift", "leave_held reports what stays down");
+            expect(report->released.empty(), "leave_held does not report a held key as released");
             expect(countOf(WM_KEYUP) == 0, "leave_held does not release the key");
         }
 
@@ -366,6 +366,71 @@ int main() {
             expect(released->released.size() == 1, "release-all reports the released input");
             expect(countOf(WM_KEYUP) == 1, "release-all actually sends the key up");
             expect(Engine::heldKeys().empty(), "nothing remains held afterwards");
+        }
+    }
+
+    // --- 回归：拉弓这类跨调用鼠标长按也不能误报 released ---
+    {
+        auto options      = baseOptions();
+        options.leaveHeld = true;
+
+        auto report = runSteps(
+            {Engine::ClickStep{
+                Engine::Point{0.5, 0.5},
+                Engine::MouseButton::Right,
+                Engine::PressAction::Down,
+                0,
+                {}
+            }},
+            options
+        );
+        if (!report.has_value()) {
+            reportError("leave_held(mouse)", report.error());
+        } else {
+            expect(report->held == std::vector<std::string>{"mouse:right"}, "the right button remains held");
+            expect(report->released.empty(), "a held mouse button is not reported as released");
+            expect(countOf(WM_RBUTTONDOWN) == 1 && countOf(WM_RBUTTONUP) == 0, "the mouse stays down across calls");
+        }
+
+        auto released = runSteps(
+            {Engine::ClickStep{std::nullopt, Engine::MouseButton::Right, Engine::PressAction::Up, 0, {}}},
+            baseOptions()
+        );
+        if (!released.has_value()) {
+            reportError("explicit up(mouse)", released.error());
+        } else {
+            expect(released->held.empty(), "the right button is no longer held after release");
+            expect(countOf(WM_RBUTTONUP) == 1, "the explicit mouse release reaches the window");
+        }
+    }
+
+    // --- 回归：显式 up 必须同时销掉跨调用登记表，否则 held 只增不减 ---
+    {
+        auto options      = baseOptions();
+        options.leaveHeld = true;
+
+        auto held = runSteps({Engine::KeyStep{{*Engine::findKey("shift")}, Engine::PressAction::Down, 0, 1}}, options);
+        if (!held.has_value()) {
+            reportError("leave_held(again)", held.error());
+        } else {
+            expect(Engine::heldKeys().size() == 1, "the key is registered as held across calls");
+        }
+
+        // 再按一次同一个键：登记表里不应出现两条。
+        auto again = runSteps({Engine::KeyStep{{*Engine::findKey("shift")}, Engine::PressAction::Down, 0, 1}}, options);
+        if (!again.has_value()) {
+            reportError("leave_held(duplicate)", again.error());
+        } else {
+            expect(Engine::heldKeys().size() == 1, "re-pressing a held key does not duplicate the registry entry");
+        }
+
+        auto released =
+            runSteps({Engine::KeyStep{{*Engine::findKey("shift")}, Engine::PressAction::Up, 0, 1}}, baseOptions());
+        if (!released.has_value()) {
+            reportError("explicit up", released.error());
+        } else {
+            expect(Engine::heldKeys().empty(), "an explicit up clears the cross-call registry");
+            expect(released->held.empty(), "the report no longer lists the released key as held");
         }
     }
 

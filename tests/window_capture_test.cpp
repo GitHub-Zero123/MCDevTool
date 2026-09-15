@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include "mcdevtool/style.h"
 
 namespace {
@@ -213,9 +214,91 @@ namespace {
         require(printMessages == 0, "Capture sent WM_PRINT / WM_PRINTCLIENT to the OpenGL window");
         std::cout << "PASS: " << label << '\n';
     }
+
+    int captureWithoutCallerCom(int pid) {
+        // 必须在独立进程执行，避免父测试进程的 MTA 掩盖截图线程注销后的崩溃。
+        APTTYPE          apartmentType{};
+        APTTYPEQUALIFIER qualifier{};
+        require(
+            CoGetApartmentType(&apartmentType, &qualifier) == CO_E_NOTINITIALIZED,
+            "Capture regression requires an uninitialized caller"
+        );
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            auto result = MCDevTool::Style::captureMinecraftWindow480p(pid);
+            require(
+                result && result->size() > 2 && (*result)[0] == 0xff && (*result)[1] == 0xd8,
+                "Capture without caller COM initialization failed"
+            );
+            // 旧实现已返回 JPEG，但稍后的 WGC 后台任务会执行已卸载 DLL 中的代码。
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+        require(!MCDevTool::Style::captureMinecraftWindow480p(-1), "Unknown PID must fail");
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        return 0;
+    }
+
+    void verifyCaptureWithoutCallerCom(OpenGlWindow& window) {
+        wchar_t executable[32768]{};
+        require(GetModuleFileNameW(nullptr, executable, 32768) != 0, "GetModuleFileName failed");
+        std::wstring command =
+            L"\"" + std::wstring(executable) + L"\" --capture-without-com " + std::to_wstring(GetCurrentProcessId());
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        require(
+            CreateProcessW(
+                executable,
+                command.data(),
+                nullptr,
+                nullptr,
+                FALSE,
+                CREATE_NO_WINDOW,
+                nullptr,
+                nullptr,
+                &startup,
+                &process
+            ),
+            "Create capture regression process failed"
+        );
+        winrt::handle processHandle{process.hProcess};
+        winrt::handle threadHandle{process.hThread};
+        try {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+            while (true) {
+                const auto status = WaitForSingleObject(processHandle.get(), 16);
+                if (status == WAIT_OBJECT_0) {
+                    break;
+                }
+                require(status == WAIT_TIMEOUT, "Wait for capture regression failed");
+                require(std::chrono::steady_clock::now() < deadline, "Capture regression timed out");
+                window.render();
+            }
+            DWORD exitCode = 0;
+            require(GetExitCodeProcess(processHandle.get(), &exitCode), "Get capture regression exit code failed");
+            if (exitCode != 0) {
+                std::cerr << "Capture regression process exited with 0x" << std::hex << exitCode << std::dec << '\n';
+            }
+            require(exitCode == 0, "Capture process crashed after returning a screenshot");
+        } catch (...) {
+            if (WaitForSingleObject(processHandle.get(), 0) == WAIT_TIMEOUT) {
+                TerminateProcess(processHandle.get(), 1);
+                WaitForSingleObject(processHandle.get(), 5000);
+            }
+            throw;
+        }
+        std::cout << "PASS: repeated capture without caller COM / delayed cleanup / process exit\n";
+    }
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc == 3 && std::string_view(argv[1]) == "--capture-without-com") {
+        try {
+            return captureWithoutCallerCom(std::stoi(argv[2]));
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
     winrt::init_apartment();
     SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     int result = 0;
@@ -231,6 +314,7 @@ int main() {
             window.render();
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
+        verifyCaptureWithoutCallerCom(window);
         captureAndVerify(window, 640, 480, "OpenGL SwapBuffers / 480p / client crop");
 
         Occluder cover;

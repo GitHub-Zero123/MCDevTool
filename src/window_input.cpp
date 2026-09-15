@@ -172,20 +172,23 @@ namespace MCDevTool::Input {
 #ifdef _WIN32
         using Clock = std::chrono::steady_clock;
 
-        constexpr int FocusWaitMs   = 400; // 等待窗口真正到达前台
-        constexpr int FocusSettleMs = 120; // 焦点切换后游戏重新接管输入所需的缓冲
-        constexpr int RestoreWaitMs = 120; // 还原最小化窗口后的缓冲
-        constexpr int SliceMs       = 20;  // 睡眠切片，保证守卫及时生效
-        constexpr int LockWaitMs    = 250; // 输入互斥的等待上限
-        constexpr int SegmentGapMs  = 8;   // 拖拽/视角插值点之间的间隔
-        constexpr int DoubleGapMs   = 40;  // 双击两次按下之间的间隔
-        constexpr int ImeWaitMs     = 200; // 与目标进程 IME 窗口通信的等待上限
+        constexpr int FocusWaitMs   = 400;   // 等待窗口真正到达前台
+        constexpr int FocusSettleMs = 120;   // 焦点切换后游戏重新接管输入所需的缓冲
+        constexpr int RestoreWaitMs = 120;   // 还原最小化窗口后的缓冲
+        constexpr int SliceMs       = 20;    // 睡眠切片，保证守卫及时生效
+        constexpr int LockWaitMs    = 250;   // 输入互斥的等待上限
+        constexpr int SegmentGapMs  = 8;     // 拖拽/视角插值点之间的间隔
+        constexpr int DoubleGapMs   = 40;    // 双击两次按下之间的间隔
+        constexpr int ImeWaitMs     = 200;   // 与目标进程 IME 窗口通信的等待上限
+        constexpr int HeldLeaseMs   = 60000; // leave_held 的租期上限，超时视为泄漏
 
         // WM_IME_CONTROL 的子命令，公开的 imm.h 并未导出这几个常量。
         constexpr WPARAM ImcGetConversionMode = 0x0001;
         constexpr WPARAM ImcSetConversionMode = 0x0002;
         constexpr WPARAM ImcGetOpenStatus     = 0x0005;
         constexpr WPARAM ImcSetOpenStatus     = 0x0006;
+
+        std::string describeForeground(); // 定义在前台策略一节
 
         std::unexpected<Error> fail(ErrorCode code, std::string message) {
             return std::unexpected(Error{code, std::move(message), {}});
@@ -396,20 +399,21 @@ namespace MCDevTool::Input {
         // --- 已按下未释放的输入 ---
 
         struct Held {
-            std::string   name;
-            std::uint16_t scan     = 0;
-            bool          extended = false;
-            bool          isButton = false;
-            MouseButton   button   = MouseButton::Left;
+            std::string       name;
+            Clock::time_point since    = Clock::now();
+            std::uint16_t     scan     = 0;
+            bool              extended = false;
+            bool              isButton = false;
+            MouseButton       button   = MouseButton::Left;
         };
 
         Held asHeld(const Key& key) {
-            return Held{std::string{key.name}, key.scan, key.extended, false, MouseButton::Left};
+            return Held{std::string{key.name}, Clock::now(), key.scan, key.extended, false, MouseButton::Left};
         }
 
         Held asHeld(MouseButton button) {
             constexpr std::string_view names[]{"mouse:left", "mouse:right", "mouse:middle"};
-            return Held{std::string{names[static_cast<std::size_t>(button)]}, 0, false, true, button};
+            return Held{std::string{names[static_cast<std::size_t>(button)]}, Clock::now(), 0, false, true, button};
         }
 
         INPUT heldEvent(const Held& held, bool up) noexcept {
@@ -417,9 +421,35 @@ namespace MCDevTool::Input {
         }
 
         // 跨调用保留的按下状态，仅在持有输入互斥时访问。
+        std::vector<std::string> releaseEntries(std::vector<Held>& entries) noexcept;
+
+        // 跨调用保留的按下状态。析构挂在静态对象上：进程正常退出时无论走哪条路径，
+        // 都不会把按键留在系统里——这比依赖调用方记得 /release-all 可靠得多。
+        struct Registry {
+            std::vector<Held> entries;
+
+            Registry()                           = default;
+            Registry(const Registry&)            = delete;
+            Registry& operator=(const Registry&) = delete;
+
+            ~Registry() { releaseEntries(entries); }
+        };
+
         std::vector<Held>& registry() noexcept {
-            static std::vector<Held> held;
-            return held;
+            static Registry held;
+            return held.entries;
+        }
+
+        bool sameInput(const Held& left, const Held& right) noexcept {
+            return left.isButton == right.isButton && left.button == right.button && left.scan == right.scan
+                && left.extended == right.extended;
+        }
+
+        void eraseMatch(std::vector<Held>& entries, const Held& held) {
+            auto       reversed = entries | std::views::reverse;
+            const auto found =
+                std::ranges::find_if(reversed, [&](const Held& entry) { return sameInput(entry, held); });
+            if (found != reversed.end()) entries.erase(std::prev(found.base()));
         }
 
         std::vector<std::string> namesOf(const std::vector<Held>& entries) {
@@ -441,6 +471,35 @@ namespace MCDevTool::Input {
             return released;
         }
 
+        BOOL WINAPI onConsoleExit(DWORD) {
+            releaseEntries(registry());
+            return FALSE; // 继续走默认处理
+        }
+
+        // Ctrl+C 与关闭控制台不会执行静态析构，而这正是最容易把按键留在系统里的退出方式。
+        // 只在真的有输入被跨调用保留时才安装，避免给库引入无谓的全局副作用。
+        void installExitGuardOnce() {
+            static const bool installed = SetConsoleCtrlHandler(&onConsoleExit, TRUE) != FALSE;
+            (void)installed;
+        }
+
+        // 超过租期仍未释放的保留输入按泄漏处理：卡住的 shift 会让用户此后所有输入都是错的，
+        // 代价远高于误放一个本该继续按住的键。
+        std::vector<std::string> sweepExpired() {
+            std::vector<Held> expired;
+            auto&             kept = registry();
+            for (auto it = kept.begin(); it != kept.end();) {
+                const bool stale = Clock::now() - it->since >= std::chrono::milliseconds(HeldLeaseMs);
+                if (stale) {
+                    expired.push_back(std::move(*it));
+                    it = kept.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            return releaseEntries(expired);
+        }
+
         // 批次内按下的输入。任何退出路径（正常、报错、异常）都由析构逆序释放。
         struct Ledger {
             std::vector<Held> entries;
@@ -453,28 +512,28 @@ namespace MCDevTool::Input {
 
             void add(Held held) { entries.push_back(std::move(held)); }
 
+            // 释放必须同时销两本账：本批次的账本，以及跨调用保留的全局登记表。
+            // 只销前者会让 action=up 释放掉的键永远留在 held 里，登记表只增不减。
             void forget(const Held& held) {
-                const auto match = [&](const Held& entry) {
-                    return entry.isButton == held.isButton && entry.button == held.button && entry.scan == held.scan
-                        && entry.extended == held.extended;
-                };
-                auto       reversed = entries | std::views::reverse;
-                const auto found    = std::ranges::find_if(reversed, match);
-                if (found != reversed.end()) entries.erase(std::prev(found.base()));
+                eraseMatch(entries, held);
+                eraseMatch(registry(), held);
             }
 
             std::vector<std::string> release() noexcept { return releaseEntries(entries); }
 
             // 移交给全局登记表，跨调用继续保持按下。
-            std::vector<std::string> commit() {
-                auto names = namesOf(entries);
+            void commit() {
+                installExitGuardOnce();
+
+                for (const auto& entry : entries) { // 重复按住同一个键不应在登记表里留下两条
+                    eraseMatch(registry(), entry);
+                }
                 registry().insert(
                     registry().end(),
                     std::make_move_iterator(entries.begin()),
                     std::make_move_iterator(entries.end())
                 );
                 entries.clear();
-                return names;
             }
         };
 
@@ -506,10 +565,12 @@ namespace MCDevTool::Input {
 
             return expired
                      ? Result<void>{fail(ErrorCode::DeadlineExceeded, "The input batch exceeded its time budget.")}
-                 : !alive ? Result<void>{fail(ErrorCode::GameExited, "The game window disappeared during the batch.")}
-                 : !focused
-                     ? Result<void>{fail(ErrorCode::FocusLost, "The game window lost foreground during the batch.")}
-                     : Result<void>{};
+                 : !alive   ? Result<void>{fail(ErrorCode::GameExited, "The game window disappeared during the batch.")}
+                 : !focused ? Result<void>{fail(
+                                  ErrorCode::FocusLost,
+                                  "The game window lost foreground during the batch: " + describeForeground() + "."
+                              )}
+                            : Result<void>{};
         }
 
         long long remainingMs(Clock::time_point until) {
@@ -910,6 +971,33 @@ namespace MCDevTool::Input {
                            : Result<void>{};
         }
 
+        // 抢前台失败时，说清楚是谁占着，否则调用方只能猜。
+        std::string describeForeground() {
+            const HWND current = GetForegroundWindow();
+            if (current == nullptr) return "no window currently holds the foreground";
+
+            wchar_t   title[256]{};
+            const int length = GetWindowTextW(current, title, static_cast<int>(std::size(title)));
+            DWORD     pid    = 0;
+            GetWindowThreadProcessId(current, &pid);
+
+            std::string name(static_cast<std::size_t>(length) * 3 + 1, char{});
+            const int   written = WideCharToMultiByte(
+                CP_UTF8,
+                0,
+                title,
+                length,
+                name.data(),
+                static_cast<int>(name.size()),
+                nullptr,
+                nullptr
+            );
+            name.resize(static_cast<std::size_t>(std::max(written, 0)));
+
+            return "foreground is held by pid " + std::to_string(pid)
+                 + (name.empty() ? std::string{} : " (\"" + name + "\")");
+        }
+
         Result<void> acquireForeground(Session& session) {
             {
                 ForegroundAttach attach{session.hwnd};
@@ -926,7 +1014,8 @@ namespace MCDevTool::Input {
             if (!session.info.foreground) {
                 return fail(
                     ErrorCode::FocusDenied,
-                    "The game window could not be brought to the foreground. Another window may be holding focus."
+                    "The game window could not be brought to the foreground: " + describeForeground()
+                        + ". Windows blocks foreground changes while another process owns the last input event."
                 );
             }
 
@@ -945,7 +1034,8 @@ namespace MCDevTool::Input {
                          ? Result<void>{}
                          : Result<void>{fail(
                                ErrorCode::FocusDenied,
-                               "The game window is not in the foreground and focus policy is require."
+                               "The game window is not in the foreground and focus policy is require: "
+                                   + describeForeground() + "."
                            )};
             case FocusPolicy::Auto:
                 break;
@@ -965,11 +1055,29 @@ namespace MCDevTool::Input {
                      : Result<void>{fail(ErrorCode::WindowMinimized, "The game window client area is empty.")};
         }
 
-        // 游戏在世界内独占指针并隐藏光标，此时绝对坐标没有意义。
-        Result<void> checkPointer(Session& session) {
+        // 游戏独占指针时会同时做两件事：隐藏光标，并把它限制在窗口内。
+        // 只看「光标隐藏」会误判——Windows 默认开启的「打字时隐藏指针」也会隐藏光标，
+        // 用户随便敲几下键盘就足以让后续所有带坐标的调用被拒绝。
+        bool pointerHeldBy(HWND target) noexcept {
             CURSORINFO cursor{};
-            cursor.cbSize              = sizeof(cursor);
-            session.info.pointerLocked = GetCursorInfo(&cursor) != FALSE && (cursor.flags & CURSOR_SHOWING) == 0;
+            cursor.cbSize = sizeof(cursor);
+            if (GetCursorInfo(&cursor) == FALSE || (cursor.flags & CURSOR_SHOWING) != 0) return false;
+            if (GetForegroundWindow() != target) return false; // 后台窗口不可能持有指针
+
+            RECT clip{};
+            if (GetClipCursor(&clip) == FALSE) return false;
+
+            // 未被限制时，clip 覆盖整个虚拟桌面。
+            const LONG left   = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            const LONG top    = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            const LONG right  = left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            const LONG bottom = top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+            return clip.left > left || clip.top > top || clip.right < right || clip.bottom < bottom;
+        }
+
+        Result<void> checkPointer(Session& session) {
+            session.info.pointerLocked = pointerHeldBy(session.hwnd);
             session.info.imeOpen       = imeIsOpen(session.hwnd);
 
             return session.info.pointerLocked && session.absoluteSteps
@@ -1028,36 +1136,46 @@ namespace MCDevTool::Input {
             Options effective = options;
             effective.focus   = options.dryRun ? FocusPolicy::Keep : options.focus;
 
+            Report report;
+            report.total  = steps.size();
+            report.dryRun = effective.dryRun;
+            // 先回收超租的保留输入：即使这次调用随后失败，泄漏的按键也已经放开了。
+            report.released = sweepExpired();
+
             Session session{pid, nullptr, {}, effective, {}, std::ranges::any_of(steps, &stepUsesAbsoluteCoords)};
 
-            return preflight(session).and_then([&]() -> Result<Report> {
-                Report report;
-                report.total  = steps.size();
-                report.dryRun = effective.dryRun;
-                report.window = session.info;
+            return preflight(session)
+                .and_then([&]() -> Result<Report> {
+                    report.window = session.info;
 
-                ImeScope      ime{session.hwnd, effective.ime == ImePolicy::Suppress && !effective.dryRun};
-                CursorRestore restore{effective.restoreCursor && !effective.dryRun};
-                Ledger        ledger;
-                Runtime       runtime{
-                    session.hwnd,
-                    session.client,
-                    effective,
-                    Clock::now() + std::chrono::milliseconds(effective.budgetMs),
-                    ledger
-                };
+                    ImeScope      ime{session.hwnd, effective.ime == ImePolicy::Suppress && !effective.dryRun};
+                    CursorRestore restore{effective.restoreCursor && !effective.dryRun};
+                    Ledger        ledger;
+                    Runtime       runtime{
+                        session.hwnd,
+                        session.client,
+                        effective,
+                        Clock::now() + std::chrono::milliseconds(effective.budgetMs),
+                        ledger
+                    };
 
-                // 副作用记账只有这一处：无论成功还是失败，报告都说明停在哪一步、
-                // 哪些输入已被释放、哪些仍然按着。
-                auto outcome    = execute(runtime, steps, report);
-                report.released = effective.leaveHeld && outcome.has_value() ? ledger.commit() : ledger.release();
-                report.held     = namesOf(registry());
+                    // 副作用记账只有这一处：无论成功还是失败，报告都说明停在哪一步、
+                    // 哪些输入已被释放、哪些仍然按着。
+                    auto outcome = execute(runtime, steps, report);
+                    if (effective.leaveHeld && outcome.has_value()) {
+                        ledger.commit();
+                    } else {
+                        auto released = ledger.release();
+                        report.released.insert(report.released.end(), released.begin(), released.end());
+                    }
+                    report.held = namesOf(registry());
 
-                return outcome.transform([&] { return std::move(report); }).transform_error([&](Error error) {
+                    return outcome.transform([&] { return std::move(report); });
+                })
+                .transform_error([&](Error error) {
                     error.progress = std::move(report);
                     return error;
                 });
-            });
         });
     }
 
@@ -1072,17 +1190,24 @@ namespace MCDevTool::Input {
         return preflight(session).transform([&] { return session.info; });
     }
 
+    // 释放绝不能有前置条件。键抬起本身是安全操作，拒绝执行永远比执行更糟：
+    // 之前这里先跑 preflight，抢不到前台就直接返回，结果把按键永久留在了系统里。
     Result<Report> releaseHeld(int pid) {
         return acquireLock().and_then([&]([[maybe_unused]] Lock lock) -> Result<Report> {
-            DpiScope dpi;
-            Session  session{pid, nullptr, {}, Options{}, {}, false};
+            Report report;
+            report.released = releaseEntries(registry());
 
-            return preflight(session).transform([&] {
-                Report report;
-                report.window   = session.info;
-                report.released = releaseEntries(registry());
-                return report;
-            });
+            // 窗口状态只是附带的诊断信息，取不到也不影响释放本身。
+            DpiScope dpi;
+            Options  options;
+            options.focus              = FocusPolicy::Keep;
+            options.restoreIfMinimized = false;
+
+            Session session{pid, nullptr, {}, options, {}, false};
+            if (preflight(session).has_value()) {
+                report.window = session.info;
+            }
+            return report;
         });
     }
 

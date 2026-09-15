@@ -145,7 +145,7 @@ namespace MCDevTool::Input {
         ImePolicy   ime                = ImePolicy::Suppress;
         int         stepDelayMs        = 60;
         int         budgetMs           = 30000;
-        bool        restoreCursor      = true;
+        bool        restoreCursor      = false;
         bool        restoreIfMinimized = true;
         bool        leaveHeld          = false;
         bool        dryRun             = false;
