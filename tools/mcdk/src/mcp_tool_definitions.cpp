@@ -133,7 +133,9 @@ Parameters:
         tool.name = "mc_input";
         tool.description =
             "Drives the Minecraft game window through keyboard and mouse input. One call can run a whole ordered "
-            "sequence: clicks, long presses, drags, wheel, camera motion, text and waits. "
+            "sequence: clicks, long presses, drags, wheel, camera motion, text and waits. /timeline schedules "
+            "events on an absolute time axis (at_ms + hold_ms) so key and mouse holds can overlap, e.g. jump and "
+            "click while W is held. "
             "Use capture='end' and logs='end' to attach a screenshot and recent logs. Call /help first; /state "
             "reports window geometry and whether the game currently holds the pointer. Coordinates default to the "
             "0.0-1.0 percentage space shared with capture_game_window. A successful result means input was dispatched "

@@ -224,6 +224,102 @@ int main() {
     logArgs["logs"]  = "invalid";
     passed          &= expect(errorCode(withLogs(logArgs)) == "INVALID_ARGUMENT", "unknown log modes are rejected");
 
+    // --- 坐标与位移的范围在校验阶段拒绝，不能等到执行到那一步 ---
+
+    const auto badPoint = call(
+        Json{{"op", "/run"},
+             {"args", {{"steps", Json::array({Json{{"do", "wait"}, {"ms", 10}}, Json{{"do", "move"}, {"at", Json::array({1.5, 0.5})}}})}}}}
+    );
+    passed &= expect(errorCode(badPoint) == "INVALID_ARGUMENT", "out-of-range absolute coordinates fail validation");
+    passed &= expect(mentions(badPoint, "0.0-1.0"), "the coordinate rejection explains the expected range");
+
+    const auto badLook = call(
+        Json{{"op", "/run"}, {"args", {{"steps", Json::array({Json{{"do", "look"}, {"by", Json::array({1e9, 0})}}})}}}}
+    );
+    passed &= expect(errorCode(badLook) == "INVALID_ARGUMENT", "absurd relative movement is rejected");
+
+    // sync 步骤通过校验后同样落到窗口检查上。
+    passed &= expect(
+        errorCode(call(Json{{"op", "/run"}, {"args", {{"steps", Json::array({Json{{"do", "sync"}, {"at_ms", 100}}})}}}}))
+            == "WINDOW_NOT_FOUND",
+        "a sync step is accepted by /run"
+    );
+    passed &= expect(
+        errorCode(call(Json{{"op", "/run"}, {"args", {{"steps", Json::array({Json{{"do", "sync"}}})}}}}))
+            == "INVALID_ARGUMENT",
+        "a sync step requires at_ms"
+    );
+
+    // --- 时间轴：编译结果与校验 ---
+
+    {
+        const Json events = Json::array(
+            {Json{{"at_ms", 0}, {"do", "key"}, {"keys", "w"}, {"hold_ms", 2000}},
+             Json{{"at_ms", 1200}, {"do", "click"}, {"hold_ms", 300}, {"modifiers", "shift"}},
+             Json{{"at_ms", 800}, {"do", "key"}, {"keys", "space"}}}
+        );
+        const auto plan = mcdk::mc_input_mcp::compileTimelinePlan(Json{{"events", events}});
+        passed &= expect(plan["ok"] == true, "a timeline with overlapping holds compiles");
+        passed &= expect(plan["end_ms"] == 2000, "the timeline ends when the longest hold is released");
+
+        std::string trace;
+        for (const auto& step : plan["steps"]) {
+            const std::string kind = step["do"].get<std::string>();
+            trace += trace.empty() ? "" : " ";
+            if (kind == "sync") {
+                trace += "sync@" + std::to_string(step["at_ms"].get<int>());
+            } else if (kind == "key") {
+                trace += "key:" + step["keys"][0].get<std::string>() + ":" + step["action"].get<std::string>();
+            } else {
+                trace += kind + ":" + step["action"].get<std::string>();
+            }
+        }
+        const std::string expected = "sync@0 key:w:down sync@800 key:space:down sync@850 key:space:up "
+                                     "sync@1200 key:shift:down click:down sync@1500 click:up key:shift:up "
+                                     "sync@2000 key:w:up";
+        if (trace != expected) {
+            std::cerr << "  compiled: " << trace << "\n  expected: " << expected << '\n';
+        }
+        passed &= expect(trace == expected, "events are split into down/up, sorted by time and anchored with sync");
+    }
+
+    passed &= expect(
+        mcdk::mc_input_mcp::compileTimelinePlan(Json{{"events", Json::array({Json{{"do", "key"}, {"keys", "w"}}})}})["ok"]
+            == false,
+        "a timeline event requires at_ms"
+    );
+    passed &= expect(
+        mcdk::mc_input_mcp::compileTimelinePlan(
+            Json{{"events", Json::array({Json{{"at_ms", 0}, {"do", "wait"}, {"ms", 100}}})}}
+        )["ok"]
+            == false,
+        "wait is not a timeline event"
+    );
+    {
+        const auto tooLong = mcdk::mc_input_mcp::compileTimelinePlan(
+            Json{{"events", Json::array({Json{{"at_ms", 0}, {"do", "key"}, {"keys", "w"}, {"hold_ms", 40000}}})}}
+        );
+        passed &= expect(tooLong["ok"] == false, "a timeline beyond the budget is rejected");
+        passed &= expect(
+            tooLong["error"]["message"].get<std::string>().find("budget_ms") != std::string::npos,
+            "the budget rejection tells the caller which option to raise"
+        );
+    }
+
+    const auto timelineNoWindow = call(
+        Json{{"op", "/timeline"},
+             {"args", {{"events", Json::array({Json{{"at_ms", 0}, {"do", "key"}, {"keys", "w"}, {"hold_ms", 500}}})}}}}
+    );
+    passed &= expect(errorCode(timelineNoWindow) == "WINDOW_NOT_FOUND", "a valid timeline reaches the engine");
+    passed &= expect(
+        errorCode(call(
+            Json{{"op", "/timeline"},
+                 {"args",
+                  {{"events", Json::array({Json{{"at_ms", 0}, {"do", "key"}, {"keys", "w"}}})}, {"leave_held", true}}}}
+        )) == "INVALID_ARGUMENT",
+        "leave_held is refused on a timeline"
+    );
+
     std::cout << (passed ? "mc_input tests passed" : "mc_input tests failed") << '\n';
     return passed ? 0 : 1;
 }

@@ -21,4 +21,8 @@ namespace mcdk::mc_input_mcp {
     [[nodiscard]] nlohmann::json
     buildErrorResult(std::string_view op, std::string_view code, std::string_view message, bool retryable);
 
+    // 把 /timeline 的 args（events 与可选 budget_ms）编译成带 sync 同步点的顺序步骤，
+    // 返回 {ok, events, end_ms, steps} 或 {ok:false, error}；不投递任何输入，供 dry_run 输出与测试使用。
+    [[nodiscard]] nlohmann::json compileTimelinePlan(const nlohmann::json& args) noexcept;
+
 } // namespace mcdk::mc_input_mcp
