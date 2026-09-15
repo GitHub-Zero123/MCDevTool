@@ -62,7 +62,7 @@ return {"case": "case_name", "ok": True, "duration_ms": 12, "metrics": {"count":
 4. `get_latest_error_logs`：当返回值表示失败、执行异常、结果不符合预期，或需要确认是否有隐藏异常时使用；
 5. `get_latest_logs` 或 `get_log_range`：仅在返回值缺失、日志本身是测试目标、需要分析 `[MCDK_TEST]` 辅助日志，或发生预期外情况时使用；
 6. `capture_game_window`：仅在日志 / 返回值不足以判定视觉结果时使用；
-7. `click_game_window`：仅在测试入口无法覆盖且用户明确需要交互时使用；
+7. `mc_input`：仅在测试入口无法覆盖且用户明确需要交互时使用；先 `/help` 了解步骤与参数，必要时 `/state` 确认指针是否被游戏独占；一次调用用 `/run` 提交整串操作，其成功只代表输入已投递，仍需截图或日志确认结果；使用 `leave_held` 后必须以 `/release-all` 收尾；
 8. `reload_game`：仅在热更新或资源刷新不足时使用；资源级重载传入 `reload_addons=true`。
 
 ### 4. 统计与结论

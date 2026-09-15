@@ -55,6 +55,7 @@ add_library(mcdevtool OBJECT
     src/debug.cpp
     src/style.cpp
     src/window_capture.cpp
+    src/window_input.cpp
 )
 set_target_properties(mcdevtool PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(mcdevtool PRIVATE cxx_std_23)

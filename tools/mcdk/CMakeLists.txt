@@ -39,6 +39,7 @@ add_library(mcdk_core STATIC
     src/mcp_tool_definitions.cpp
     src/mod_dir_config.cpp
     src/mod_register.cpp
+    src/mc_input_mcp.cpp
     src/mc_profiler_mcp.cpp
     src/reload_code.cpp
     src/rpc_registry.cpp

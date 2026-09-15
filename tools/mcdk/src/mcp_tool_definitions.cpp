@@ -60,21 +60,6 @@ Parameters:
             "checks first; use screenshots only when the task explicitly requires visual confirmation or logs cannot "
             "answer the question.";
 
-        constexpr auto ClickGameWindowName = "click_game_window";
-        constexpr auto ClickGameWindowDescription =
-            R"(Simulates a left mouse click at a specific position on the Minecraft game window.
-
-Coordinates are percentage-based (0.0 to 1.0) relative to the client area:
-- (0.0, 0.0) = top-left corner
-- (0.5, 0.5) = center
-- (1.0, 1.0) = bottom-right corner
-
-The coordinate system matches the capture_game_window screenshot exactly.
-The game window will be brought to the foreground automatically before clicking.
-
-Parameters:
-- x: Horizontal position as a percentage (0.0-1.0)
-- y: Vertical position as a percentage (0.0-1.0))";
     } // namespace
 
     mcp::tool buildGetLatestLogsTool() {
@@ -133,15 +118,6 @@ Parameters:
             .build();
     }
 
-    mcp::tool buildClickGameWindowTool() {
-        return mcp::tool_builder(ClickGameWindowName)
-            .with_description(ClickGameWindowDescription)
-            .with_number_param("x", "Horizontal position (0.0=left, 1.0=right)", true)
-            .with_number_param("y", "Vertical position (0.0=top, 1.0=bottom)", true)
-            .with_read_only_hint(false)
-            .build();
-    }
-
     mcp::tool buildJsonUiDebuggerTool() {
         return mcp::tool_builder(jsonui_debugger::ToolName)
             .with_description(jsonui_debugger::ToolDescription)
@@ -159,7 +135,7 @@ Parameters:
             buildJsonUiDebuggerTool(),
             buildReloadGameTool(),
             buildCaptureGameWindowTool(),
-            buildClickGameWindowTool(),
+            buildMcInputTool(),
             buildMcProfilerTool(),
         };
     }

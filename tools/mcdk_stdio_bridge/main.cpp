@@ -13,6 +13,7 @@
 #endif
 
 #include <mcdk/mcp_tool_definitions.hpp>
+#include <mcdk/mc_input_mcp.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
 
 #include <httplib.h>
@@ -459,6 +460,31 @@ namespace {
                 }
                 std::string toolName  = params.value("name", "");
                 json        arguments = params.value("arguments", json::object());
+                if (toolName == mcdk::mc_input_mcp::ToolName) {
+                    auto remoteResult = gameClient_.callTool(toolName, arguments);
+                    if (!remoteResult.value("isError", false) || remoteResult.contains("structuredContent")) {
+                        return makeSuccessResponse(id, std::move(remoteResult));
+                    }
+                    // 说明书是纯函数，即使抵达不了 MCDK 也应当能读到。
+                    if (arguments.value("op", "") == "/help") {
+                        return makeSuccessResponse(
+                            id,
+                            json::parse(mcdk::mc_input_mcp::handleRequest(0, arguments).dump())
+                        );
+                    }
+                    // 除此之外桥接进程从不自己注入输入：抵达不了 MCDK 就如实返回结构化错误。
+                    return makeSuccessResponse(
+                        id,
+                        json::parse(
+                            mcdk::mc_input_mcp::buildErrorResult(
+                                arguments.value("op", ""),
+                                "BACKEND_UNAVAILABLE",
+                                "The stdio bridge could not reach MCDK, so no input was sent to the game window.",
+                                true
+                            ).dump()
+                        )
+                    );
+                }
                 if (toolName == mcdk::mc_profiler_mcp::ToolName) {
                     const auto standardArguments = nlohmann::json::parse(arguments.dump());
                     auto remoteResult = gameClient_.callTool(toolName, arguments);

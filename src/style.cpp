@@ -13,6 +13,7 @@
 #include <objidl.h>
 #include <shobjidl.h>
 #include "window_capture.h"
+#include "window_lookup.h"
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "uuid.lib")
@@ -22,45 +23,6 @@
 
 namespace MCDevTool::Style {
 #ifdef _WIN32
-    // 根据进程ID关键字搜索指定窗口
-    static HWND findWindowByPidAndTitleContains(DWORD pid, const std::wstring& keyword) {
-        struct Context {
-            DWORD               pid;
-            const std::wstring* keyword;
-            HWND                found = nullptr;
-        } ctx{pid, &keyword, nullptr};
-
-        EnumWindows(
-            [](HWND hwnd, LPARAM lParam) -> BOOL {
-                auto& ctx = *(Context*)lParam;
-
-                if (!IsWindowVisible(hwnd)) return TRUE;
-                if (GetWindow(hwnd, GW_OWNER) != nullptr) return TRUE;
-
-                // PID 过滤
-                if (ctx.pid != 0) {
-                    DWORD winPid = 0;
-                    GetWindowThreadProcessId(hwnd, &winPid);
-                    if (winPid != ctx.pid) return TRUE;
-                }
-
-                // 标题过滤
-                wchar_t buf[512];
-                int     len = GetWindowTextW(hwnd, buf, 512);
-                if (len == 0) return TRUE;
-
-                std::wstring title = buf;
-                if (title.find(*ctx.keyword) == std::wstring::npos) return TRUE;
-
-                ctx.found = hwnd;
-                return FALSE; // 找到了就停止枚举
-            },
-            (LPARAM)&ctx
-        );
-
-        return ctx.found; // nullptr
-    }
-
     static void hideWindowFromTaskbar(HWND hwnd) {
         const HRESULT initializeResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         if (FAILED(initializeResult) && initializeResult != RPC_E_CHANGED_MODE) {
@@ -256,8 +218,7 @@ namespace MCDevTool::Style {
 
     // 应用样式到指定 PID 的 Minecraft 窗口
     bool applyStyleToMinecraftWindow(int pid, const StyleConfig& config) {
-        static const std::wstring windowTitleKeyword = L"Minecraft";
-        HWND                      hwnd = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), windowTitleKeyword);
+        HWND hwnd = MCDevTool::Detail::findMinecraftWindow(static_cast<DWORD>(pid));
         if (!hwnd) {
             return false; // 未找到窗口
         }
@@ -317,8 +278,7 @@ namespace MCDevTool::Style {
     // 根据指定pid获取窗口内的画面信息 返回压缩480p的jpg数据
     std::optional<std::vector<uint8_t>> captureMinecraftWindow480p(int pid) {
 #ifdef _WIN32
-        static const std::wstring keyword = L"Minecraft";
-        HWND                     hwnd    = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
+        HWND hwnd = MCDevTool::Detail::findMinecraftWindow(static_cast<DWORD>(pid));
         if (!hwnd || IsIconic(hwnd)) {
             return std::nullopt;
         }
@@ -329,125 +289,9 @@ namespace MCDevTool::Style {
 #endif
     }
 
-    // 根据指定pid点击窗口画面的指定坐标（百分比为单位确保适配不同分辨率）点击坐标为(0.0-1.0, 0.0-1.0)
-    bool clickMinecraftWindowAt(int pid, double xPercent, double yPercent) {
-#ifdef _WIN32
-        if (xPercent < 0.0 || xPercent > 1.0 || yPercent < 0.0 || yPercent > 1.0) {
-            return false;
-        }
-
-        // 查找 Minecraft 窗口
-        static const std::wstring keyword = L"Minecraft";
-        HWND                      hwnd    = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
-        if (!hwnd) {
-            return false;
-        }
-
-        // 如果窗口最小化则先还原
-        if (IsIconic(hwnd)) {
-            ShowWindow(hwnd, SW_RESTORE);
-            Sleep(100);
-        }
-
-        // 强制将窗口拉到前台（SendInput 只对前台窗口有效）
-        {
-            DWORD foreThread   = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
-            DWORD targetThread = GetWindowThreadProcessId(hwnd, nullptr);
-            if (foreThread != targetThread) {
-                AttachThreadInput(foreThread, targetThread, TRUE);
-                SetForegroundWindow(hwnd);
-                BringWindowToTop(hwnd);
-                AttachThreadInput(foreThread, targetThread, FALSE);
-            } else {
-                SetForegroundWindow(hwnd);
-            }
-            // 等待窗口实际到达前台
-            for (int i = 0; i < 20; ++i) {
-                if (GetForegroundWindow() == hwnd) break;
-                Sleep(10);
-            }
-        }
-
-        // 临时切换 DPI 感知，获取物理像素客户区尺寸（与 captureMinecraftWindow480p 一致）
-        using SetThreadDpiAwarenessContext_t      = DPI_AWARENESS_CONTEXT(WINAPI*)(DPI_AWARENESS_CONTEXT);
-        SetThreadDpiAwarenessContext_t pSetDpiCtx = nullptr;
-        DPI_AWARENESS_CONTEXT          oldDpiCtx  = nullptr;
-
-        if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
-            pSetDpiCtx = reinterpret_cast<SetThreadDpiAwarenessContext_t>(
-                GetProcAddress(user32, "SetThreadDpiAwarenessContext")
-            );
-        }
-        if (pSetDpiCtx) {
-            oldDpiCtx = pSetDpiCtx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        }
-
-        // 获取客户区物理像素尺寸
-        RECT clientRect{};
-        if (!GetClientRect(hwnd, &clientRect)) {
-            if (pSetDpiCtx && oldDpiCtx) pSetDpiCtx(oldDpiCtx);
-            return false;
-        }
-        int clientW = clientRect.right;
-        int clientH = clientRect.bottom;
-
-        // 百分比 -> 客户区物理像素坐标
-        int clickX = static_cast<int>(xPercent * clientW + 0.5);
-        int clickY = static_cast<int>(yPercent * clientH + 0.5);
-
-        // 转换为屏幕坐标（用于 SendInput）
-        POINT screenPt = {clickX, clickY};
-        ClientToScreen(hwnd, &screenPt);
-
-        // 获取屏幕物理分辨率（必须在 DPI 感知模式内获取，与 screenPt 坐标系一致）
-        int screenW = GetSystemMetrics(SM_CXSCREEN);
-        int screenH = GetSystemMetrics(SM_CYSCREEN);
-
-        // 恢复原 DPI 感知上下文
-        if (pSetDpiCtx && oldDpiCtx) {
-            pSetDpiCtx(oldDpiCtx);
-        }
-
-        if (screenW <= 0 || screenH <= 0) return false;
-
-        // SendInput 使用 0~65535 归一化坐标
-        LONG normX = static_cast<LONG>((screenPt.x * 65535LL + screenW / 2) / screenW);
-        LONG normY = static_cast<LONG>((screenPt.y * 65535LL + screenH / 2) / screenH);
-
-        INPUT inputs[3] = {};
-
-        // 1. 移动鼠标到目标位置
-        inputs[0].type       = INPUT_MOUSE;
-        inputs[0].mi.dx      = normX;
-        inputs[0].mi.dy      = normY;
-        inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
-
-        // 2. 鼠标左键按下
-        inputs[1].type       = INPUT_MOUSE;
-        inputs[1].mi.dx      = normX;
-        inputs[1].mi.dy      = normY;
-        inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN;
-
-        // 3. 鼠标左键松开
-        inputs[2].type       = INPUT_MOUSE;
-        inputs[2].mi.dx      = normX;
-        inputs[2].mi.dy      = normY;
-        inputs[2].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
-
-        UINT sent = SendInput(3, inputs, sizeof(INPUT));
-        return sent == 3;
-#else
-        (void)pid;
-        (void)xPercent;
-        (void)yPercent;
-        return false;
-#endif
-    }
-
     bool triggerMinecraftUiReloadShortcut(int pid) {
 #ifdef _WIN32
-        static const std::wstring keyword = L"Minecraft";
-        HWND                      hwnd    = findWindowByPidAndTitleContains(static_cast<DWORD>(pid), keyword);
+        HWND hwnd = MCDevTool::Detail::findMinecraftWindow(static_cast<DWORD>(pid));
         if (!hwnd) {
             return false;
         }

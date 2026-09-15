@@ -26,6 +26,11 @@ if(WIN32)
     add_executable(window_capture_test window_capture_test.cpp)
     target_compile_features(window_capture_test PRIVATE cxx_std_23)
     target_link_libraries(window_capture_test PRIVATE mcdevtool opengl32 gdi32)
+
+    # 会抢占前台并移动鼠标，同样按需手动运行。
+    add_executable(window_input_test window_input_test.cpp)
+    target_compile_features(window_input_test PRIVATE cxx_std_23)
+    target_link_libraries(window_input_test PRIVATE mcdevtool)
 endif()
 
 add_executable(hot_reload_filter_test hot_reload_filter_test.cpp)
@@ -37,6 +42,11 @@ add_executable(game_environment_test game_environment_test.cpp)
 target_compile_features(game_environment_test PRIVATE cxx_std_23)
 target_link_libraries(game_environment_test PRIVATE mcdk_core)
 add_test(NAME game-environment COMMAND game_environment_test)
+
+add_executable(mc_input_test mc_input_test.cpp)
+target_compile_features(mc_input_test PRIVATE cxx_std_23)
+target_link_libraries(mc_input_test PRIVATE mcdk_core)
+add_test(NAME mc-input COMMAND mc_input_test)
 
 add_executable(rpc_registry_test rpc_registry_test.cpp)
 target_compile_features(rpc_registry_test PRIVATE cxx_std_23)

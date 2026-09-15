@@ -12,6 +12,7 @@
 #include <functional>
 #include <mcdk/log_buffer.hpp>
 #include <mcdk/mcp_tool_definitions.hpp>
+#include <mcdk/mc_input_mcp.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
 #include <mcdk/jsonui_debugger.hpp>
 #include <mcdk/jsonui_reload_support.hpp>
@@ -561,62 +562,11 @@ namespace mcdk {
                 }
             );
 
-            // 点击工具：模拟点击游戏窗口指定位置
-            mcp::tool clickTool = mcp_tool_definitions::buildClickGameWindowTool();
-
+            // 输入工具：一次调用完成一整串键鼠操作
             server->register_tool(
-                clickTool,
+                mcp_tool_definitions::buildMcInputTool(),
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
-                    const int pid = mcPid.load(std::memory_order_relaxed);
-                    if (pid <= 0) {
-                        return nlohmann::json{
-                            {"isError", true},
-                            {"content",
-                             nlohmann::json::array(
-                                 {{{"type", "text"},
-                                   {"text", "Game process ID not set. The game window does not exist."}}}
-                             )}
-                        };
-                    }
-
-                    double x = params.value("x", -1.0);
-                    double y = params.value("y", -1.0);
-
-                    if (x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0) {
-                        return nlohmann::json{
-                            {"isError", true},
-                            {"content",
-                             nlohmann::json::array(
-                                 {{{"type", "text"},
-                                   {"text", "Invalid coordinates. x and y must be between 0.0 and 1.0."}}}
-                             )}
-                        };
-                    }
-
-                    bool success = MCDevTool::Style::clickMinecraftWindowAt(pid, x, y);
-                    if (!success) {
-                        return nlohmann::json{
-                            {"isError", true},
-                            {"content",
-                             nlohmann::json::array(
-                                 {{{"type", "text"},
-                                   {"text",
-                                    "Failed to click on game window. "
-                                    "The game window does not exist or is minimized."}}}
-                             )}
-                        };
-                    }
-
-                    return nlohmann::json{
-                        {"isError", false},
-                        {"content",
-                         nlohmann::json::array(
-                             {{{"type", "text"},
-                               {"text",
-                                "Click performed at (" + std::to_string(x) + ", " + std::to_string(y)
-                                    + "). Use capture_game_window to verify the result."}}}
-                         )}
-                    };
+                    return mc_input_mcp::handleRequest(mcPid.load(std::memory_order_relaxed), params);
                 }
             );
         }
