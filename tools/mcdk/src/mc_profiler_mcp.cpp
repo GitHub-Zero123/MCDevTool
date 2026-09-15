@@ -1,7 +1,5 @@
 #include <mcdk/mc_profiler_mcp.hpp>
 
-#include <mcdk/mcp_tool_definitions.hpp>
-
 #include <array>
 #include <algorithm>
 #include <charconv>
@@ -937,45 +935,3 @@ namespace mcdk::mc_profiler_mcp {
     }
 
 } // namespace mcdk::mc_profiler_mcp
-
-namespace mcdk::mcp_tool_definitions {
-
-    mcp::tool buildMcProfilerTool() {
-        mcp::tool tool;
-        tool.name = std::string(mc_profiler_mcp::ToolName);
-        tool.description =
-            "Profiles Minecraft Python CPU, Python memory, and optional Native CPU through one bounded command tool. "
-            "Native profiles can correlate instrumented Python-facing and engine C++ Tracy zone hierarchies, including "
-            "lower-level stages such as data-driven JSON parsing when those zones are emitted. Call /help first. Every "
-            "capture has a server deadline; temporary memory results expire after 20 idle minutes, and Markdown/SVG "
-            "reports are explicit exports. Results are filtered and paged; same-kind captures support bounded "
-            "server-side comparison. Input uses {op:'/...', args:{...}}.";
-        tool.parameters_schema = {
-            {"type", "object"},
-            {"required", Json::array({"op"})},
-            {"properties",
-             {{"op", {{"type", "string"}, {"description", "Operation such as /help, /doctor, /start, or /query."}}},
-              {"args", {{"type", "object"}, {"description", "Strict operation-specific arguments."}}}}},
-            {"additionalProperties", false},
-        };
-        tool.output_schema = {
-            {"type", "object"},
-            {"required", Json::array({"ok", "op", "job", "data", "error", "warnings", "next_calls"})},
-            {"properties",
-             {{"ok", {{"type", "boolean"}}},
-              {"op", {{"type", "string"}}},
-              {"job", {{"type", Json::array({"object", "null"})}}},
-              {"data", {{"type", Json::array({"object", "array", "null"})}}},
-              {"error", {{"type", Json::array({"object", "null"})}}},
-              {"warnings", {{"type", "array"}, {"items", {{"type", "object"}}}}},
-              {"next_calls", {{"type", "array"}, {"maxItems", 3}, {"items", {{"type", "object"}}}}}}},
-            {"additionalProperties", false},
-        };
-        tool.annotations.read_only_hint   = false;
-        tool.annotations.destructive_hint = true;
-        tool.annotations.idempotent_hint  = false;
-        tool.annotations.open_world_hint  = true;
-        return tool;
-    }
-
-} // namespace mcdk::mcp_tool_definitions

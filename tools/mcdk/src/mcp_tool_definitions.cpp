@@ -3,6 +3,8 @@
 #include <mcdk/jsonui_debugger.hpp>
 
 namespace mcdk::mcp_tool_definitions {
+    using Json = nlohmann::json;
+
     namespace {
         constexpr auto GetLatestLogsName        = "get_latest_logs";
         constexpr auto GetLatestLogsDescription = R"(Returns the most recent game log entries.
@@ -124,6 +126,82 @@ Parameters:
             .with_string_param("cmd", "Command string. Use /help to list commands and usage.", true)
             .with_read_only_hint(true)
             .build();
+    }
+
+    mcp::tool buildMcInputTool() {
+        mcp::tool tool;
+        tool.name = "mc_input";
+        tool.description =
+            "Drives the Minecraft game window through keyboard and mouse input. One call can run a whole ordered "
+            "sequence: clicks, long presses, drags, wheel, camera motion, text and waits. "
+            "Use capture='end' and logs='end' to attach a screenshot and recent logs. Call /help first; /state "
+            "reports window geometry and whether the game currently holds the pointer. Coordinates default to the "
+            "0.0-1.0 percentage space shared with capture_game_window. A successful result means input was dispatched "
+            "to the system queue, not that the game reacted - verify with capture_game_window or logs. Input uses "
+            "{op:'/...', args:{...}}.";
+        tool.parameters_schema = {
+            {"type", "object"},
+            {"required", Json::array({"op"})},
+            {"properties",
+             {{"op", {{"type", "string"}, {"description", "Operation such as /help, /state, /run, or /click."}}},
+              {"args", {{"type", "object"}, {"description", "Strict operation-specific arguments."}}}}},
+            {"additionalProperties", false},
+        };
+        tool.output_schema = {
+            {"type", "object"},
+            {"required", Json::array({"ok", "op", "data", "error", "warnings", "next_calls"})},
+            {"properties",
+             {{"ok", {{"type", "boolean"}}},
+              {"op", {{"type", "string"}}},
+              {"data", {{"type", Json::array({"object", "null"})}}},
+              {"error", {{"type", Json::array({"object", "null"})}}},
+              {"warnings", {{"type", "array"}, {"items", {{"type", "object"}}}}},
+              {"next_calls", {{"type", "array"}, {"maxItems", 3}, {"items", {{"type", "object"}}}}}}},
+            {"additionalProperties", false},
+        };
+        tool.annotations.read_only_hint   = false;
+        tool.annotations.destructive_hint = false;
+        tool.annotations.idempotent_hint  = false;
+        tool.annotations.open_world_hint  = true;
+        return tool;
+    }
+
+    mcp::tool buildMcProfilerTool() {
+        mcp::tool tool;
+        tool.name = "mc_profiler";
+        tool.description =
+            "Profiles Minecraft Python CPU, Python memory, and optional Native CPU through one bounded command tool. "
+            "Native profiles can correlate instrumented Python-facing and engine C++ Tracy zone hierarchies, including "
+            "lower-level stages such as data-driven JSON parsing when those zones are emitted. Call /help first. Every "
+            "capture has a server deadline; temporary memory results expire after 20 idle minutes, and Markdown/SVG "
+            "reports are explicit exports. Results are filtered and paged; same-kind captures support bounded "
+            "server-side comparison. Input uses {op:'/...', args:{...}}.";
+        tool.parameters_schema = {
+            {"type", "object"},
+            {"required", Json::array({"op"})},
+            {"properties",
+             {{"op", {{"type", "string"}, {"description", "Operation such as /help, /doctor, /start, or /query."}}},
+              {"args", {{"type", "object"}, {"description", "Strict operation-specific arguments."}}}}},
+            {"additionalProperties", false},
+        };
+        tool.output_schema = {
+            {"type", "object"},
+            {"required", Json::array({"ok", "op", "job", "data", "error", "warnings", "next_calls"})},
+            {"properties",
+             {{"ok", {{"type", "boolean"}}},
+              {"op", {{"type", "string"}}},
+              {"job", {{"type", Json::array({"object", "null"})}}},
+              {"data", {{"type", Json::array({"object", "array", "null"})}}},
+              {"error", {{"type", Json::array({"object", "null"})}}},
+              {"warnings", {{"type", "array"}, {"items", {{"type", "object"}}}}},
+              {"next_calls", {{"type", "array"}, {"maxItems", 3}, {"items", {{"type", "object"}}}}}}},
+            {"additionalProperties", false},
+        };
+        tool.annotations.read_only_hint   = false;
+        tool.annotations.destructive_hint = true;
+        tool.annotations.idempotent_hint  = false;
+        tool.annotations.open_world_hint  = true;
+        return tool;
     }
 
     std::vector<mcp::tool> buildAllTools() {

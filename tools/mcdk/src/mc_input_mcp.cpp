@@ -1,8 +1,6 @@
 #include <mcdk/mc_input_mcp.hpp>
 #include <mcdk/log_buffer.hpp>
 
-#include <mcdk/mcp_tool_definitions.hpp>
-
 #include <algorithm>
 #include <cstdint>
 #include <expected>
@@ -1051,45 +1049,3 @@ namespace mcdk::mc_input_mcp {
     }
 
 } // namespace mcdk::mc_input_mcp
-
-namespace mcdk::mcp_tool_definitions {
-
-    mcp::tool buildMcInputTool() {
-        mcp::tool tool;
-        tool.name = std::string(mc_input_mcp::ToolName);
-        tool.description =
-            "Drives the Minecraft game window through keyboard and mouse input. One call can run a whole ordered "
-            "sequence: clicks, long presses, drags, wheel, camera motion, text and waits. "
-            "Use capture='end' and logs='end' to attach a screenshot and recent logs. Call /help first; /state "
-            "reports window geometry and whether the game currently holds the pointer. Coordinates default to the "
-            "0.0-1.0 percentage space shared with capture_game_window. A successful result means input was dispatched "
-            "to the system queue, not that the game reacted - verify with capture_game_window or logs. Input uses "
-            "{op:'/...', args:{...}}.";
-        tool.parameters_schema = {
-            {"type", "object"},
-            {"required", Json::array({"op"})},
-            {"properties",
-             {{"op", {{"type", "string"}, {"description", "Operation such as /help, /state, /run, or /click."}}},
-              {"args", {{"type", "object"}, {"description", "Strict operation-specific arguments."}}}}},
-            {"additionalProperties", false},
-        };
-        tool.output_schema = {
-            {"type", "object"},
-            {"required", Json::array({"ok", "op", "data", "error", "warnings", "next_calls"})},
-            {"properties",
-             {{"ok", {{"type", "boolean"}}},
-              {"op", {{"type", "string"}}},
-              {"data", {{"type", Json::array({"object", "null"})}}},
-              {"error", {{"type", Json::array({"object", "null"})}}},
-              {"warnings", {{"type", "array"}, {"items", {{"type", "object"}}}}},
-              {"next_calls", {{"type", "array"}, {"maxItems", 3}, {"items", {{"type", "object"}}}}}}},
-            {"additionalProperties", false},
-        };
-        tool.annotations.read_only_hint   = false;
-        tool.annotations.destructive_hint = false;
-        tool.annotations.idempotent_hint  = false;
-        tool.annotations.open_world_hint  = true;
-        return tool;
-    }
-
-} // namespace mcdk::mcp_tool_definitions

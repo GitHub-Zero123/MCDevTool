@@ -13,8 +13,6 @@
 #endif
 
 #include <mcdk/mcp_tool_definitions.hpp>
-#include <mcdk/mc_input_mcp.hpp>
-#include <mcdk/mc_profiler_mcp.hpp>
 
 #include <httplib.h>
 #include <mcp_message.h>
@@ -145,6 +143,41 @@ namespace {
         return json{{"isError", true}, {"content", makeTextContent(text)}};
     }
 
+    // 桥接只构造连接错误信封，工具说明与执行均由后端处理。
+    json makeBackendErrorResult(
+        std::string_view   toolName,
+        const json&        arguments,
+        std::string_view   code,
+        const std::string& message,
+        bool               retryable
+    ) {
+        if (toolName != "mc_input" && toolName != "mc_profiler") {
+            return makeToolErrorResult(message);
+        }
+        const auto op = arguments.is_object() && arguments.contains("op") && arguments["op"].is_string()
+                          ? arguments["op"].get<std::string>()
+                          : std::string{};
+        json       error{{"code", code}, {"message", message}, {"retryable", retryable}};
+        error[toolName == "mc_input" ? "progress" : "details"] =
+            toolName == "mc_input" ? json(nullptr) : json::object();
+        json body{
+            {"ok", false},
+            {"op", op},
+            {"data", nullptr},
+            {"error", std::move(error)},
+            {"warnings", json::array()},
+            {"next_calls", json::array()},
+        };
+        if (toolName == "mc_profiler") {
+            body["job"] = nullptr;
+        }
+        return json{
+            {"isError", true},
+            {"content", makeTextContent(message)},
+            {"structuredContent", std::move(body)},
+        };
+    }
+
     json makeErrorResponse(const json& id, mcp::error_code code, const std::string& message) {
         return json{
             {"jsonrpc", "2.0"},
@@ -268,17 +301,17 @@ namespace {
             }
 
             if (response.contains("error")) {
-                const auto& err = response["error"];
+                const auto& err     = response["error"];
                 const auto  message = err.value("message", dumpJsonReplacingInvalidUtf8(response));
-                if (name == mcdk::mc_profiler_mcp::ToolName
+                if ((name == "mc_profiler" || name == "mc_input")
                     && message.find("Tool not found") != std::string::npos) {
-                    return json::parse(
-                        mcdk::mc_profiler_mcp::buildErrorResult(
-                            "",
-                            "BACKEND_TOOL_UNAVAILABLE",
-                            "The running MCDK backend does not expose mc_profiler. Update mcdk and mcdk_stdio_bridge as a matched pair.",
-                            false
-                        ).dump()
+                    return makeBackendErrorResult(
+                        name,
+                        arguments,
+                        "BACKEND_TOOL_UNAVAILABLE",
+                        "The running MCDK backend does not expose " + name
+                            + ". Update mcdk and mcdk_stdio_bridge as a matched pair.",
+                        false
                     );
                 }
                 return makeToolErrorResult("MCDK game MCP returned an error: " + message);
@@ -469,66 +502,12 @@ namespace {
                 }
                 std::string toolName  = params.value("name", "");
                 json        arguments = params.value("arguments", json::object());
-                if (toolName == mcdk::mc_input_mcp::ToolName) {
-                    auto remoteResult = gameClient_.callTool(toolName, arguments);
-                    if (!remoteResult.value("isError", false) || remoteResult.contains("structuredContent")) {
-                        return makeSuccessResponse(id, std::move(remoteResult));
-                    }
-                    // 说明书是纯函数，即使抵达不了 MCDK 也应当能读到。
-                    if (arguments.value("op", "") == "/help") {
-                        return makeSuccessResponse(
-                            id,
-                            json::parse(mcdk::mc_input_mcp::handleRequest(0, arguments).dump())
-                        );
-                    }
-                    // 除此之外桥接进程从不自己注入输入：抵达不了 MCDK 就如实返回结构化错误，
-                    // 并带上传输层的具体原因（目标端点、游戏是否通过 MCDK 启动）。
-                    return makeSuccessResponse(
-                        id,
-                        json::parse(
-                            mcdk::mc_input_mcp::buildErrorResult(
-                                arguments.value("op", ""),
-                                "BACKEND_UNAVAILABLE",
-                                "The stdio bridge could not reach MCDK, so no input was sent to the game window. "
-                                    + firstTextOf(remoteResult),
-                                true
-                            ).dump()
-                        )
-                    );
+                auto        result    = gameClient_.callTool(toolName, arguments);
+                if (result.value("isError", false) && !result.contains("structuredContent")) {
+                    result =
+                        makeBackendErrorResult(toolName, arguments, "BACKEND_UNAVAILABLE", firstTextOf(result), true);
                 }
-                if (toolName == mcdk::mc_profiler_mcp::ToolName) {
-                    const auto standardArguments = nlohmann::json::parse(arguments.dump());
-                    auto remoteResult = gameClient_.callTool(toolName, arguments);
-                    if (!remoteResult.value("isError", false)) {
-                        return makeSuccessResponse(id, std::move(remoteResult));
-                    }
-                    if (remoteResult.contains("structuredContent")) {
-                        return makeSuccessResponse(id, std::move(remoteResult));
-                    }
-                    if (auto localResult = mcdk::mc_profiler_mcp::tryBuildLocalResult(standardArguments)) {
-                        auto converted = json::parse(localResult->dump());
-                        if (converted.contains("structuredContent") && converted["structuredContent"].contains("data")) {
-                            converted["structuredContent"]["data"]["runtime"] = {
-                                {"status", "unavailable"},
-                                {"reason", "The stdio bridge could not reach MCDK; runtime and Native DLL status are unknown."},
-                            };
-                        }
-                        return makeSuccessResponse(id, std::move(converted));
-                    }
-                    return makeSuccessResponse(
-                        id,
-                        json::parse(
-                            mcdk::mc_profiler_mcp::buildErrorResult(
-                                standardArguments.value("op", ""),
-                                "BACKEND_UNAVAILABLE",
-                                "The stdio bridge could not reach MCDK. Runtime profiler operations are unavailable; "
-                                "the bridge never starts a local capture.",
-                                true
-                            ).dump()
-                        )
-                    );
-                }
-                return makeSuccessResponse(id, gameClient_.callTool(toolName, arguments));
+                return makeSuccessResponse(id, std::move(result));
             }
             if (method == "resources/list") {
                 return makeSuccessResponse(id, json{{"resources", json::array()}});

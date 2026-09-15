@@ -25,6 +25,12 @@ if(WIN32)
     target_link_libraries(mcdev_profiler_core PUBLIC bcrypt iphlpapi ws2_32)
 endif()
 
+# Tool descriptions are shared with the forwarding-only stdio bridge.
+add_library(mcdk_mcp_tools STATIC src/mcp_tool_definitions.cpp)
+target_compile_features(mcdk_mcp_tools PUBLIC cxx_std_20)
+target_include_directories(mcdk_mcp_tools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(mcdk_mcp_tools PUBLIC mcp)
+
 add_library(mcdk_core STATIC
     src/config.cpp
     src/env.cpp
@@ -36,7 +42,6 @@ add_library(mcdk_core STATIC
     src/jsonui_reload_support.cpp
     src/level.cpp
     src/log_buffer.cpp
-    src/mcp_tool_definitions.cpp
     src/mod_dir_config.cpp
     src/mod_register.cpp
     src/mc_input_mcp.cpp
@@ -49,7 +54,7 @@ add_library(mcdk_core STATIC
 )
 target_compile_features(mcdk_core PUBLIC cxx_std_23)
 target_include_directories(mcdk_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(mcdk_core PUBLIC mcdevtool mcdev_profiler_core mcp PRIVATE MCDEV_MOD_RESOURCE)
+target_link_libraries(mcdk_core PUBLIC mcdevtool mcdev_profiler_core mcdk_mcp_tools mcp PRIVATE MCDEV_MOD_RESOURCE)
 
 add_library(mcdk_runtime STATIC
     src/application.cpp
