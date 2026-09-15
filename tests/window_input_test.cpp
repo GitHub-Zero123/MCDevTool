@@ -163,14 +163,67 @@ namespace {
         return options;
     }
 
+    // 子进程模式：只创建窗口并泵消息，供父进程做「目标窗口属于另一个进程」的测试——
+    // 这才是生产拓扑：MCDK 既不占前台，也不拥有 Minecraft 窗口。
+    int hostWindow() {
+        TestWindow window;
+        MSG        message;
+        while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        return 0;
+    }
+
+    struct HostProcess {
+        PROCESS_INFORMATION info{};
+
+        HostProcess() {
+            wchar_t self[MAX_PATH]{};
+            GetModuleFileNameW(nullptr, self, static_cast<DWORD>(std::size(self)));
+
+            std::wstring command = std::wstring{L"\""} + self + L"\" --host-window";
+            STARTUPINFOW startup{};
+            startup.cb = sizeof(startup);
+            CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &info);
+        }
+
+        HostProcess(const HostProcess&)            = delete;
+        HostProcess& operator=(const HostProcess&) = delete;
+
+        ~HostProcess() {
+            if (info.hProcess == nullptr) return;
+            TerminateProcess(info.hProcess, 0);
+            WaitForSingleObject(info.hProcess, 2000);
+            CloseHandle(info.hProcess);
+            CloseHandle(info.hThread);
+        }
+
+        [[nodiscard]] int pid() const { return static_cast<int>(info.dwProcessId); }
+
+        // 等子进程的窗口就绪：引擎能查到几何信息就说明可用了。
+        [[nodiscard]] bool ready() const {
+            for (int wait = 0; wait < 100; ++wait) {
+                if (info.hProcess == nullptr) return false;
+                if (Engine::inspect(pid()).has_value()) return true;
+                Sleep(50);
+            }
+            return false;
+        }
+    };
+
     void reportError(const char* label, const Engine::Error& error) {
         std::cerr << label << ": [" << Engine::errorCodeName(error.code) << "] " << error.message << '\n';
         passed = false;
     }
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); // 与引擎同一坐标系
+
+    if (argc > 1 && std::string_view{argv[1]} == "--host-window") {
+        return hostWindow();
+    }
 
     // 启动时占着前台的通常是调起测试的终端，属于另一个进程，正好用来验证跨进程抢前台。
     const HWND intruder = GetForegroundWindow();
@@ -449,6 +502,41 @@ int main() {
                 reportError("reclaim", report.error());
             } else {
                 expect(countOf(WM_KEYDOWN) == 1, "focus=auto reclaims the foreground from another process");
+            }
+        }
+    }
+
+    // --- 生产拓扑：前台是 A 进程，目标窗口属于 B 进程，我们两头都不占 ---
+    {
+        HostProcess host;
+        if (!host.ready()) {
+            std::cerr << "  skipped: the host window process did not come up\n";
+        } else {
+            const bool handedOver = intruder != nullptr && SetForegroundWindow(intruder) != FALSE;
+            for (int wait = 0; wait < 40 && GetForegroundWindow() != intruder; ++wait) {
+                pump();
+                Sleep(10);
+            }
+
+            if (!handedOver || GetForegroundWindow() != intruder) {
+                std::cerr << "  skipped: the foreground could not be handed to another process\n";
+            } else {
+                auto options   = baseOptions();
+                options.dryRun = false;
+
+                auto report = Engine::run(
+                    host.pid(),
+                    std::vector<Engine::Step>{Engine::KeyStep{{*Engine::findKey("w")}, Engine::PressAction::Press, 30, 1}},
+                    options
+                );
+                if (!report.has_value()) {
+                    reportError("cross-process focus", report.error());
+                } else {
+                    expect(
+                        report->window.foreground,
+                        "focus=auto raises a window owned by another process while a third process holds the foreground"
+                    );
+                }
             }
         }
     }
