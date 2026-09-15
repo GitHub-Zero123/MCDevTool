@@ -238,26 +238,23 @@ namespace MCDevTool::Input {
             }
         };
 
-        // SetForegroundWindow 只有在输入线程绑定后才稳定生效，绑定必须成对解除。
+        // SetForegroundWindow 的权限判定看的是「调用线程」的状态，所以要把我们自己的线程
+        // 挂到当前前台线程的输入队列上，借到它的前台权限。把两个外部线程互相挂接不起作用。
         struct ForegroundAttach {
-            DWORD source = 0;
-            DWORD target = 0;
+            DWORD ours     = GetCurrentThreadId();
+            DWORD foreign  = 0;
+            bool  attached = false;
 
-            explicit ForegroundAttach(HWND hwnd)
-            : source(GetWindowThreadProcessId(GetForegroundWindow(), nullptr)),
-              target(GetWindowThreadProcessId(hwnd, nullptr)) {
-                if (source != target && source != 0 && target != 0) {
-                    AttachThreadInput(source, target, TRUE);
-                } else {
-                    target = source;
-                }
+            explicit ForegroundAttach(HWND foregroundWindow)
+            : foreign(GetWindowThreadProcessId(foregroundWindow, nullptr)) {
+                attached = foreign != 0 && foreign != ours && AttachThreadInput(ours, foreign, TRUE) != FALSE;
             }
 
             ForegroundAttach(const ForegroundAttach&)            = delete;
             ForegroundAttach& operator=(const ForegroundAttach&) = delete;
 
             ~ForegroundAttach() {
-                if (source != target) AttachThreadInput(source, target, FALSE);
+                if (attached) AttachThreadInput(ours, foreign, FALSE);
             }
         };
 
@@ -1000,7 +997,8 @@ namespace MCDevTool::Input {
 
         Result<void> acquireForeground(Session& session) {
             {
-                ForegroundAttach attach{session.hwnd};
+                // 绑定的对象是「当前占着前台的那个窗口的线程」，不是目标窗口。
+                ForegroundAttach attach{GetForegroundWindow()};
                 SetForegroundWindow(session.hwnd);
                 BringWindowToTop(session.hwnd);
             }

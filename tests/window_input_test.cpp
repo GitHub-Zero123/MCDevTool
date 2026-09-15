@@ -172,6 +172,9 @@ namespace {
 int main() {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); // 与引擎同一坐标系
 
+    // 启动时占着前台的通常是调起测试的终端，属于另一个进程，正好用来验证跨进程抢前台。
+    const HWND intruder = GetForegroundWindow();
+
     TestWindow window;
     for (int settle = 0; settle < 60; ++settle) { // 等窗口打开动画结束，否则客户区尺寸还在变
         pump();
@@ -375,13 +378,7 @@ int main() {
         options.leaveHeld = true;
 
         auto report = runSteps(
-            {Engine::ClickStep{
-                Engine::Point{0.5, 0.5},
-                Engine::MouseButton::Right,
-                Engine::PressAction::Down,
-                0,
-                {}
-            }},
+            {Engine::ClickStep{Engine::Point{0.5, 0.5}, Engine::MouseButton::Right, Engine::PressAction::Down, 0, {}}},
             options
         );
         if (!report.has_value()) {
@@ -431,6 +428,28 @@ int main() {
         } else {
             expect(Engine::heldKeys().empty(), "an explicit up clears the cross-call registry");
             expect(released->held.empty(), "the report no longer lists the released key as held");
+        }
+    }
+
+    // --- 抢回前台：焦点被别的进程拿走之后，focus=auto 必须能抢回来 ---
+    {
+        const bool handedOver =
+            intruder != nullptr && intruder != window.hwnd && SetForegroundWindow(intruder) != FALSE;
+        for (int wait = 0; wait < 40 && GetForegroundWindow() != intruder; ++wait) {
+            pump();
+            Sleep(10);
+        }
+
+        if (!handedOver || GetForegroundWindow() != intruder) {
+            std::cerr << "  skipped: the foreground could not be handed to another process\n";
+        } else {
+            auto report =
+                runSteps({Engine::KeyStep{{*Engine::findKey("w")}, Engine::PressAction::Press, 30, 1}}, baseOptions());
+            if (!report.has_value()) {
+                reportError("reclaim", report.error());
+            } else {
+                expect(countOf(WM_KEYDOWN) == 1, "focus=auto reclaims the foreground from another process");
+            }
         }
     }
 
