@@ -2,6 +2,7 @@
 #include <mcdk/log_buffer.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <expected>
 #include <initializer_list>
@@ -21,9 +22,10 @@ namespace {
     using Json       = nlohmann::json;
     namespace Engine = MCDevTool::Input;
 
-    constexpr std::size_t MaxSteps    = 64;
-    constexpr int         MaxWaitMs   = 10000;
-    constexpr int         MaxBudgetMs = 120000;
+    constexpr std::size_t MaxSteps        = 64;
+    constexpr int         MaxWaitMs       = 10000;
+    constexpr int         MaxBudgetMs     = 120000;
+    constexpr double      MaxRelativeMove = 100000.0; // 单步相对位移上限，防止换算成 int 时溢出
 
     // --- 失败表示：校验层与引擎层共用同一种形状，渲染层只认这一个类型 ---
 
@@ -153,8 +155,24 @@ namespace {
                      ? Outcome<void>{}
                      : Outcome<void>{invalid(label + ": expected one of " + joinNames(spec.options) + ".")};
         case FieldType::PointAbs:
+            // 范围在校验阶段就拒绝，否则要跑到该步骤才发现，前面的输入已经投递出去了。
+            return validatePair(value, label).and_then([&]() -> Outcome<void> {
+                const double x = value[0].get<double>();
+                const double y = value[1].get<double>();
+                return x >= 0.0 && x <= 1.0 && y >= 0.0 && y <= 1.0
+                         ? Outcome<void>{}
+                         : Outcome<void>{invalid(label + ": coordinates must be within 0.0-1.0 (client-area percentages).")};
+            });
         case FieldType::PointRel:
-            return validatePair(value, label);
+            return validatePair(value, label).and_then([&]() -> Outcome<void> {
+                const bool bounded = std::abs(value[0].get<double>()) <= MaxRelativeMove
+                                  && std::abs(value[1].get<double>()) <= MaxRelativeMove;
+                return bounded ? Outcome<void>{}
+                               : Outcome<void>{invalid(
+                                     label + ": relative movement must stay within ±"
+                                     + std::to_string(static_cast<long long>(MaxRelativeMove)) + " counts per step."
+                                 )};
+            });
         case FieldType::Keys:
             return validateKeys(value, label);
         case FieldType::Steps:
@@ -300,6 +318,16 @@ namespace {
         {"ms", FieldType::Int, true, 0, MaxWaitMs, {}, "等待毫秒数"},
     };
 
+    constexpr FieldSpec SyncFields[]{
+        {"at_ms",
+         FieldType::Int,
+         true,
+         0,
+         MaxBudgetMs,
+         {},
+         "等到批次开始后的第 N 毫秒再继续，已过则立即继续；与 wait 不同，不随执行开销漂移"},
+    };
+
     Engine::Step parseMove(const Json& step) { return Engine::MoveStep{pointField(step.at("at"))}; }
 
     Engine::Step parseClick(const Json& step) {
@@ -352,6 +380,8 @@ namespace {
 
     Engine::Step parseWait(const Json& step) { return Engine::WaitStep{intField(step, "ms", 0)}; }
 
+    Engine::Step parseSync(const Json& step) { return Engine::SyncStep{intField(step, "at_ms", 0)}; }
+
     struct StepSpec {
         std::string_view           name;
         std::span<const FieldSpec> fields;
@@ -368,6 +398,7 @@ namespace {
         {Engine::KeyStep::kName, KeyFields, &parseKey, "按键、组合键与长按"},
         {Engine::TextStep::kName, TextFields, &parseText, "输入文本，走 Unicode 通道"},
         {Engine::WaitStep::kName, WaitFields, &parseWait, "等待，用于让界面动画或游戏刻推进"},
+        {Engine::SyncStep::kName, SyncFields, &parseSync, "等到批次起点后的绝对时刻，用于不漂移的精确编排"},
     };
 
     std::string stepNames() {
@@ -480,6 +511,262 @@ namespace {
             }
             return steps;
         });
+    }
+
+    // --- 时间轴：以绝对时刻编排，按键与鼠标的按住可以相互重叠 ---
+    //
+    // 每个事件给出 at_ms（相对批次起点）；key / click 再给 hold_ms 表示按住多久。
+    // 编译时把它们拆成「按下 @at_ms」与「松开 @at_ms + hold_ms」两个原语，全体按时刻稳定排序，
+    // 时刻变化处插入 sync 步骤，再交给顺序引擎执行。move / drag / scroll / look / text 是原子步骤，
+    // 占用自身的执行时间，落在这段时间内的后续事件会顺延到它们完成之后。
+
+    constexpr FieldSpec TimelineAtField{
+        "at_ms", FieldType::Int, true, 0, MaxBudgetMs, {}, "事件开始时刻，批次开始后的毫秒数"
+    };
+
+    constexpr FieldSpec TimelineKeyFields[]{
+        {"keys", FieldType::Keys, true, 0, 0, {}, "按键或组合键，例如 \"w\" 或 \"w+d\"，整组同时按住"},
+        {"hold_ms", FieldType::Int, false, 0, MaxBudgetMs, {}, "按住时长，默认 50；松开时刻 = at_ms + hold_ms"},
+    };
+
+    constexpr FieldSpec TimelineClickFields[]{
+        {"at", FieldType::PointAbs, false, 0, 0, {}, "按下位置，客户区百分比 [x, y]；省略则在指针当前位置按下"},
+        {"button", FieldType::Enum, false, 0, 0, ButtonNames, "鼠标键，默认 left"},
+        {"hold_ms", FieldType::Int, false, 0, MaxBudgetMs, {}, "按住时长，默认 50；松开时刻 = at_ms + hold_ms"},
+        {"modifiers", FieldType::Keys, false, 0, 0, {}, "整段按住期间同时按住的修饰键，例如 shift"},
+    };
+
+    struct TimelineSpec {
+        std::string_view           name;
+        std::span<const FieldSpec> fields;
+        std::string_view           summary;
+    };
+
+    constexpr TimelineSpec TimelineSpecs[]{
+        {Engine::KeyStep::kName, TimelineKeyFields, "在 at_ms 按下、at_ms + hold_ms 松开的按键或组合键"},
+        {Engine::ClickStep::kName, TimelineClickFields, "在 at_ms 按下、at_ms + hold_ms 松开的鼠标键"},
+        {Engine::MoveStep::kName, MoveFields, "在 at_ms 移动指针"},
+        {Engine::DragStep::kName, DragFields, "在 at_ms 开始拖拽（原子步骤，占用自身执行时间）"},
+        {Engine::ScrollStep::kName, ScrollFields, "在 at_ms 滚动滚轮（原子步骤）"},
+        {Engine::LookStep::kName, LookFields, "在 at_ms 转动视角（原子步骤）"},
+        {Engine::TextStep::kName, TextFields, "在 at_ms 输入文本（原子步骤）"},
+    };
+
+    std::string timelineEventNames() {
+        std::string text;
+        for (const auto& spec : TimelineSpecs) {
+            text += text.empty() ? "" : ", ";
+            text += spec.name;
+        }
+        return text;
+    }
+
+    const TimelineSpec* findTimelineSpec(std::string_view name) {
+        const auto found = std::ranges::find(TimelineSpecs, name, &TimelineSpec::name);
+        return found == std::end(TimelineSpecs) ? nullptr : &*found;
+    }
+
+    struct Scheduled {
+        int          at = 0;
+        Engine::Step step;
+    };
+
+    struct Timeline {
+        std::vector<Engine::Step> steps; // 含 sync 同步点的顺序步骤
+        std::size_t               events = 0;
+        int                       endMs  = 0; // 最后一个原语的时刻
+    };
+
+    Outcome<void> validateTimelineEvent(const Json& event, std::size_t index) {
+        const std::string where = "events[" + std::to_string(index) + "]";
+        if (!event.is_object() || !event.contains("do") || !event["do"].is_string()) {
+            return invalid(
+                where + ": every event needs a string \"do\" field. Available: " + timelineEventNames() + "."
+            );
+        }
+
+        const auto* spec = findTimelineSpec(event["do"].get<std::string>());
+        if (spec == nullptr) {
+            return invalid(
+                where + ": unknown event \"" + event["do"].get<std::string>() + "\". Available: " + timelineEventNames()
+                + ". A timeline has no wait event; place events with at_ms instead."
+            );
+        }
+        return validateFields(event, spec->fields, where, {"do", "at_ms"}).and_then([&]() -> Outcome<void> {
+            const auto at = event.find("at_ms");
+            return at == event.end() ? Outcome<void>{invalid(where + ": missing required field \"at_ms\".")}
+                                     : validateField(*at, TimelineAtField, where);
+        });
+    }
+
+    void scheduleEvent(const Json& event, std::vector<Scheduled>& out) {
+        const std::string kind = event["do"].get<std::string>();
+        const int         at   = intField(event, "at_ms", 0);
+
+        if (kind == Engine::KeyStep::kName) {
+            const auto keys = readKeys(event.at("keys"));
+            const int  hold = intField(event, "hold_ms", 50);
+            out.push_back({at, Engine::KeyStep{keys, Engine::PressAction::Down, 0, 1}});
+            out.push_back({at + hold, Engine::KeyStep{keys, Engine::PressAction::Up, 0, 1}});
+            return;
+        }
+        if (kind == Engine::ClickStep::kName) {
+            const auto modifiers = keysField(event, "modifiers");
+            const auto button    = enumField(event, "button", ButtonNames, Engine::MouseButton::Left);
+            const int  hold      = intField(event, "hold_ms", 50);
+            const auto point     = event.find("at");
+
+            // 修饰键要覆盖整段按住，因此拆成独立的按下 / 松开，而不是交给 click 步骤自己包住。
+            for (const auto& key : modifiers) {
+                out.push_back({at, Engine::KeyStep{{key}, Engine::PressAction::Down, 0, 1}});
+            }
+            Engine::ClickStep down;
+            down.at     = point == event.end() ? std::optional<Engine::Point>{} : std::optional{pointField(*point)};
+            down.button = button;
+            down.action = Engine::PressAction::Down;
+            out.push_back({at, down});
+
+            Engine::ClickStep up;
+            up.button = button;
+            up.action = Engine::PressAction::Up;
+            out.push_back({at + hold, up});
+            for (const auto& key : modifiers | std::views::reverse) {
+                out.push_back({at + hold, Engine::KeyStep{{key}, Engine::PressAction::Up, 0, 1}});
+            }
+            return;
+        }
+        out.push_back({at, findStepSpec(kind)->parse(event)}); // 原子步骤
+    }
+
+    Outcome<Timeline> compileTimeline(const Json& args, int budgetMs) {
+        const auto found = args.find("events");
+        if (found == args.end() || !found->is_array() || found->empty()) {
+            return invalid("events: expected a non-empty array of event objects.");
+        }
+        if (found->size() > MaxSteps) {
+            return invalid("events: at most " + std::to_string(MaxSteps) + " events per call.");
+        }
+
+        Outcome<void> checked{};
+        for (std::size_t index = 0; index < found->size(); ++index) {
+            checked = checked.and_then([&] { return validateTimelineEvent((*found)[index], index); });
+        }
+
+        return checked.and_then([&]() -> Outcome<Timeline> {
+            std::vector<Scheduled> scheduled;
+            for (const auto& event : *found) {
+                scheduleEvent(event, scheduled);
+            }
+            std::ranges::stable_sort(scheduled, {}, &Scheduled::at);
+
+            Timeline timeline;
+            timeline.events = found->size();
+            int lastAt      = -1;
+            for (auto& item : scheduled) {
+                if (item.at != lastAt) {
+                    timeline.steps.push_back(Engine::SyncStep{item.at});
+                    lastAt = item.at;
+                }
+                timeline.steps.push_back(std::move(item.step));
+            }
+            timeline.endMs = lastAt;
+
+            if (timeline.endMs >= budgetMs) {
+                return invalid(
+                    "events: the timeline ends at " + std::to_string(timeline.endMs) + " ms, which exceeds budget_ms ("
+                    + std::to_string(budgetMs) + "). Raise budget_ms or shorten the timeline."
+                );
+            }
+            return timeline;
+        });
+    }
+
+    // --- 步骤 -> JSON：让调用方看到编排结果 ---
+
+    Json pointJson(Engine::Point point) { return Json::array({point.x, point.y}); }
+
+    Json keyNamesJson(std::span<const Engine::Key> keys) {
+        Json names = Json::array();
+        for (const auto& key : keys) {
+            names.push_back(std::string{key.name});
+        }
+        return names;
+    }
+
+    std::string_view actionName(Engine::PressAction action) {
+        return ActionNames[static_cast<std::size_t>(action)];
+    }
+
+    std::string_view buttonName(Engine::MouseButton button) {
+        return ButtonNames[static_cast<std::size_t>(button)];
+    }
+
+    struct StepJson {
+        Json operator()(const Engine::MoveStep& step) const { return Json{{"do", "move"}, {"at", pointJson(step.at)}}; }
+
+        Json operator()(const Engine::ClickStep& step) const {
+            Json json{
+                {"do", "click"},
+                {"button", buttonName(step.button)},
+                {"action", actionName(step.action)},
+                {"hold_ms", step.holdMs},
+            };
+            if (step.at.has_value()) json["at"] = pointJson(*step.at);
+            if (!step.modifiers.empty()) json["modifiers"] = keyNamesJson(step.modifiers);
+            return json;
+        }
+
+        Json operator()(const Engine::DragStep& step) const {
+            Json json{
+                {"do", "drag"},
+                {"from", pointJson(step.from)},
+                {"to", pointJson(step.to)},
+                {"button", buttonName(step.button)},
+                {"hold_ms", step.holdMs},
+                {"segments", step.segments},
+            };
+            if (!step.modifiers.empty()) json["modifiers"] = keyNamesJson(step.modifiers);
+            return json;
+        }
+
+        Json operator()(const Engine::ScrollStep& step) const {
+            Json json{
+                {"do", "scroll"},
+                {"amount", step.amount},
+                {"axis", AxisNames[static_cast<std::size_t>(step.axis)]},
+            };
+            if (step.at.has_value()) json["at"] = pointJson(*step.at);
+            if (!step.modifiers.empty()) json["modifiers"] = keyNamesJson(step.modifiers);
+            return json;
+        }
+
+        Json operator()(const Engine::LookStep& step) const {
+            return Json{{"do", "look"}, {"by", Json::array({step.dx, step.dy})}, {"segments", step.segments}};
+        }
+
+        Json operator()(const Engine::KeyStep& step) const {
+            return Json{
+                {"do", "key"},
+                {"keys", keyNamesJson(step.keys)},
+                {"action", actionName(step.action)},
+                {"hold_ms", step.holdMs},
+                {"repeat", step.repeat},
+            };
+        }
+
+        Json operator()(const Engine::TextStep& step) const { return Json{{"do", "text"}, {"value", step.value}}; }
+
+        Json operator()(const Engine::WaitStep& step) const { return Json{{"do", "wait"}, {"ms", step.ms}}; }
+
+        Json operator()(const Engine::SyncStep& step) const { return Json{{"do", "sync"}, {"at_ms", step.atMs}}; }
+    };
+
+    Json planJson(std::span<const Engine::Step> steps) {
+        Json plan = Json::array();
+        for (const auto& step : steps) {
+            plan.push_back(std::visit(StepJson{}, step));
+        }
+        return plan;
     }
 
     // --- 引擎错误 -> 对外错误 ---
@@ -746,6 +1033,38 @@ namespace {
                      {"goal", "先校验坐标再真正执行"},
                      {"call", Json{{"op", "/click"}, {"args", {{"at", Json::array({0.5, 0.5})}, {"dry_run", true}}}}}
                  },
+                 Json{
+                     {"goal", "按住 W 前进 2 秒，0.8 秒时跳一下，1.2 秒时按住左键 0.3 秒，1.5 秒时向右转视角"},
+                     {"call",
+                      Json{
+                          {"op", "/timeline"},
+                          {"args",
+                           {{"events",
+                             Json::array(
+                                 {Json{{"at_ms", 0}, {"do", "key"}, {"keys", "w"}, {"hold_ms", 2000}},
+                                  Json{{"at_ms", 800}, {"do", "key"}, {"keys", "space"}},
+                                  Json{{"at_ms", 1200}, {"do", "click"}, {"hold_ms", 300}},
+                                  Json{{"at_ms", 1500}, {"do", "look"}, {"by", Json::array({300, 0})}}}
+                             )}}}
+                      }},
+                     {"note", "游戏内按住不同按键可以重叠；先加 dry_run 看 data.timeline.plan 确认编排"}
+                 },
+                 Json{
+                     {"goal", "在聊天框执行指令：像真人一样按 T、打字、回车"},
+                     {"call",
+                      Json{
+                          {"op", "/run"},
+                          {"args",
+                           {{"steps",
+                             Json::array(
+                                 {Json{{"do", "key"}, {"keys", "t"}},
+                                  Json{{"do", "wait"}, {"ms", 300}},
+                                  Json{{"do", "text"}, {"value", "/give @s diamond 1"}},
+                                  Json{{"do", "key"}, {"keys", "enter"}}}
+                             )}}}
+                      }},
+                     {"note", "走完整的客户端输入 → UI → 网络 → 服务端管线，Mod 监听到的聊天 / 指令事件与真人一致"}
+                 },
              })}
         };
     }
@@ -760,6 +1079,12 @@ namespace {
                       {"summary", "查询窗口尺寸、前台状态、指针是否被游戏独占、输入法状态、当前仍按住的键"}
                   },
                   Json{{"op", "/run"}, {"summary", "一次调用按顺序执行多个输入步骤"}},
+                  Json{
+                      {"op", "/timeline"},
+                      {"summary",
+                       "以绝对时刻编排一整段输入：每个事件给 at_ms（key / click 再给 hold_ms），按键与鼠标的按住可以"
+                       "相互重叠，例如按住 W 前进的同时跳跃并点击；详见 topic=timeline"}
+                  },
                   Json{{"op", "/release-all"}, {"summary", "释放所有以 leave_held 保留按下的输入"}},
                   Json{
                       {"op", "/click 等单步糖"},
@@ -767,7 +1092,31 @@ namespace {
                   }}
              )},
             {"coords", "一律是客户区百分比 0.0-1.0，与 capture_game_window 截图同构；(0,0) 左上，(1,1) 右下"},
-            {"topics", Json::array({"steps", "options", "keys", "errors", "recipes"})},
+            {"topics", Json::array({"steps", "timeline", "options", "keys", "errors", "recipes"})},
+        };
+    }
+
+    Json timelineHelp() {
+        Json listed = Json::array();
+        for (const auto& spec : TimelineSpecs) {
+            listed.push_back(Json{{"do", spec.name}, {"summary", spec.summary}, {"fields", fieldsJson(spec.fields)}});
+        }
+        return Json{
+            {"timeline",
+             Json{
+                 {"invocation", Json{{"op", "/timeline"}, {"args", Json{{"events", Json::array()}}}}},
+                 {"common_field", Json{{"name", "at_ms"}, {"required", true}, {"hint", TimelineAtField.hint}}},
+                 {"events", std::move(listed)},
+                 {"semantics",
+                  Json::array(
+                      {"key / click 在 at_ms 按下、at_ms + hold_ms 松开；不同事件的按住可以相互重叠，同一按键请勿重叠。",
+                       "move / drag / scroll / look / text 是原子步骤，占用自身执行时间；落在这段时间内的事件顺延到其完成之后。",
+                       "事件不必按时间排序；编译后按时刻稳定排序并插入 sync 同步点，时刻锚定批次起点，不随执行开销漂移。",
+                       "整条时间轴必须在 budget_ms（默认 30000）内结束；结束时释放它按下的一切，不支持 leave_held。",
+                       "dry_run 时在 data.timeline.plan 返回编译出的步骤序列，可先检查编排再真正执行。"}
+                  )},
+                 {"options", "与 /run 相同（focus / ime / budget_ms / capture / logs 等），但不接受 step_delay_ms 与 leave_held。"},
+             }},
         };
     }
 
@@ -787,6 +1136,7 @@ namespace {
     constexpr HelpTopic HelpTopics[]{
         {"overview", &overviewHelp},
         {"steps", &stepsHelp},
+        {"timeline", &timelineHelp},
         {"options", &optionsHelp},
         {"keys", &keysHelp},
         {"errors", &errorsHelp},
@@ -925,6 +1275,66 @@ namespace {
             });
     }
 
+    OpResult opTimeline(const Context& context, const Json& args) {
+        return validateFields(args, RunOptions, "/timeline", {"events"})
+            .and_then([&]() -> Outcome<void> {
+                // 时间轴自己安排每一段间隔并释放它按下的一切，这两项批次选项在这里没有意义。
+                for (const std::string_view name : {"step_delay_ms", "leave_held"}) {
+                    if (args.contains(name)) {
+                        return invalid(
+                            "/timeline: " + std::string{name}
+                            + " is not supported; the timeline schedules every gap itself and releases everything it "
+                              "pressed."
+                        );
+                    }
+                }
+                return {};
+            })
+            .and_then([&] { return compileTimeline(args, intField(args, "budget_ms", 30000)); })
+            .and_then([&](Timeline timeline) -> OpResult {
+                auto options        = readOptions(args);
+                options.stepDelayMs = 0; // 间隔全部由 sync 表达
+
+                return Engine::run(context.pid, timeline.steps, options)
+                    .transform([&](const Engine::Report& report) {
+                        const bool wanted = wantsCapture(args) && !report.dryRun;
+                        auto       image  = captureIfRequested(context, wanted);
+
+                        Json data        = reportJson(report);
+                        data["timeline"] = Json{
+                            {"events", timeline.events},
+                            {"steps", timeline.steps.size()},
+                            {"end_ms", timeline.endMs},
+                        };
+                        if (report.dryRun) {
+                            data["timeline"]["plan"] = planJson(timeline.steps);
+                        }
+                        appendLogs(context, args, data);
+
+                        const std::string shape = std::to_string(timeline.events) + "-event timeline ("
+                                                + std::to_string(timeline.steps.size()) + " steps, ends at "
+                                                + std::to_string(timeline.endMs) + " ms)";
+                        const std::string summary =
+                            report.dryRun
+                                ? "Validated a " + shape + " and resolved its coordinates; no input was sent."
+                                : "Played a " + shape
+                                      + " on the game window. Input is queued, not confirmed — verify with "
+                                        "capture_game_window or logs.";
+                        return Payload{
+                            std::move(data),
+                            buildWarnings(report, wanted, image.has_value()),
+                            summary,
+                            std::move(image),
+                        };
+                    })
+                    .transform_error([&](const Engine::Error& error) {
+                        auto failure = toFailure(error);
+                        appendLogs(context, args, failure.progress);
+                        return failure;
+                    });
+            });
+    }
+
     // --- 操作表 ---
 
     struct OpSpec {
@@ -938,6 +1348,7 @@ namespace {
         {"/help", "", &opHelp, "用法说明"},
         {"/state", "", &opState, "窗口与指针状态"},
         {"/run", "", &opRun, "按顺序执行多个输入步骤"},
+        {"/timeline", "", &opTimeline, "按绝对时间轴编排输入，按住可以相互重叠"},
         {"/release-all", "", &opReleaseAll, "释放所有保持按下的输入"},
         {"/move", Engine::MoveStep::kName, nullptr, "单步糖"},
         {"/click", Engine::ClickStep::kName, nullptr, "单步糖"},
@@ -1033,6 +1444,31 @@ namespace mcdk::mc_input_mcp {
     nlohmann::json
     buildErrorResult(std::string_view op, std::string_view code, std::string_view message, bool retryable) {
         return renderFailure(op, Failure{std::string{code}, std::string{message}, retryable, Json(nullptr)});
+    }
+
+    nlohmann::json compileTimelinePlan(const nlohmann::json& args) noexcept {
+        try {
+            const int  budget   = args.is_object() && args.contains("budget_ms") && args["budget_ms"].is_number()
+                                    ? args["budget_ms"].get<int>()
+                                    : 30000;
+            const auto compiled = compileTimeline(args, budget);
+            if (!compiled.has_value()) {
+                return Json{
+                    {"ok", false},
+                    {"error", Json{{"code", compiled.error().code}, {"message", compiled.error().message}}},
+                };
+            }
+            return Json{
+                {"ok", true},
+                {"events", compiled->events},
+                {"end_ms", compiled->endMs},
+                {"steps", planJson(compiled->steps)},
+            };
+        } catch (const std::exception& error) {
+            return Json{{"ok", false}, {"error", Json{{"code", "INTERNAL"}, {"message", error.what()}}}};
+        } catch (...) {
+            return Json{{"ok", false}, {"error", Json{{"code", "INTERNAL"}, {"message", "Unknown internal failure."}}}};
+        }
     }
 
     // 全工具唯一的 try：任何未归类的异常都在这里变成 INTERNAL 错误信封。

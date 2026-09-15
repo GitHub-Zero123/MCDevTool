@@ -133,11 +133,22 @@ namespace MCDevTool::Input {
         [[nodiscard]] constexpr bool      usesAbsoluteCoords() const noexcept { return false; }
     };
 
-    using Step = std::variant<MoveStep, ClickStep, DragStep, ScrollStep, LookStep, KeyStep, TextStep, WaitStep>;
+    // 等到批次开始后的绝对时刻再继续；时刻已过则立即继续。
+    // wait 是相对停顿，逐步累积执行开销会让长序列越走越慢；sync 锚定在批次起点，不漂移。
+    struct SyncStep {
+        int atMs = 0;
+
+        static constexpr std::string_view kName = "sync";
+        [[nodiscard]] constexpr bool      usesAbsoluteCoords() const noexcept { return false; }
+    };
+
+    using Step =
+        std::variant<MoveStep, ClickStep, DragStep, ScrollStep, LookStep, KeyStep, TextStep, WaitStep, SyncStep>;
 
     [[nodiscard]] std::string_view stepName(const Step& step) noexcept;
 
-    // 绝对坐标步骤在指针被游戏独占时无意义，据此提前判定 PointerModeMismatch。
+    // 绝对坐标步骤在指针被游戏独占时无意义；执行到该步骤时判定 PointerModeMismatch，
+    // 因此同一批次里可以先 esc 释放指针，再点击菜单。
     [[nodiscard]] bool stepUsesAbsoluteCoords(const Step& step) noexcept;
 
     struct Options {

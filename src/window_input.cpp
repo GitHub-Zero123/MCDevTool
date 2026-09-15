@@ -178,6 +178,8 @@ namespace MCDevTool::Input {
         constexpr int SliceMs       = 20;    // 睡眠切片，保证守卫及时生效
         constexpr int LockWaitMs    = 250;   // 输入互斥的等待上限
         constexpr int SegmentGapMs  = 8;     // 拖拽/视角插值点之间的间隔
+        constexpr int RepeatGapMs   = 50;    // 重复按键之间的间隔：至少一个游戏刻，按帧轮询的逻辑才能看到松开
+        constexpr int WheelGapMs    = 16;    // 滚轮每格之间的间隔：真实滚轮每格产生一个事件
         constexpr int DoubleGapMs   = 40;    // 双击两次按下之间的间隔
         constexpr int ImeWaitMs     = 200;   // 与目标进程 IME 窗口通信的等待上限
         constexpr int HeldLeaseMs   = 60000; // leave_held 的租期上限，超时视为泄漏
@@ -426,6 +428,7 @@ namespace MCDevTool::Input {
         // 跨调用保留的按下状态。析构挂在静态对象上：进程正常退出时无论走哪条路径，
         // 都不会把按键留在系统里——这比依赖调用方记得 /release-all 可靠得多。
         struct Registry {
+            std::mutex        mutex;
             std::vector<Held> entries;
 
             Registry()                           = default;
@@ -435,9 +438,17 @@ namespace MCDevTool::Input {
             ~Registry() { releaseEntries(entries); }
         };
 
-        std::vector<Held>& registry() noexcept {
+        Registry& registry() noexcept {
             static Registry held;
-            return held.entries;
+            return held;
+        }
+
+        // /state 与正在执行的批次跑在不同的 HTTP 工作线程上，登记表的每次读写都经由这里加锁。
+        template <typename Fn>
+        auto withRegistry(Fn&& fn) {
+            auto&                       held = registry();
+            std::lock_guard<std::mutex> lock(held.mutex);
+            return std::forward<Fn>(fn)(held.entries);
         }
 
         bool sameInput(const Held& left, const Held& right) noexcept {
@@ -472,7 +483,7 @@ namespace MCDevTool::Input {
         }
 
         BOOL WINAPI onConsoleExit(DWORD) {
-            releaseEntries(registry());
+            withRegistry([](std::vector<Held>& entries) { return releaseEntries(entries); });
             return FALSE; // 继续走默认处理
         }
 
@@ -486,17 +497,18 @@ namespace MCDevTool::Input {
         // 超过租期仍未释放的保留输入按泄漏处理：卡住的 shift 会让用户此后所有输入都是错的，
         // 代价远高于误放一个本该继续按住的键。
         std::vector<std::string> sweepExpired() {
-            std::vector<Held> expired;
-            auto&             kept = registry();
-            for (auto it = kept.begin(); it != kept.end();) {
-                const bool stale = Clock::now() - it->since >= std::chrono::milliseconds(HeldLeaseMs);
-                if (stale) {
-                    expired.push_back(std::move(*it));
-                    it = kept.erase(it);
-                } else {
-                    ++it;
+            std::vector<Held> expired = withRegistry([](std::vector<Held>& kept) {
+                std::vector<Held> stale;
+                for (auto it = kept.begin(); it != kept.end();) {
+                    if (Clock::now() - it->since >= std::chrono::milliseconds(HeldLeaseMs)) {
+                        stale.push_back(std::move(*it));
+                        it = kept.erase(it);
+                    } else {
+                        ++it;
+                    }
                 }
-            }
+                return stale;
+            });
             return releaseEntries(expired);
         }
 
@@ -516,7 +528,7 @@ namespace MCDevTool::Input {
             // 只销前者会让 action=up 释放掉的键永远留在 held 里，登记表只增不减。
             void forget(const Held& held) {
                 eraseMatch(entries, held);
-                eraseMatch(registry(), held);
+                withRegistry([&](std::vector<Held>& kept) { eraseMatch(kept, held); });
             }
 
             std::vector<std::string> release() noexcept { return releaseEntries(entries); }
@@ -525,14 +537,16 @@ namespace MCDevTool::Input {
             void commit() {
                 installExitGuardOnce();
 
-                for (const auto& entry : entries) { // 重复按住同一个键不应在登记表里留下两条
-                    eraseMatch(registry(), entry);
-                }
-                registry().insert(
-                    registry().end(),
-                    std::make_move_iterator(entries.begin()),
-                    std::make_move_iterator(entries.end())
-                );
+                withRegistry([&](std::vector<Held>& kept) {
+                    for (const auto& entry : entries) { // 重复按住同一个键不应在登记表里留下两条
+                        eraseMatch(kept, entry);
+                    }
+                    kept.insert(
+                        kept.end(),
+                        std::make_move_iterator(entries.begin()),
+                        std::make_move_iterator(entries.end())
+                    );
+                });
                 entries.clear();
             }
         };
@@ -544,6 +558,7 @@ namespace MCDevTool::Input {
             RECT              client{};
             Options           options;
             Clock::time_point deadline;
+            Clock::time_point started; // sync 步骤的时间原点
             Ledger&           ledger;
         };
 
@@ -577,16 +592,19 @@ namespace MCDevTool::Input {
             return std::chrono::duration_cast<std::chrono::milliseconds>(until - Clock::now()).count();
         }
 
-        // 分片休眠，长按期间守卫依然按时生效。dry_run 下不消耗真实时间。
-        Result<void> settle(const Runtime& runtime, int milliseconds) {
-            const auto until =
-                Clock::now() + std::chrono::milliseconds(std::max(runtime.options.dryRun ? 0 : milliseconds, 0));
+        // 分片休眠到指定时刻，长按期间守卫依然按时生效。dry_run 下不消耗真实时间。
+        Result<void> settleUntil(const Runtime& runtime, Clock::time_point until) {
             Result<void> result{};
+            if (runtime.options.dryRun) return result;
             for (long long left = remainingMs(until); left > 0 && result.has_value(); left = remainingMs(until)) {
                 result = guard(runtime);
-                Sleep(static_cast<DWORD>(std::min<long long>(left, SliceMs)));
+                if (result.has_value()) Sleep(static_cast<DWORD>(std::min<long long>(left, SliceMs)));
             }
             return result;
+        }
+
+        Result<void> settle(const Runtime& runtime, int milliseconds) {
+            return settleUntil(runtime, Clock::now() + std::chrono::milliseconds(std::max(milliseconds, 0)));
         }
 
         // --- 按下 / 释放 ---
@@ -673,22 +691,33 @@ namespace MCDevTool::Input {
 
         // --- 坐标 ---
 
-        // 百分比 -> 客户区物理像素。越界即刻拒绝，并把实际尺寸写进错误里。
-        Result<Pixel> toClient(const Runtime& runtime, Point point) {
-            const Pixel pixel{
-                static_cast<int>(std::lround(point.x * runtime.client.right)),
-                static_cast<int>(std::lround(point.y * runtime.client.bottom))
-            };
-            const bool inside =
-                pixel.x >= 0 && pixel.y >= 0 && pixel.x < runtime.client.right && pixel.y < runtime.client.bottom;
+        bool pointerHeldBy(HWND target) noexcept; // 定义在前置检查一节
 
-            return inside ? Result<Pixel>{pixel}
-                          : Result<Pixel>{fail(
-                                ErrorCode::InvalidArgument,
-                                "Coordinate (" + std::to_string(point.x) + ", " + std::to_string(point.y)
-                                    + ") is outside the 0.0-1.0 range of the " + std::to_string(runtime.client.right)
-                                    + "x" + std::to_string(runtime.client.bottom) + " client area."
-                            )};
+        // 百分比 -> 客户区物理像素。1.0 落在最后一个像素上；越界即刻拒绝，并把实际尺寸写进错误里。
+        // 指针是否被游戏独占在这里逐步判定，而不是批次开始时一次判定：
+        // 同一批次里先 esc 释放指针、再点击菜单的写法才能成立。
+        Result<Pixel> toClient(const Runtime& runtime, Point point) {
+            const bool inside = point.x >= 0.0 && point.x <= 1.0 && point.y >= 0.0 && point.y <= 1.0;
+            if (!inside) {
+                return fail(
+                    ErrorCode::InvalidArgument,
+                    "Coordinate (" + std::to_string(point.x) + ", " + std::to_string(point.y)
+                        + ") is outside the 0.0-1.0 range of the " + std::to_string(runtime.client.right) + "x"
+                        + std::to_string(runtime.client.bottom) + " client area."
+                );
+            }
+            if (pointerHeldBy(runtime.hwnd)) {
+                return fail(
+                    ErrorCode::PointerModeMismatch,
+                    "The game holds the pointer (in-world view), so absolute coordinates do not apply. "
+                    "Use look for camera motion, click without at for in-place clicks, or press esc first."
+                );
+            }
+            return Pixel{
+                static_cast<int>(std::min<long>(std::lround(point.x * runtime.client.right), runtime.client.right - 1)),
+                static_cast<int>(std::min<long>(std::lround(point.y * runtime.client.bottom), runtime.client.bottom - 1)
+                ),
+            };
         }
 
         Result<void> moveTo(Runtime& runtime, Pixel client) {
@@ -822,8 +851,15 @@ namespace MCDevTool::Input {
                                [&] { return moveIfNeeded(runtime, at); },
                                [&] {
                                    return withHeld(runtime, step.modifiers, [&] {
-                                       INPUT event = wheelEvent(step.amount, step.axis);
-                                       return send(runtime, std::span{&event, 1});
+                                       // 真实滚轮每格产生一个事件；只看符号的处理逻辑会把单个多格事件当成一格。
+                                       const int direction = step.amount < 0 ? -1 : 1;
+                                       return repeatTimes(std::abs(step.amount), [&] {
+                                           INPUT event = wheelEvent(direction, step.axis);
+                                           return sequence(
+                                               [&] { return send(runtime, std::span{&event, 1}); },
+                                               [&] { return settle(runtime, WheelGapMs); }
+                                           );
+                                       });
                                    });
                                }
                     ).transform([at] { return at; });
@@ -842,7 +878,7 @@ namespace MCDevTool::Input {
                            [&] {
                                return sequence(
                                    [&] { return performKeys(runtime, step.keys, step.action, step.holdMs); },
-                                   [&] { return settle(runtime, SegmentGapMs); }
+                                   [&] { return settle(runtime, RepeatGapMs); }
                                );
                            }
                 ).transform([] { return std::optional<Pixel>{}; });
@@ -854,6 +890,11 @@ namespace MCDevTool::Input {
 
             Result<std::optional<Pixel>> operator()(const WaitStep& step) const {
                 return settle(runtime, step.ms).transform([] { return std::optional<Pixel>{}; });
+            }
+
+            Result<std::optional<Pixel>> operator()(const SyncStep& step) const {
+                return settleUntil(runtime, runtime.started + std::chrono::milliseconds(std::max(step.atMs, 0)))
+                    .transform([] { return std::optional<Pixel>{}; });
             }
         };
 
@@ -886,7 +927,6 @@ namespace MCDevTool::Input {
             RECT       client{};
             Options    options;
             WindowInfo info;
-            bool       absoluteSteps = false;
         };
 
         // pid 为 0 时窗口查找会退化成“匹配任意 Minecraft 窗口”，必须先挡住。
@@ -1076,17 +1116,11 @@ namespace MCDevTool::Input {
             return clip.left > left || clip.top > top || clip.right < right || clip.bottom < bottom;
         }
 
+        // 只采集状态供 /state 与报告使用；绝对坐标与指针独占的冲突在执行到该步骤时判定（见 toClient）。
         Result<void> checkPointer(Session& session) {
             session.info.pointerLocked = pointerHeldBy(session.hwnd);
             session.info.imeOpen       = imeIsOpen(session.hwnd);
-
-            return session.info.pointerLocked && session.absoluteSteps
-                     ? Result<void>{fail(
-                           ErrorCode::PointerModeMismatch,
-                           "The game holds the pointer (in-world view), so absolute coordinates do not apply. "
-                           "Use look for camera motion, click without at for in-place clicks, or press esc first."
-                       )}
-                     : Result<void>{};
+            return {};
         }
 
         using Check = Result<void> (*)(Session&);
@@ -1142,7 +1176,7 @@ namespace MCDevTool::Input {
             // 先回收超租的保留输入：即使这次调用随后失败，泄漏的按键也已经放开了。
             report.released = sweepExpired();
 
-            Session session{pid, nullptr, {}, effective, {}, std::ranges::any_of(steps, &stepUsesAbsoluteCoords)};
+            Session session{pid, nullptr, {}, effective, {}};
 
             return preflight(session)
                 .and_then([&]() -> Result<Report> {
@@ -1151,11 +1185,13 @@ namespace MCDevTool::Input {
                     ImeScope      ime{session.hwnd, effective.ime == ImePolicy::Suppress && !effective.dryRun};
                     CursorRestore restore{effective.restoreCursor && !effective.dryRun};
                     Ledger        ledger;
+                    const auto    started = Clock::now();
                     Runtime       runtime{
                         session.hwnd,
                         session.client,
                         effective,
-                        Clock::now() + std::chrono::milliseconds(effective.budgetMs),
+                        started + std::chrono::milliseconds(effective.budgetMs),
+                        started,
                         ledger
                     };
 
@@ -1168,7 +1204,7 @@ namespace MCDevTool::Input {
                         auto released = ledger.release();
                         report.released.insert(report.released.end(), released.begin(), released.end());
                     }
-                    report.held = namesOf(registry());
+                    report.held = withRegistry(namesOf);
 
                     return outcome.transform([&] { return std::move(report); });
                 })
@@ -1186,7 +1222,7 @@ namespace MCDevTool::Input {
         options.focus              = FocusPolicy::Keep;
         options.restoreIfMinimized = false;
 
-        Session session{pid, nullptr, {}, options, {}, false};
+        Session session{pid, nullptr, {}, options, {}};
         return preflight(session).transform([&] { return session.info; });
     }
 
@@ -1195,7 +1231,7 @@ namespace MCDevTool::Input {
     Result<Report> releaseHeld(int pid) {
         return acquireLock().and_then([&]([[maybe_unused]] Lock lock) -> Result<Report> {
             Report report;
-            report.released = releaseEntries(registry());
+            report.released = withRegistry([](std::vector<Held>& entries) { return releaseEntries(entries); });
 
             // 窗口状态只是附带的诊断信息，取不到也不影响释放本身。
             DpiScope dpi;
@@ -1203,7 +1239,7 @@ namespace MCDevTool::Input {
             options.focus              = FocusPolicy::Keep;
             options.restoreIfMinimized = false;
 
-            Session session{pid, nullptr, {}, options, {}, false};
+            Session session{pid, nullptr, {}, options, {}};
             if (preflight(session).has_value()) {
                 report.window = session.info;
             }
@@ -1211,7 +1247,7 @@ namespace MCDevTool::Input {
         });
     }
 
-    std::vector<std::string> heldKeys() { return namesOf(registry()); }
+    std::vector<std::string> heldKeys() { return withRegistry(namesOf); }
 #else
     Result<Report> run(int, std::span<const Step>, const Options&) {
         return std::unexpected(Error{ErrorCode::Unsupported, "Input injection requires Windows.", {}});

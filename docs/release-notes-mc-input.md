@@ -93,3 +93,28 @@
 * 修复窗口位于副屏时点击坐标偏移的问题（改用虚拟桌面归一化）。
 * 修复抢占前台失败后仍然继续发送输入的问题，现在会在投递任何事件之前中止。
 * 截图、窗口样式与输入注入改为共用同一份窗口解析规则，避免三条路径定位到不同窗口。
+
+## 时间轴编排：`/timeline` 与 `sync` 步骤
+
+`/run` 是顺序模型：每一步在前一步结束后开始，重叠的按住只能靠手工计算 `down` / `wait` / `up` 的间隔，而 `wait` 是相对停顿，长序列会随执行开销逐步漂移。`/timeline` 改为以绝对时刻编排：每个事件给出 `at_ms`，`key` / `click` 再给 `hold_ms`，编译时拆成「按下 @at_ms」与「松开 @at_ms + hold_ms」两个原语，按时刻稳定排序后交给顺序引擎执行，因此不同按键与鼠标键的按住可以相互重叠。
+
+```json
+{
+    "op": "/timeline",
+    "args": {
+        "events": [
+            {"at_ms": 0,    "do": "key",   "keys": "w",   "hold_ms": 2000},
+            {"at_ms": 800,  "do": "key",   "keys": "space"},
+            {"at_ms": 1200, "do": "click", "hold_ms": 300},
+            {"at_ms": 1500, "do": "look",  "by": [300, 0]}
+        ]
+    }
+}
+```
+
+* 事件类型为 `key`、`click`、`move`、`drag`、`scroll`、`look`、`text`；没有 `wait`，时间由 `at_ms` 表达。事件不必按时间排序。
+* `move` / `drag` / `scroll` / `look` / `text` 是原子步骤，占用自身执行时间，落在这段时间内的后续事件会顺延到它们完成之后。
+* 时间轴必须在 `budget_ms` 内结束，结束时释放它按下的一切；不接受 `step_delay_ms` 与 `leave_held`。
+* `dry_run: true` 时在 `data.timeline.plan` 返回编译出的步骤序列，可先检查编排再真正执行。`/help topic=timeline` 列出全部字段。
+
+时间锚点由新增的 `sync` 步骤实现：`{"do": "sync", "at_ms": N}` 等到批次开始后的第 N 毫秒再继续，已过则立即继续。它同样可以直接用在 `/run` 里，替代会漂移的 `wait`。

@@ -304,14 +304,62 @@ int main() {
         if (!report.has_value()) {
             reportError("scroll/text", report.error());
         } else {
-            const auto* wheel = firstOf(WM_MOUSEWHEEL);
-            expect(wheel != nullptr && GET_WHEEL_DELTA_WPARAM(wheel->wParam) == -240, "the wheel delta is -2 notches");
+            // 与真实滚轮一致：每格一个事件，总量等于请求的格数。
+            int wheelTotal = 0;
+            for (const auto& event : events) {
+                if (event.message == WM_MOUSEWHEEL) wheelTotal += GET_WHEEL_DELTA_WPARAM(event.wParam);
+            }
+            expect(countOf(WM_MOUSEWHEEL) == 2 && wheelTotal == -240, "two notches arrive as two wheel events");
 
             std::string typed;
             for (const auto& event : events) {
                 if (event.message == WM_CHAR) typed.push_back(static_cast<char>(event.wParam));
             }
             expect(typed == "ab", "text arrives as characters in order");
+        }
+    }
+
+    // --- sync：锚定批次起点的绝对时刻，长按跨越 sync 不漂移 ---
+    {
+        auto options        = baseOptions();
+        options.stepDelayMs = 0;
+
+        auto report = runSteps(
+            {Engine::KeyStep{{*Engine::findKey("w")}, Engine::PressAction::Down, 0, 1},
+             Engine::SyncStep{300},
+             Engine::KeyStep{{*Engine::findKey("w")}, Engine::PressAction::Up, 0, 1}},
+            options
+        );
+        if (!report.has_value()) {
+            reportError("sync", report.error());
+        } else {
+            const auto* down = firstOf(WM_KEYDOWN);
+            const auto* up   = firstOf(WM_KEYUP);
+            expect(down != nullptr && up != nullptr, "a sync-bounded hold reaches the window");
+            if (down != nullptr && up != nullptr) {
+                const int held = millisBetween(*down, *up);
+                if (held < 280 || held > 450) {
+                    std::cerr << "  sync released the key after " << held << " ms\n";
+                }
+                expect(held >= 280 && held <= 450, "sync releases the key at the scheduled absolute time");
+            }
+        }
+    }
+
+    // --- 坐标 1.0 是合法的右下角，落在最后一个像素上 ---
+    {
+        auto report = runSteps(
+            {Engine::ClickStep{Engine::Point{1.0, 1.0}, Engine::MouseButton::Left, Engine::PressAction::Press, 20, {}}},
+            baseOptions()
+        );
+        if (!report.has_value()) {
+            reportError("corner", report.error());
+        } else {
+            expect(
+                report->steps.size() == 1 && report->steps[0].at.has_value()
+                    && report->steps[0].at->x == client.cx - 1 && report->steps[0].at->y == client.cy - 1,
+                "(1.0, 1.0) resolves to the bottom-right pixel instead of being rejected"
+            );
         }
     }
 
