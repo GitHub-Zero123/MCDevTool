@@ -11,6 +11,18 @@
 由此派生四条禁令，任一违反即视为缺陷：
 
 1. **禁止在分支外构造 payload。** 时间戳、字符串转换、路径转 UTF-8、JSON 序列化——全部只能在确认有订阅者之后做。
+
+   payload 里的 `mcdk_str` 是借用的，而工厂是个返回 payload 的 lambda——它内部现造的字符串一出 lambda 就没了。为此工厂可以多收一个 `PayloadArena&`，把串交给它寄存，生命周期覆盖整个 dispatch：
+
+   ```cpp
+   MCDK_EMIT(EventId::GameLaunchFinish, [&](auto& arena) {
+       mcdk_ev_game_launch_finish payload{};
+       payload.exe_path = arena.hold(pathToGenericUtf8(exePath));  // 只在有订阅者时执行
+       return payload;
+   });
+   ```
+
+   没有它的话只能把转换提到宏外面，那就正好违反了本条。两种工厂形态由 `dispatch` 用 `if constexpr` 自动分辨，无参的写法不受影响。
 2. **禁止在发射点加锁。** 订阅计数只能用无锁原子读。
 3. **禁止在发射点做哈希查找。** 事件 id 是编译期常量，直接索引数组。
 4. **禁止为事件预先分配。** 队列、缓冲区一律惰性创建。

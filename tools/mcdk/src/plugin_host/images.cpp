@@ -1,7 +1,7 @@
 #include "images.hpp"
 
-#include <atomic>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <utility>
 
@@ -14,8 +14,8 @@ namespace mcdk::plugin_host::detail {
             // key 是图像句柄。value 里带 owner，取用时校验——句柄猜测不应该能
             // 跨插件读到别人的截图。
             struct Entry {
-                mcdk_handle owner = 0;
-                ImageRecord record;
+                mcdk_handle                  owner = 0;
+                std::shared_ptr<ImageRecord> record;
             };
             std::map<mcdk_handle, Entry> entries;
             mcdk_handle                  nextHandle = 1;
@@ -29,20 +29,23 @@ namespace mcdk::plugin_host::detail {
     } // namespace
 
     mcdk_handle addImage(mcdk_handle owner, ImageRecord record) {
+        auto held = std::make_shared<ImageRecord>(std::move(record));
+
         const std::lock_guard lock(store().mutex);
         const auto            handle = store().nextHandle++;
-        store().entries.emplace(handle, Store::Entry{owner, std::move(record)});
+        store().entries.emplace(handle, Store::Entry{owner, std::move(held)});
         return handle;
     }
 
-    const ImageRecord* findImage(mcdk_handle owner, mcdk_handle image) noexcept {
+    std::shared_ptr<const ImageRecord> findImage(mcdk_handle owner, mcdk_handle image) noexcept {
         const std::lock_guard lock(store().mutex);
         const auto            it = store().entries.find(image);
         if (it == store().entries.end() || it->second.owner != owner) {
             return nullptr;
         }
-        // std::map 的节点地址稳定，指针在该项被 erase 之前一直有效。
-        return &it->second.record;
+        // 共享所有权：调用方在锁外用它期间，另一个线程的 release 只会摘掉表项，
+        // 不会销毁数据。
+        return it->second.record;
     }
 
     void releaseImage(mcdk_handle owner, mcdk_handle image) noexcept {

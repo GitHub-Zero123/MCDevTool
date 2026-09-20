@@ -16,7 +16,10 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <string>
 #include <string_view>
+#include <type_traits>
 
 #include <mcdk/plugin/abi/events.h>
 
@@ -51,18 +54,55 @@ namespace mcdk::plugin_host {
     void               dispatchRaw(EventId id, const void* payload, std::uint32_t payloadSize);
     [[nodiscard]] bool dispatchRawVetoable(EventId id, const void* payload, std::uint32_t payloadSize);
 
+    // payload 工厂的临时字符串寄存处。
+    //
+    // payload 里的 mcdk_str 是借用的，而工厂是个返回 payload 的 lambda——它内部
+    // 现造的字符串一出 lambda 就没了。以前只能把转换提到宏外面，而那正好违反
+    // 12-performance.md §1 禁令 1（路径转 UTF-8 不得在分支外做）。
+    //
+    // 把串交给它，生命期就能覆盖整个 dispatch，转换也就能写在工厂里、
+    // 只在确有订阅者时执行。arena 本身也只在那时才构造。
+    class PayloadArena {
+    public:
+        [[nodiscard]] mcdk_str hold(std::string text) {
+            mStorage.push_back(std::move(text));
+            const auto& held = mStorage.back();
+            return mcdk_str{held.data(), held.size()};
+        }
+
+    private:
+        // deque 而非 vector：hold 会把指针交出去，追加不能让它失效。
+        std::deque<std::string> mStorage;
+    };
+
+    // 工厂可以是 `[]{ ... }`，也可以是 `[](auto& arena){ ... }`——后者用于
+    // payload 里带需要现造的字符串的情形。
     template <class Factory>
     void dispatch(EventId id, Factory&& makePayload) {
-        auto payload = makePayload();
-        dispatchRaw(id, &payload, static_cast<std::uint32_t>(sizeof(payload)));
+        if constexpr (std::is_invocable_v<Factory&, PayloadArena&>) {
+            PayloadArena arena;
+            auto         payload = makePayload(arena);
+            dispatchRaw(id, &payload, static_cast<std::uint32_t>(sizeof(payload)));
+        } else {
+            auto payload = makePayload();
+            dispatchRaw(id, &payload, static_cast<std::uint32_t>(sizeof(payload)));
+        }
     }
 
     // 返回 true 表示被某个 SYNC 订阅者否决。QUEUED 订阅者无法否决——它们是
     // 异步的，等不到结果。
     template <class Factory>
     [[nodiscard]] bool dispatchVetoable(EventId id, Factory&& makePayload) {
-        auto payload = makePayload();
-        return dispatchRawVetoable(id, &payload, static_cast<std::uint32_t>(sizeof(payload)));
+        // 必须写 else：没有 else 的话后面那两行仍会被实例化，
+        // 带 arena 参数的工厂就会在那里报「无匹配的调用」。
+        if constexpr (std::is_invocable_v<Factory&, PayloadArena&>) {
+            PayloadArena arena;
+            auto         payload = makePayload(arena);
+            return dispatchRawVetoable(id, &payload, static_cast<std::uint32_t>(sizeof(payload)));
+        } else {
+            auto payload = makePayload();
+            return dispatchRawVetoable(id, &payload, static_cast<std::uint32_t>(sizeof(payload)));
+        }
     }
 
     // 事件名 ↔ 内部 id。未知名字返回 kInvalidAbiEventId(0)。

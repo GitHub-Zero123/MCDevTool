@@ -3,10 +3,11 @@
 //
 // mcdk.log 的 C++ 封装。
 //
-// ABI 上是回调式枚举：宿主持着 LogBuffer 的锁逐条回调，文本是借用的。那套约束
-// （sink 里禁止调用任何其他 mcdk 接口、禁止阻塞）很容易踩，所以 SDK 不把裸 sink
-// 交给用户 —— 默认的 query() 在 sink 里只做一次 string 拷贝，返回一个普通的
-// std::vector<LogEntry>。想要零拷贝的人可以用 visit()，代价是要自己遵守约束。
+// ABI 上是回调式枚举，文本是借用的：这样边界上就不会出现分配。宿主侧已经
+// 改成「锁内取快照、锁外回调」，所以 visit() 的 visitor 并不跑在 LogBuffer 的锁里，
+// 里面调其他接口也不会死锁。唯一的约束是 entry.text 返回后即失效。
+//
+// 默认的 query() 把它拷成 std::vector<LogEntry>，绝大多数场景用这个就行。
 //
 
 #include <cstdint>
@@ -84,13 +85,9 @@ namespace mcdk {
             return mTable->count(mSelf, toAbi(channel));
         }
 
-        // 零拷贝版本。visitor 运行在宿主持有 LogBuffer 锁的状态下：
+        // 零拷贝版本。visitor 跑在调用线程上、宿主的锁外，里面调其他接口是安全的。
         //
-        //   - 必须极短，只做拷贝或匹配；
-        //   - 禁止调用任何其他 mcdk 接口，包括 console()，会死锁；
-        //   - 禁止阻塞或等待其他线程。
-        //
-        // 拿不准就用 query()。entry.text 在 visitor 返回后即失效。
+        // **entry.text 在 visitor 返回后即失效**，要留必须拷走。拿不准就用 query()。
         template <class Visitor>
         void visit(const LogQuery& request, Visitor&& visitor) const {
             if (!detail::ifaceHas(mTable, &mcdk_iface_log::query)) {
@@ -114,7 +111,7 @@ namespace mcdk {
             if (user == nullptr || entry == nullptr) {
                 return;
             }
-            // 异常绝不能穿过 C ABI 回到宿主——宿主此刻还持着 LogBuffer 的锁。
+            // 异常绝不能穿过 C ABI 回到宿主的栈帧。
             detail::guardVoid([&] { (*static_cast<Visitor*>(user))(*entry); });
         }
 

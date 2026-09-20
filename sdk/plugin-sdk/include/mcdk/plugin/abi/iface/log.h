@@ -48,12 +48,12 @@ typedef struct mcdk_log_entry {
 } mcdk_log_entry;
 
 /*
- * 宿主在持有 LogBuffer 锁的状态下逐条调用 sink。因此：
- *   - sink 必须极短，只做拷贝或匹配；
- *   - sink 内禁止调用任何其他 mcdk 接口——包括 mcdk.console，会死锁；
- *   - sink 内禁止阻塞、等待其他线程。
- * 需要复杂处理时，先在 sink 里把文本拷进插件自己的容器，query 返回后再处理。
- * SDK 的 ctx.log().query(...) 默认就是这么做的，用户拿不到裸 sink。
+ * 宿主先在 LogBuffer 锁内取快照，放锁，再逐条调用 sink——**sink 跑在锁外**。
+ * 因此约束只有一条：entry->text 是借用的，sink 返回后即失效，要留必须拷走。
+ * 在 sink 里调 mcdk.console、再调一次 query、甚至阻塞一会儿都是允许的。
+ *
+ * 早期版本曾持锁回调（为了省掉拷贝），但那会让一个慢 sink 卡住日志摄入，
+ * 进而填满游戏的 stdout 管道、把游戏进程阻塞在 write 上。不值得。
  */
 typedef void(MCDK_CALL* mcdk_log_sink)(void* user, const mcdk_log_entry* entry);
 

@@ -23,9 +23,9 @@ namespace mcdk::plugin_host::detail {
             const auto binding = sessionBinding();
             switch (channel) {
             case MCDK_LOG_CHANNEL_STDERR:
-                return binding.errBuffer;
+                return binding->errBuffer;
             case MCDK_LOG_CHANNEL_STDOUT:
-                return binding.logBuffer;
+                return binding->logBuffer;
             default:
                 return nullptr;
             }
@@ -74,18 +74,33 @@ namespace mcdk::plugin_host::detail {
                 end = std::min(end, total);
 
                 const bool newestFirst = query->order != MCDK_LOG_ORDER_ASC;
-                buffer->visitRange(start, end, newestFirst, [&](std::size_t index, const std::string& line) {
+
+                // 先在锁内取一份快照，再在锁外回调。
+                //
+                // 一开始是持锁逐条回调的，理由是「零分配」。那是把 02 §6 的
+                // 「分配器不得穿越边界」错当成了「宿主侧也不许分配」——宿主自己
+                // 拷贝跟 ABI 没有关系。而持锁回调的代价很实在：sink 慢一点，
+                // LogBuffer::add 就卡住，日志读取线程随之停下，游戏的 stdout
+                // 管道填满之后**游戏进程会阻塞在 write 上**。一个插件的处理器
+                // 慢，不该演变成游戏卡住。顺带也消掉了 sink 里重入 query 的死锁。
+                const auto lines = newestFirst ? buffer->getRangeReversed(start, end) : buffer->getRange(start, end);
+
+                for (std::size_t offset = 0; offset < lines.size(); ++offset) {
+                    // getRange 按由旧到新返回，其第 j 项距最新 end-1-j 条；
+                    // getRangeReversed 反过来，第 j 项就是 start+j。
+                    const std::size_t index = newestFirst ? start + offset : end - 1 - offset;
+
                     mcdk_log_entry entry{};
                     entry.struct_size = static_cast<std::uint32_t>(sizeof(entry));
                     entry.index       = static_cast<std::uint32_t>(index);
                     // LogBuffer 只存文本，不存时间戳，所以 v1 这里恒为 0。
                     // 需要时间戳的插件应订阅 mcdk.log.line —— 那条路径上有。
                     entry.timestamp_ms = 0;
-                    entry.text.ptr     = line.data();
-                    entry.text.len     = line.size();
+                    entry.text.ptr     = lines[offset].data();
+                    entry.text.len     = lines[offset].size();
                     // sink 是插件侧函数，异常由对方的 SDK 屏障吃掉；这里拿到的只会是返回。
                     sink(user, &entry);
-                });
+                }
                 return MCDK_OK;
             });
         }

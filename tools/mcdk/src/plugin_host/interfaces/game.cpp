@@ -111,7 +111,7 @@ namespace mcdk::plugin_host::detail {
                 }
 
                 const auto binding = sessionBinding();
-                if (!binding.ipcServer || binding.ipcServer->getClientCount() == 0) {
+                if (!binding->ipcServer || binding->ipcServer->getClientCount() == 0) {
                     return MCDK_ERR_GAME_NOT_READY;
                 }
 
@@ -122,7 +122,7 @@ namespace mcdk::plugin_host::detail {
                 // 而且这次调用会阻塞数秒，绝不能继续指着调用方的栈。
                 const std::string source(code.ptr, code.len);
                 const auto        result = ipc_code_execution::requestCodeReturnValueJson(
-                    binding.ipcServer,
+                    binding->ipcServer,
                     source,
                     side == MCDK_SIDE_CLIENT,
                     timeout
@@ -159,7 +159,7 @@ namespace mcdk::plugin_host::detail {
                 return MCDK_ERR_NOT_SUPPORTED;
 #else
                 const auto binding = sessionBinding();
-                const auto gamePid = binding.gamePid ? binding.gamePid->load(std::memory_order_relaxed) : 0u;
+                const auto gamePid = binding->gamePid ? binding->gamePid->load(std::memory_order_relaxed) : 0u;
                 if (gamePid == 0) {
                     return MCDK_ERR_GAME_NOT_READY;
                 }
@@ -215,8 +215,8 @@ namespace mcdk::plugin_host::detail {
                 if (registry().find(self) == nullptr) {
                     return MCDK_ERR_INVALID_HANDLE;
                 }
-                const auto* record = findImage(self, image);
-                if (record == nullptr) {
+                const auto record = findImage(self, image);
+                if (!record) {
                     return MCDK_ERR_INVALID_HANDLE;
                 }
                 mcdk_image_info info{};
@@ -245,8 +245,10 @@ namespace mcdk::plugin_host::detail {
                 if (registry().find(self) == nullptr) {
                     return MCDK_ERR_INVALID_HANDLE;
                 }
-                const auto* record = findImage(self, image);
-                if (record == nullptr) {
+                // 持有一份所有权再拷贝：即使另一个插件线程此刻 release 了同一个句柄，
+                // 下面这段 memcpy 读的仍是活着的内存。
+                const auto record = findImage(self, image);
+                if (!record) {
                     return MCDK_ERR_INVALID_HANDLE;
                 }
                 *out_written = record->bytes.size();

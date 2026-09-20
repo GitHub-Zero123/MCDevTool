@@ -24,7 +24,11 @@ namespace {
     // 返回 true 表示被插件否决：按 docs/plugin-system/04-events.md §4.2，否决
     // **只抑制这一行的控制台输出**，不影响 LogBuffer——MCP 的 get_latest_logs
     // 仍然读得到它。
-    [[nodiscard]] bool emitLogLine(mcdk::plugin_host::EventId id, std::uint32_t channel, const std::string& line) {
+    [[nodiscard]] inline bool emitLogLine(
+        mcdk::plugin_host::EventId id,
+        std::uint32_t              channel,
+        const std::string&         line
+    ) {
         return MCDK_EMIT_VETOABLE(id, [&] {
             mcdk_ev_log_line payload{};
             payload.struct_size  = static_cast<std::uint32_t>(sizeof(payload));

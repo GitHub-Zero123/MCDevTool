@@ -65,32 +65,4 @@ namespace mcdk {
         return mBuffer.size();
     }
 
-    void LogBuffer::visitRange(
-        std::size_t                                                       index,
-        std::size_t                                                       endIndex,
-        bool                                                              newestFirst,
-        const std::function<void(std::size_t index, const std::string&)>& visitor
-    ) {
-        if (!visitor) {
-            return;
-        }
-        std::lock_guard lock(mMutex);
-        // 与 getRange 完全同一套边界判定，不得分化。
-        if (mBuffer.empty() || index >= mBuffer.size() || endIndex > mBuffer.size() || index >= endIndex) {
-            return;
-        }
-        const auto first = mBuffer.end() - static_cast<std::ptrdiff_t>(endIndex);
-        const auto last  = mBuffer.end() - static_cast<std::ptrdiff_t>(index);
-        if (newestFirst) {
-            for (auto it = last; it != first;) {
-                --it;
-                visitor(static_cast<std::size_t>(mBuffer.end() - it) - 1, *it);
-            }
-        } else {
-            for (auto it = first; it != last; ++it) {
-                visitor(static_cast<std::size_t>(mBuffer.end() - it) - 1, *it);
-            }
-        }
-    }
-
 } // namespace mcdk

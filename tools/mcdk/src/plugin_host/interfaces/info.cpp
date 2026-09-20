@@ -62,27 +62,27 @@ namespace mcdk::plugin_host::detail {
                 const auto binding = sessionBinding();
                 auto&      strings = infoStrings();
 
-                strings.mcpIp            = binding.facts.mcpIp;
-                strings.gameExePath      = binding.facts.gameExePath;
-                strings.worldName        = binding.facts.worldName;
-                strings.worldFolderName  = binding.facts.worldFolderName;
-                strings.worldRuntimePath = binding.facts.worldRuntimePath;
-                strings.worldSourcePath  = binding.facts.worldSourcePath;
+                strings.mcpIp            = binding->facts.mcpIp;
+                strings.gameExePath      = binding->facts.gameExePath;
+                strings.worldName        = binding->facts.worldName;
+                strings.worldFolderName  = binding->facts.worldFolderName;
+                strings.worldRuntimePath = binding->facts.worldRuntimePath;
+                strings.worldSourcePath  = binding->facts.worldSourcePath;
                 // 项目根在任何阶段都是知道的，绑定之前也一样。
-                strings.projectRoot = binding.facts.projectRoot.empty()
+                strings.projectRoot = binding->facts.projectRoot.empty()
                                           ? MCDevTool::Utils::pathToGenericUtf8(std::filesystem::current_path())
-                                          : binding.facts.projectRoot;
+                                          : binding->facts.projectRoot;
 
                 mcdk_session_info info{};
                 info.struct_size = static_cast<std::uint32_t>(sizeof(mcdk_session_info));
-                info.mcdk_pid    = binding.facts.mcdkPid;
-                info.game_pid    = binding.gamePid ? binding.gamePid->load(std::memory_order_relaxed) : 0u;
-                info.game_ipc_port = binding.ipcServer ? binding.ipcServer->getPort() : std::uint16_t{0};
-                info.mcp_port      = binding.facts.mcpPort;
-                info.mcp_enabled   = binding.facts.mcpEnabled ? MCDK_TRUE : MCDK_FALSE;
+                info.mcdk_pid    = binding->facts.mcdkPid;
+                info.game_pid    = binding->gamePid ? binding->gamePid->load(std::memory_order_relaxed) : 0u;
+                info.game_ipc_port = binding->ipcServer ? binding->ipcServer->getPort() : std::uint16_t{0};
+                info.mcp_port      = binding->facts.mcpPort;
+                info.mcp_enabled   = binding->facts.mcpEnabled ? MCDK_TRUE : MCDK_FALSE;
                 // 「游戏已进入世界」的判据就是调试 IPC 上已经有客户端连上来。
                 info.game_debug_ready =
-                    (binding.ipcServer && binding.ipcServer->getClientCount() > 0) ? MCDK_TRUE : MCDK_FALSE;
+                    (binding->ipcServer && binding->ipcServer->getClientCount() > 0) ? MCDK_TRUE : MCDK_FALSE;
 
                 info.mcp_ip             = toAbi(strings.mcpIp);
                 info.game_exe_path      = toAbi(strings.gameExePath);

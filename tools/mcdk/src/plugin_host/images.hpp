@@ -9,6 +9,7 @@
 //
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <mcdk/plugin/abi/core.h>
@@ -25,8 +26,12 @@ namespace mcdk::plugin_host::detail {
     [[nodiscard]] mcdk_handle addImage(mcdk_handle owner, ImageRecord record);
 
     // 只有 owner 本人能取到自己的图像：句柄猜测不应该能跨插件读到数据。
-    // 返回的指针在该图像被 release 之前有效。
-    [[nodiscard]] const ImageRecord* findImage(mcdk_handle owner, mcdk_handle image) noexcept;
+    //
+    // 返回 shared_ptr 而非裸指针，是因为调用方必然要在锁外使用它：插件完全可以
+    // 在一个线程里 image_copy、另一个线程里 image_release 同一个句柄。那是插件的
+    // bug，但 03-abi-reference.md §5.3 要求宿主在这种情况下返回错误而不是崩溃，
+    // 裸指针做不到——条目一被 erase 就是 use-after-free。
+    [[nodiscard]] std::shared_ptr<const ImageRecord> findImage(mcdk_handle owner, mcdk_handle image) noexcept;
 
     void releaseImage(mcdk_handle owner, mcdk_handle image) noexcept;
 

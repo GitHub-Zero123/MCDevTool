@@ -138,12 +138,12 @@ void mcdk::launchGameExe(
     // 游戏启动前的唯一否决点。刻意放在所有子系统搭起来之前：此处返回不需要
     // 拆卸任何东西。零插件时这整段是一次原子读加一次分支。
     {
-        const auto exePathUtf8 = MCDevTool::Utils::pathToGenericUtf8(exePath);
-        const bool vetoed      = MCDK_EMIT_VETOABLE(mcdk::plugin_host::EventId::GameLaunchBefore, [&] {
+        // 路径转 UTF-8 写在工厂里，只在确有订阅者时执行；arena 负责让那串
+        // 活过整个 dispatch（见 events.hpp 的 PayloadArena）。
+        const bool vetoed = MCDK_EMIT_VETOABLE(mcdk::plugin_host::EventId::GameLaunchBefore, [&](auto& arena) {
             mcdk_ev_game_launch_before payload{};
             payload.struct_size         = static_cast<std::uint32_t>(sizeof(payload));
-            payload.exe_path.ptr        = exePathUtf8.data();
-            payload.exe_path.len        = exePathUtf8.size();
+            payload.exe_path            = arena.hold(MCDevTool::Utils::pathToGenericUtf8(exePath));
             payload.dev_config_path.ptr = config.data();
             payload.dev_config_path.len = config.size();
             return payload;
@@ -183,7 +183,11 @@ void mcdk::launchGameExe(
     // 把运行期子系统接给插件接口层。尽早做：插件在 mcdk.mcp.register.before
     // 里就可能要读 mcdk.info，而那个事件就在几十行之后。此刻游戏进程还没创建，
     // game_pid 为 0——这正是该字段的语义，不需要等到进程起来再绑。
-    {
+    //
+    // 零插件时整段跳过：下面有四次路径转 UTF-8，还有一次会摸文件系统的
+    // resolveWorldSourcePath。没有插件就没人会读这份快照，这些活全是白干的。
+    // 零插件开销契约只写了发射点，但「为插件准备数据」同样不该让没装插件的人买单。
+    if (!mcdk::plugin_host::instance().empty()) {
         mcdk::plugin_host::SessionBinding binding;
         binding.facts.mcdkPid    = GetCurrentProcessId();
         binding.facts.mcpPort    = static_cast<std::uint16_t>(mcpServerConfig.serverPort);
@@ -196,6 +200,10 @@ void mcdk::launchGameExe(
         binding.facts.worldRuntimePath = MCDevTool::Utils::pathToGenericUtf8(
             MCDevTool::getMinecraftWorldsPath() / std::filesystem::u8path(userConfig.world.folderName)
         );
+        // 注意：startGame 早已算过同一个值，只是没往下传。多探一次文件系统在
+        // 这里可以接受（一次启动一次，且已被上面的零插件判断挡掉），但两处一旦
+        // 在工作目录变化下给出不同结果，会是静默的分叉。真要根治得改 launchGameExe
+        // 的签名把它传进来。
         if (const auto worldSource = mcdk::resolveWorldSourcePath(userConfig.world.source)) {
             binding.facts.worldSourcePath = MCDevTool::Utils::pathToGenericUtf8(*worldSource);
         }
@@ -883,17 +891,13 @@ void mcdk::launchGameExe(
     // 运行期子系统均已就绪、游戏进程已创建。
     mcdk::plugin_host::instance().advance(MCDK_STAGE_RUNTIME);
 
-    {
-        const auto exePathUtf8 = MCDevTool::Utils::pathToGenericUtf8(exePath);
-        MCDK_EMIT(mcdk::plugin_host::EventId::GameLaunchFinish, [&] {
-            mcdk_ev_game_launch_finish payload{};
-            payload.struct_size  = static_cast<std::uint32_t>(sizeof(payload));
-            payload.pid          = static_cast<std::uint32_t>(pid);
-            payload.exe_path.ptr = exePathUtf8.data();
-            payload.exe_path.len = exePathUtf8.size();
-            return payload;
-        });
-    }
+    MCDK_EMIT(mcdk::plugin_host::EventId::GameLaunchFinish, [&](auto& arena) {
+        mcdk_ev_game_launch_finish payload{};
+        payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+        payload.pid         = static_cast<std::uint32_t>(pid);
+        payload.exe_path    = arena.hold(MCDevTool::Utils::pathToGenericUtf8(exePath));
+        return payload;
+    });
 
     if (hostBridgeTask.enabled()) {
         hostBridgeTask.setGameStateProvider([ipcServer, debugCapabilityEnabled] {

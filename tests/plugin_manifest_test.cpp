@@ -164,7 +164,20 @@ int main() {
     passed &= expect(indexOf("com.test.ring-a") < 0 && indexOf("com.test.ring-b") < 0, "成环的插件整环跳过");
     passed &= expect(ids.size() == 2, "只有两个插件真的加载了");
 
+    // 本测试从头到尾没有 advance(SHUTDOWN)——这正是被否决启动 / startGame 抛异常
+    // 时的形状。shutdown() 必须自己把这一阶段补上，否则插件的 onShutdown 与
+    // on_unload 永远不会被调用。
     host.shutdown();
+    passed &= expect(
+        std::any_of(
+            output.begin(),
+            output.end(),
+            [](const std::string& line) { return line.find("loader:shutdown:") != std::string::npos; }
+        ),
+        "shutdown() 在没有显式 advance(SHUTDOWN) 时自己补上该阶段"
+    );
+    passed &= expect(host.empty(), "shutdown 终结了全部插件");
+
     std::filesystem::remove_all(root, ignored);
 
     std::cout << (passed ? "plugin_manifest_test passed\n" : "plugin_manifest_test failed\n");

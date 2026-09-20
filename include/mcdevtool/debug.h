@@ -62,11 +62,21 @@ namespace MCDevTool::Debug {
         // 获取链接的客户端数量
         size_t getClientCount() const;
 
-        // 客户端连上 / 断开时的回调，参数是变化后的客户端数。
+        // 客户端连上 / 断开时的回调，参数是变化后的客户端数与本次变化的方向。
         //
         // 本层不认识插件系统（mcdevtool 是 mcdk_runtime 的上游），所以只提供钩子，
-        // 由 mcdk::runtime 那一层去发 mcdk.ipc.client.* 事件。回调跑在 accept 线程或
-        // 客户端读线程上，实现必须线程安全且快。
+        // 由 mcdk::runtime 那一层去发 mcdk.ipc.client.* 事件。
+        //
+        // **必须在 start() 之前调用。** 该字段没有锁保护，靠的是「设置发生在
+        // accept 线程创建之前」这一 happens-before；start() 之后再设就是对
+        // std::function 的数据竞争。
+        //
+        // 回调跑在 accept 线程或客户端读线程上，实现必须线程安全且快——它阻塞的是
+        // 接受新连接或读取现有连接。
+        //
+        // stop() 不会为被它清空的客户端触发断开回调：那时插件多半已经终结，
+        // 通知也没有去处。插件应把 mcdk.game.exit 当作终止信号，而不是指望
+        // 收齐每一次 disconnected。
         void setClientCountChangedCallback(std::function<void(std::size_t, bool)> callback);
 
         std::atomic<bool>* getStopFlag();

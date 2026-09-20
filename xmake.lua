@@ -50,6 +50,14 @@ option("mcdk_enable_cli")
     set_description("Enable CLI for MCDK")
 option_end()
 
+-- 与 CMake 的 MCDK_ENABLE_PLUGINS 保持一致。关闭时所有事件发射点在预处理阶段消失，
+-- 插件也不再加载。两套构建系统的开关必须同名同默认值，否则「CMake 能过」什么都证明不了。
+option("mcdk_enable_plugins")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Enable the mcdk plugin system")
+option_end()
+
 
 if is_plat("windows") then
     add_cxflags("/utf-8", "/EHsc")
@@ -262,18 +270,32 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/game_process/platform.cpp",
             "tools/mcdk/src/host_bridge.cpp",
             "tools/mcdk/src/mcp_server.cpp",
+            "tools/mcdk/src/plugin_cli.cpp",
             "tools/mcdk/src/plugin_host/abi_layout_check.cpp",
             "tools/mcdk/src/plugin_host/event_bus.cpp",
             "tools/mcdk/src/plugin_host/guard.cpp",
             "tools/mcdk/src/plugin_host/host.cpp",
+            "tools/mcdk/src/plugin_host/images.cpp",
+            "tools/mcdk/src/plugin_host/manifest.cpp",
             "tools/mcdk/src/plugin_host/registry.cpp",
+            "tools/mcdk/src/plugin_host/session_binding.cpp",
             "tools/mcdk/src/plugin_host/interfaces/console.cpp",
             "tools/mcdk/src/plugin_host/interfaces/core.cpp",
             "tools/mcdk/src/plugin_host/interfaces/events.cpp",
+            "tools/mcdk/src/plugin_host/interfaces/game.cpp",
+            "tools/mcdk/src/plugin_host/interfaces/info.cpp",
+            "tools/mcdk/src/plugin_host/interfaces/log.cpp",
+            "tools/mcdk/src/plugin_host/interfaces/mcp.cpp",
             "tools/mcdk/src/runtime/mcp_tool_registry.cpp",
             "tools/mcdk/src/runtime/session.cpp"
         )
         add_includedirs("sdk/plugin-sdk/include", {public = true})
+        -- PUBLIC 语义：events.hpp 是公开头，宏的展开必须在所有使用方一致。
+        if has_config("mcdk_enable_plugins") then
+            add_defines("MCDK_ENABLE_PLUGINS=1", {public = true})
+        else
+            add_defines("MCDK_ENABLE_PLUGINS=0", {public = true})
+        end
         add_deps("mcdk_core", "mcp", "MCDevLink")
         if is_plat("windows") then
             add_syslinks("ws2_32")

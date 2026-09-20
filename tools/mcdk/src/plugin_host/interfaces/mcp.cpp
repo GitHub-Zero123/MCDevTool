@@ -81,7 +81,7 @@ namespace mcdk::plugin_host::detail {
                 }
 
                 const auto binding = sessionBinding();
-                if (!binding.mcpToolRegistry) {
+                if (!binding->mcpToolRegistry) {
                     return MCDK_ERR_NOT_SUPPORTED;
                 }
 
@@ -187,7 +187,7 @@ namespace mcdk::plugin_host::detail {
                     }
                 };
 
-                const auto bindResult = binding.mcpToolRegistry->bind(std::move(tool), std::move(bound), owner);
+                const auto bindResult = binding->mcpToolRegistry->bind(std::move(tool), std::move(bound), owner);
                 if (bindResult) {
                     return MCDK_OK;
                 }
@@ -214,11 +214,11 @@ namespace mcdk::plugin_host::detail {
                     return MCDK_ERR_INVALID_HANDLE;
                 }
                 const auto binding = sessionBinding();
-                if (!binding.mcpToolRegistry) {
+                if (!binding->mcpToolRegistry) {
                     return MCDK_ERR_NOT_SUPPORTED;
                 }
                 auto array = mcp::json::array();
-                binding.mcpToolRegistry->forEach([&array](const runtime::McpToolEntry& entry) {
+                binding->mcpToolRegistry->forEach([&array](const runtime::McpToolEntry& entry) {
                     auto item     = entry.descriptor.to_json();
                     item["owner"] = entry.owner;
                     array.push_back(std::move(item));

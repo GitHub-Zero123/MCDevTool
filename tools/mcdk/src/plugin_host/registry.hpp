@@ -91,9 +91,9 @@ namespace mcdk::plugin_host::detail {
     // 是两回事，分不开的话插件作者会把时机错误当成数据为空去排查。
     [[nodiscard]] inline bool stageAtLeast(mcdk_stage minimum) noexcept { return currentStage() >= minimum; }
 
-    // 当前的运行期绑定快照（副本）。未绑定时各 shared_ptr 为空。
-    // 定义在 session_binding.cpp。
-    [[nodiscard]] SessionBinding sessionBinding();
+    // 当前运行期绑定的不可变快照。永不返回空指针；未绑定时里面各
+    // shared_ptr 成员为空。定义在 session_binding.cpp。
+    [[nodiscard]] std::shared_ptr<const SessionBinding> sessionBinding();
 
     // 接口表分发。新增接口表时在 interfaces/ 下加实现并在此登记。
     [[nodiscard]] const void* findInterfaceTable(const char* name, std::uint32_t version) noexcept;

@@ -280,15 +280,22 @@ typedef struct mcdk_iface_log {
 
 ### 7.1 sink 回调约束（规范）
 
-采用回调式枚举而非返回数组，是为了让日志文本保持借用、不产生任何跨界分配。代价是对 sink 有严格要求：
+采用回调式枚举而非返回数组，是为了让**边界上**不出现分配：`mcdk_log_entry::text` 是借用的 `mcdk_str`，插件要留就自己拷。
 
-**宿主在持有 `LogBuffer` 锁的状态下逐条调用 sink。因此：**
+**宿主在锁外调用 sink**：先在 `LogBuffer` 锁内取一份快照，放锁，再逐条回调。因此 sink 的约束只有两条：
 
-- sink **必须**极短，只做拷贝或匹配；
-- sink 内**禁止**调用任何其他 mcdk 接口——包括 `mcdk.console`，会死锁；
-- sink 内**禁止**阻塞、等待其他线程、或抛出异常（SDK 屏障会兜住异常，但该条目会被跳过）。
+- `entry.text` **借用**，sink 返回后即失效，要留必须拷走；
+- sink 内抛出的异常由 SDK 屏障兜住，但该条目会被跳过。
 
-需要复杂处理时，先在 sink 里把文本拷进插件自己的容器，`query` 返回后再处理。SDK 的 `ctx.log().query(...)` 默认就是这么做的，直接返回 `std::vector<LogEntry>`，用户拿不到裸 sink。
+调用 `mcdk.console`、再调一次 `query`、甚至阻塞一会儿，都是允许的——只是会拖慢自己这次调用。
+
+#### 为什么不是持锁回调
+
+初版实现是持锁逐条回调的，理由是「零分配」。那是把 [02-abi-contract.md](02-abi-contract.md) §6 的「分配器不得穿越边界」错读成了「宿主侧也不许分配」——**宿主自己拷贝与 ABI 无关**，真正要避免的是一边 malloc 另一边 free。
+
+而持锁回调的代价很实在：sink 慢一点，`LogBuffer::add` 就卡住，日志读取线程随之停下，游戏的 stdout 管道填满之后**游戏进程会阻塞在 write 上**。一个插件的处理器慢，不该演变成游戏卡住；何况「sink 必须极短」这种约束没有任何强制手段，写在文档里等于没写。
+
+顺带消掉的还有 sink 内重入 `query` 的自死锁——`std::mutex` 不可重入，那是当时唯一真实存在的死锁，而文档里却写成了「调 console 会死锁」，后者根本不成立（`printColoredAtomic` 从不碰 `LogBuffer`，不存在锁序环）。
 
 ## 8. `mcdk.mcp/1`
 
@@ -397,7 +404,7 @@ SDK 自动处理这一层：用户的 handler 直接 `return nlohmann::json{...}
 | `mcdk.console` | 任意 | 否（内部加锁，极短） |
 | `mcdk.info` | 任意 | 否 |
 | `mcdk.mcp` 注册 | 仅 REGISTER 阶段所在的主线程 | 否 |
-| `mcdk.log.query` | 任意，但不得在 sink 或另一个 `query` 内重入 | 是（持锁） |
+| `mcdk.log.query` | 任意，可重入 | 否（快照在锁内取，回调在锁外） |
 | `mcdk.game.execute_python` | 任意，**除 SYNC 事件处理器外**（见 §6.1） | 是（至多 `timeout_ms`） |
 | `mcdk.game.capture_window` | 任意 | 是（数十毫秒量级） |
 

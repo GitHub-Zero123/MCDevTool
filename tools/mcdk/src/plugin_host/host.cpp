@@ -193,6 +193,9 @@ namespace mcdk::plugin_host {
         }
 
         void advance(mcdk_stage stage) {
+            if (stage == MCDK_STAGE_SHUTDOWN) {
+                mShutdownStageDone = true;
+            }
             detail::setCurrentStage(stage);
             // 阶段推进是主线程上的天然抽水点。
             pumpMainThreadWork();
@@ -224,14 +227,31 @@ namespace mcdk::plugin_host {
         }
 
         void shutdown() {
+            // 兜底推进 SHUTDOWN 阶段。
+            //
+            // 正常路径上 launchGameExe 会先 advance(SHUTDOWN) 再调这里，此时这一段
+            // 是空操作。但游戏启动被插件否决、或 startGame 在到达 launchGameExe 之前
+            // 抛异常时，那一步走不到——插件已经 REGISTER 过、可能起了线程占了资源，
+            // 不能让它连一声招呼都收不到就随进程消失。
+            if (!mShutdownStageDone) {
+                advance(MCDK_STAGE_SHUTDOWN);
+            }
             detail::registry().forEachReversed([&](mcdk_handle handle, detail::PluginRecord& record) {
                 terminate(handle, record);
             });
             // 全部插件终结之后才停派发线程：终结过程本身可能还要抽主线程队列。
             shutdownEventBus();
+            // 允许再次加载（测试会这么做）；二次 shutdown 仍是空操作，因为
+            // 注册表此时已空。
+            mShutdownStageDone = false;
         }
 
         [[nodiscard]] bool empty() const noexcept { return detail::registry().aliveCount() == 0; }
+
+    private:
+        bool mShutdownStageDone = false;
+
+    public:
 
         [[nodiscard]] std::vector<LoadedPlugin> loaded() const {
             std::vector<LoadedPlugin> result;

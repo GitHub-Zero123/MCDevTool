@@ -146,6 +146,14 @@ v1 九条事件构成一个自洽的闭环：注册期拿到 MCP 开口，启动
 
 这是一处值得单独确认的取舍——若"启动前改环境变量"是实际用例，`env_set` 的实现成本很低（`GameEnvironmentBuilder` 已存在），可以拉进 v1。
 
+### 4.1.1 `mcdk.ipc.client.*` 不保证成对（规范）
+
+`DebugIPCServer::stop()` 关服务时是直接清空客户端表的，**不会为它们逐个发
+`disconnected`**。那个时点插件多半已经终结，事件总线也停了，通知没有去处。
+
+因此插件**禁止**把「每一次 connected 都会收到配对的 disconnected」当作前提。要收摊就看
+`mcdk.game.exit` 或 `onShutdown`，那两个才是终止信号。
+
 ### 4.2 `mcdk.log.line` 的 VETO 语义（规范）
 
 **`VETO` 只抑制该行的控制台输出，不影响 `LogBuffer`。** 被否决的行仍然进入日志缓冲区，`mcdk.log` 接口与 MCP 的 `get_latest_logs` 仍能读到它。
