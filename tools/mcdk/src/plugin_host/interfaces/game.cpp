@@ -29,6 +29,10 @@ namespace mcdk::plugin_host::detail {
         constexpr std::uint32_t kDefaultTimeoutMs = 10000;
         constexpr std::uint32_t kMaxTimeoutMs     = 120000;
 
+        // mcdk.game 仅 RUNTIME 可用（05-interfaces.md §9）。SHUTDOWN 也不行：
+        // 游戏进程此时已经退出，Python 执行与截图都没有对象。
+        [[nodiscard]] bool inGameStage() noexcept { return currentStage() == MCDK_STAGE_RUNTIME; }
+
         // execute_python 的结果按借用交付，所以要在宿主侧活过本次返回。
         // 与错误槽同一套约定：谁产生数据谁用自己的 TLS 暂存，对方立即拷走。
         [[nodiscard]] std::string& resultSlot() noexcept {
@@ -99,6 +103,9 @@ namespace mcdk::plugin_host::detail {
                 if (registry().find(self) == nullptr) {
                     return MCDK_ERR_INVALID_HANDLE;
                 }
+                if (!inGameStage()) {
+                    return MCDK_ERR_WRONG_STAGE;
+                }
                 if (code.ptr == nullptr || code.len == 0) {
                     return MCDK_ERR_INVALID_ARGUMENT;
                 }
@@ -140,6 +147,9 @@ namespace mcdk::plugin_host::detail {
                 *out_image = 0;
                 if (registry().find(self) == nullptr) {
                     return MCDK_ERR_INVALID_HANDLE;
+                }
+                if (!inGameStage()) {
+                    return MCDK_ERR_WRONG_STAGE;
                 }
                 if (options != nullptr && options->struct_size < sizeof(mcdk_capture_options)) {
                     return MCDK_ERR_INVALID_ARGUMENT;

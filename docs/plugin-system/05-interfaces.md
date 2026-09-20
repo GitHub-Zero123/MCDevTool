@@ -429,12 +429,14 @@ void onRegister(mcdk::Context& ctx) override {
     ctx.console().info("上线");
     ctx.console().print(mcdk::Color::Cyan, "带颜色的一行");
 
-    ctx.events().on<mcdk::ev::McpRegisterBefore>([&](const auto&) {
-        ctx.mcp().addTool("my_tool", "说明", schema,
-            [&ctx](const nlohmann::json& args) -> nlohmann::json {
-                // MCP 工作线程上，允许阻塞
-                return ctx.game().executePython(args["code"], mcdk::Side::Server);
-            });
+    mcdk::ToolDesc tool;
+    tool.name                 = "my_tool";
+    tool.description          = "说明";
+    tool.inputSchema          = R"({"type":"object"})";   // JSON 文本
+    tool.annotations.readOnly = true;                     // optional<bool>，不设就是「没设」
+    ctx.mcp().addTool(tool, [this](std::string_view argsJson, std::string_view session) {
+        // MCP 工作线程上，可能被并发调用，允许阻塞
+        return context().game().executePython("1 + 1", mcdk::Side::Server);
     });
 }
 
@@ -443,9 +445,14 @@ void onRuntime(mcdk::Context& ctx) override {
     ctx.console().info("MCP 端口 " + std::to_string(s.mcpPort)
                      + "，游戏 IPC 端口 " + std::to_string(s.gameIpcPort));
 
-    auto logs = ctx.log().latest(mcdk::LogChannel::Stdout, 50);  // std::vector<LogEntry>
-    auto shot = ctx.game().captureWindow({.maxHeight = 720});    // std::vector<std::byte>，RAII 释放句柄
+    auto logs = ctx.log().latest(50);                          // std::vector<LogEntry>，最新在前
+    auto shot = ctx.game().capture({ /*maxHeight=*/720 });     // CapturedImage，句柄已在内部释放
 }
 ```
 
-`captureWindow` 返回的对象在析构时自动调用 `image_release`，用户不会忘。
+`capture()` 在函数内部就完成了 `image_release`，用户没有机会忘。
+
+**Context 不与回调绑定。** 一次加载只有一个 `Context`，从入口返回起活到 `on_unload`；
+五个阶段回调收到的是同一个对象的引用。需要在自建线程里用宿主接口时，直接用基类的
+`context()` 访问器即可，不必自己存指针。受限制的是**接口自身的阶段窗口**（见 §9），
+不是能不能拿到 `Context`。

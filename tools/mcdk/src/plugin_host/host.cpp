@@ -1,12 +1,18 @@
 #include <mcdk/plugin_host/host.hpp>
 
 #include <mcdk/console_output.hpp>
+#include <mcdk/version.hpp>
 #include <mcdk/plugin_host/events.hpp>
 #include <mcdk/plugin_host/guard.hpp>
 
 #include "images.hpp"
+#include "manifest.hpp"
 #include "registry.hpp"
 
+#include <algorithm>
+#include <optional>
+#include <unordered_map>
+#include <unordered_set>
 #include <cstdlib>
 #include <string>
 #include <utility>
@@ -30,8 +36,8 @@ namespace mcdk::plugin_host {
 
     namespace {
 
-        // TODO 接到真实的项目版本号上；当前仓库尚无统一的版本常量。
-        constexpr const char* kHostVersion = "0.1.0";
+        // 宿主版本与 mcdk 本体同一个值，真源在 mcdk/version.hpp。
+        constexpr std::string_view kHostVersion = mcdk::kVersion;
 
         void report(const std::string& message, ConsoleColor color) {
             const auto& output = detail::outputCallback();
@@ -150,14 +156,27 @@ namespace mcdk::plugin_host {
             );
             return;
 #else
-            std::size_t loaded   = 0;
-            std::size_t disabled = 0;
+            // 第 1~4 步：筛出已启用的条目，逐条解析清单。这一轮**不加载任何代码**：
+            // 依赖排序必须在第一个 LoadLibrary 之前完成，否则排序就没意义了。
+            std::vector<Candidate> candidates;
+            std::size_t            disabled = 0;
             for (const auto& declaration : declarations) {
                 if (!declaration.enabled) {
                     ++disabled;
                     continue;
                 }
-                if (loadOne(declaration, baseDirectory)) {
+                if (auto candidate = prepare(declaration, baseDirectory)) {
+                    candidates.push_back(std::move(*candidate));
+                }
+            }
+
+            // 第 5 步：拓扑排序。
+            const auto ordered = topologicalOrder(candidates);
+
+            // 第 6 步：按序加载。
+            std::size_t loaded = 0;
+            for (const auto* candidate : ordered) {
+                if (loadOne(*candidate)) {
                     ++loaded;
                 }
             }
@@ -259,15 +278,183 @@ namespace mcdk::plugin_host {
             record.module = nullptr;
         }
 
-        [[nodiscard]] static bool
-        loadOne(const PluginDeclaration& declaration, const std::filesystem::path& baseDirectory) {
+        // 一条已通过静态校验、等待加载的声明。
+        struct Candidate {
+            const PluginDeclaration*             declaration = nullptr;
+            std::filesystem::path                library;
+            // 直指动态库的形态没有清单，此时为 nullopt（也就声明不了依赖）。
+            std::optional<detail::PluginManifest> manifest;
+
+            [[nodiscard]] std::string displayName() const {
+                return manifest ? manifest->id : library.generic_string();
+            }
+        };
+
+        // 解析一条声明：定位动态库、读清单、做所有不需要加载代码就能做的校验。
+        [[nodiscard]] static std::optional<Candidate>
+        prepare(const PluginDeclaration& declaration, const std::filesystem::path& baseDirectory) {
             const auto path  = resolvePath(declaration.path, baseDirectory);
             const auto shown = path.generic_string();
 
+            Candidate candidate;
+            candidate.declaration = &declaration;
+
+            if (std::filesystem::is_directory(path)) {
+                std::string error;
+                auto        manifest = detail::readManifest(path, error);
+                if (!manifest) {
+                    report("跳过 " + shown + "：" + error, ConsoleColor::Red);
+                    return std::nullopt;
+                }
+                if (!std::filesystem::is_regular_file(manifest->libraryPath)) {
+                    report(
+                        "跳过 " + manifest->id + "：清单指向的产物不存在 " + manifest->libraryPath.generic_string(),
+                        ConsoleColor::Red
+                    );
+                    return std::nullopt;
+                }
+                // 清单里写了 ABI 要求就先校一道 —— 比载进来再发现不匹配便宜得多。
+                if (manifest->abiMajor != 0 && manifest->abiMajor != MCDK_ABI_VERSION_MAJOR) {
+                    report(
+                        "跳过 " + manifest->id + "：清单声明 ABI 主版本 " + std::to_string(manifest->abiMajor)
+                            + "，宿主提供 " + std::to_string(MCDK_ABI_VERSION_MAJOR),
+                        ConsoleColor::Red
+                    );
+                    return std::nullopt;
+                }
+                if (manifest->abiMinor > MCDK_ABI_VERSION_MINOR) {
+                    report(
+                        "跳过 " + manifest->id + "：清单需要 ABI 次版本 " + std::to_string(manifest->abiMinor)
+                            + "，宿主只有 " + std::to_string(MCDK_ABI_VERSION_MINOR) + "，请升级 mcdk",
+                        ConsoleColor::Red
+                    );
+                    return std::nullopt;
+                }
+                if (!declaration.id.empty() && declaration.id != manifest->id) {
+                    report(
+                        "跳过 " + shown + "：id 不符（声明 " + declaration.id + "，清单 " + manifest->id
+                            + "），内容可能已被替换",
+                        ConsoleColor::Red
+                    );
+                    return std::nullopt;
+                }
+                candidate.library  = manifest->libraryPath;
+                candidate.manifest = std::move(manifest);
+                return candidate;
+            }
+
             if (!std::filesystem::is_regular_file(path)) {
                 report("跳过 " + shown + "：文件不存在", ConsoleColor::Yellow);
-                return false;
+                return std::nullopt;
             }
+            // 直指动态库：跳过清单，仅建议用于本地开发调试（06-loading.md §2.2 第 5 条）。
+            candidate.library = path;
+            return candidate;
+        }
+
+        // 声明集内的依赖拓扑排序。返回可加载的顺序；依赖缺失或成环的项被剔除。
+        [[nodiscard]] static std::vector<const Candidate*> topologicalOrder(const std::vector<Candidate>& candidates) {
+            // 先按 priority 稳定排序：拓扑排序只约束有依赖关系的那些对，
+            // 其余顺序由用户的 priority 与声明顺序决定。
+            std::vector<const Candidate*> pending;
+            pending.reserve(candidates.size());
+            for (const auto& candidate : candidates) {
+                pending.push_back(&candidate);
+            }
+            std::stable_sort(pending.begin(), pending.end(), [](const Candidate* left, const Candidate* right) {
+                return left->declaration->priority < right->declaration->priority;
+            });
+
+            std::unordered_map<std::string, const Candidate*> byId;
+            for (const auto* candidate : pending) {
+                if (candidate->manifest) {
+                    byId.emplace(candidate->manifest->id, candidate);
+                }
+            }
+
+            // 依赖不在已启用集合内 —— 报错并跳过。**禁止**自动去别处寻找该依赖：
+            // 那等于绕过了用户显式声明这一信任前提（06-loading.md §1）。
+            std::unordered_set<const Candidate*> rejected;
+            for (const auto* candidate : pending) {
+                if (!candidate->manifest) {
+                    continue;
+                }
+                for (const auto& dependency : candidate->manifest->dependencies) {
+                    const auto it = byId.find(dependency.id);
+                    if (it == byId.end()) {
+                        report(
+                            "跳过 " + candidate->manifest->id + "：依赖 " + dependency.id
+                                + " 不在已启用的声明集合内，请先把它加进 .mcdev.json",
+                            ConsoleColor::Red
+                        );
+                        rejected.insert(candidate);
+                        continue;
+                    }
+                    const auto& provided = it->second->manifest->version;
+                    if (!detail::versionSatisfies(provided, dependency.versionSpec)) {
+                        report(
+                            "跳过 " + candidate->manifest->id + "：依赖 " + dependency.id + " 需要 "
+                                + dependency.versionSpec + "，实际为 " + provided,
+                            ConsoleColor::Red
+                        );
+                        rejected.insert(candidate);
+                    }
+                }
+            }
+
+            // Kahn。每轮取出依赖已全部就绪的项，保持 pending 的相对顺序。
+            std::vector<const Candidate*>   result;
+            std::unordered_set<std::string> satisfied;
+            std::vector<const Candidate*>   remaining;
+            for (const auto* candidate : pending) {
+                if (rejected.count(candidate) == 0) {
+                    remaining.push_back(candidate);
+                }
+            }
+            while (!remaining.empty()) {
+                std::vector<const Candidate*> next;
+                bool                          progressed = false;
+                for (const auto* candidate : remaining) {
+                    const bool ready =
+                        !candidate->manifest
+                        || std::all_of(
+                            candidate->manifest->dependencies.begin(),
+                            candidate->manifest->dependencies.end(),
+                            [&satisfied](const detail::PluginDependency& dependency) {
+                                return satisfied.count(dependency.id) != 0;
+                            }
+                        );
+                    if (ready) {
+                        result.push_back(candidate);
+                        progressed = true;
+                    } else {
+                        next.push_back(candidate);
+                    }
+                }
+                // 同一轮内统一补登记，避免同轮内部产生顺序依赖。
+                for (const auto* candidate : result) {
+                    if (candidate->manifest) {
+                        satisfied.insert(candidate->manifest->id);
+                    }
+                }
+                if (!progressed) {
+                    // 成环：整个环中的插件全部跳过，而不是挑一个进去。
+                    std::string names;
+                    for (const auto* candidate : next) {
+                        names += (names.empty() ? "" : ", ") + candidate->displayName();
+                    }
+                    report("跳过依赖成环的插件：" + names, ConsoleColor::Red);
+                    break;
+                }
+                remaining = std::move(next);
+            }
+            return result;
+        }
+
+        [[nodiscard]] static bool loadOne(const Candidate& candidate) {
+            const auto& declaration = *candidate.declaration;
+            const auto& path        = candidate.library;
+            const auto  shown       = path.generic_string();
 
             std::string error;
             void*       module = loadModule(path, error);
@@ -276,9 +463,12 @@ namespace mcdk::plugin_host {
                 return false;
             }
 
-            auto* symbol = findSymbol(module, MCDK_PLUGIN_ENTRY_SYMBOL);
+            const std::string entrySymbol =
+                candidate.manifest && !candidate.manifest->entrySymbol.empty() ? candidate.manifest->entrySymbol
+                                                                              : std::string(MCDK_PLUGIN_ENTRY_SYMBOL);
+            auto* symbol = findSymbol(module, entrySymbol.c_str());
             if (symbol == nullptr) {
-                report("跳过 " + shown + "：找不到入口符号 " MCDK_PLUGIN_ENTRY_SYMBOL, ConsoleColor::Red);
+                report("跳过 " + shown + "：找不到入口符号 " + entrySymbol, ConsoleColor::Red);
                 return false;
             }
             const auto entry = reinterpret_cast<mcdk_plugin_entry_fn>(symbol);
@@ -337,6 +527,16 @@ namespace mcdk::plugin_host {
             if (id.empty()) {
                 detail::registry().retire(handle);
                 report("跳过 " + shown + "：插件未报告 id", ConsoleColor::Red);
+                return false;
+            }
+            // 清单声明的 id 必须与二进制实际报出的一致。不校的话，依赖图就是按一组
+            // 与运行时无关的 id 排的序——排出来的顺序看着对，实际上没有任何保障。
+            if (candidate.manifest && candidate.manifest->id != id) {
+                detail::registry().retire(handle);
+                report(
+                    "跳过 " + shown + "：清单声明 id 为 " + candidate.manifest->id + "，二进制实际报出 " + id,
+                    ConsoleColor::Red
+                );
                 return false;
             }
             // 声明里写了期望 id 就校验，防止 path 指向的内容被换成另一个插件。

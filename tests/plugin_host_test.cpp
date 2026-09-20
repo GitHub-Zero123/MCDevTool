@@ -5,6 +5,8 @@
 // 这不是 mock —— 走的是 LoadLibrary、GetProcAddress、真实的 C ABI 握手。
 //
 #include <mcdk/log_buffer.hpp>
+#include <mcdk/version.hpp>
+#include <mcdk/runtime/mcp_tool_registry.hpp>
 #include <mcdk/plugin_host/events.hpp>
 #include <mcdk/plugin_host/host.hpp>
 #include <mcdk/plugin_host/session_binding.hpp>
@@ -95,6 +97,8 @@ int main() {
         passed &= expect(!loaded[0].degraded, "a freshly loaded plugin is not degraded");
     }
 
+    auto toolRegistry = std::make_shared<runtime::McpToolRegistry>();
+
     // --- 绑定一份假的运行期 -------------------------------------------
     // mcdk.info / mcdk.log 的数据源。真实运行时由 launchGameExe 绑定，
     // 这里自己造一份，因为测试不启动游戏。
@@ -105,6 +109,7 @@ int main() {
         logBuffer->add("log-newest");
 
         plugin_host::SessionBinding binding;
+        binding.mcpToolRegistry  = toolRegistry;
         binding.facts.mcpPort    = 1234;
         binding.facts.mcpEnabled = true;
         binding.facts.worldName  = "TestWorld";
@@ -138,6 +143,37 @@ int main() {
         "mcdk.log 的回调式枚举保持了「索引 0 = 最新」的语义"
     );
 
+    // --- mcdk.mcp ----------------------------------------------------
+    passed &= expect(contains(output, "mcp:add-tool:0"), "REGISTER 阶段的 add_tool 成功");
+    passed &= expect(
+        contains(output, "mcp:late-tool:" + std::to_string(MCDK_ERR_WRONG_STAGE)),
+        "过了注册窗口的 add_tool 返回 WRONG_STAGE 而不是默默成功"
+    );
+
+    const auto* entry = toolRegistry->find("hello_echo");
+    passed           &= expect(entry != nullptr, "插件的工具进了共享注册表");
+    if (entry != nullptr) {
+        passed &= expect(entry->owner == "com.example.hello", "工具记下了来源插件 id");
+        passed &= expect(entry->descriptor.description == "回显参数", "description 跨过了 ABI");
+        // std::optional<bool> 被拆成两个位掩码又装回来，这里盯的就是那一跑。
+        passed &= expect(
+            entry->descriptor.annotations.read_only_hint.value_or(false),
+            "readOnly 注解经位掩码往返后仍是 true"
+        );
+        passed &= expect(
+            !entry->descriptor.annotations.destructive_hint.has_value(),
+            "没设过的注解仍然是「没设」，而不是 false"
+        );
+
+        // 真的调一次 handler，走完整的 JSON 文本 → C ABI → 插件 → TLS → 解析回程。
+        const auto response = entry->handler(mcp::json{{"text", "hi"}}, "session-42");
+        passed             &= expect(
+            response.contains("echo") && response["echo"]["text"] == "hi",
+            "工具参数往返都经过了 JSON 文本形态"
+        );
+        passed &= expect(response.value("session", "") == "session-42", "session id 传给了 handler");
+    }
+
     // --- mcdk.game 的降级行为 ------------------------------------
     // 本测试不启动游戏，所以两个能力都应当干净地失败。这比「能跑」更重要：
     // 插件在游戏起来之前调这两个接口是必然会发生的。
@@ -148,7 +184,10 @@ int main() {
     passed &= expect(contains(output, "game:capture-empty:1"), "capture 在游戏未就绪时返回空图");
 
     // --- 握手：宿主版本与 config 都跨越了 C ABI 并被 SDK 还原成 std::string ---
-    passed &= expect(contains(output, "hello, host 0.1.0"), "host version crosses the ABI");
+    passed &= expect(
+        contains(output, "hello, host " + std::string(mcdk::kVersion)),
+        "host version crosses the ABI"
+    );
     passed &= expect(
         contains(output, R"(config={"mode":"test","level":3})"),
         "the declaration's config JSON reaches the plugin verbatim"

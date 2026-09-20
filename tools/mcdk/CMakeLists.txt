@@ -68,6 +68,8 @@ add_library(mcdk_runtime STATIC
     src/plugin_host/event_bus.cpp
     src/plugin_host/guard.cpp
     src/plugin_host/images.cpp
+    src/plugin_cli.cpp
+    src/plugin_host/manifest.cpp
     src/plugin_host/host.cpp
     src/plugin_host/registry.cpp
     src/plugin_host/session_binding.cpp
@@ -77,6 +79,7 @@ add_library(mcdk_runtime STATIC
     src/plugin_host/interfaces/game.cpp
     src/plugin_host/interfaces/info.cpp
     src/plugin_host/interfaces/log.cpp
+    src/plugin_host/interfaces/mcp.cpp
     src/runtime/mcp_tool_registry.cpp
     src/runtime/session.cpp
 )

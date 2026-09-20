@@ -6,17 +6,19 @@
 
 #include <mcdk/plugin/abi/iface/console.h>
 #include <mcdk/plugin/abi/iface/core.h>
+#include <mcdk/version.hpp>
 #include <mcdk/plugin/abi/iface/events.h>
 #include <mcdk/plugin/abi/iface/game.h>
 #include <mcdk/plugin/abi/iface/info.h>
 #include <mcdk/plugin/abi/iface/log.h>
+#include <mcdk/plugin/abi/iface/mcp.h>
 
 namespace mcdk::plugin_host::detail {
 
     namespace {
         ConsoleOutputCallback gOutputCallback;
-        // TODO 接到真实的项目版本号上；当前仓库尚无统一的版本常量。
-        const std::string       gHostVersion  = "0.1.0";
+        // 真源在 mcdk/version.hpp。存成 std::string 是因为 hostVersion() 要返回引用。
+        const std::string       gHostVersion{mcdk::kVersion};
         std::atomic<mcdk_stage> gCurrentStage = MCDK_STAGE_REGISTER;
     } // namespace
 
@@ -145,6 +147,7 @@ namespace mcdk::plugin_host::detail {
     const mcdk_iface_game*    gameTable() noexcept;
     const mcdk_iface_info*    infoTable() noexcept;
     const mcdk_iface_log*     logTable() noexcept;
+    const mcdk_iface_mcp*     mcpTable() noexcept;
 
     const void* findInterfaceTable(const char* name, std::uint32_t version) noexcept {
         if (name == nullptr) {
@@ -168,6 +171,9 @@ namespace mcdk::plugin_host::detail {
         }
         if (std::strcmp(name, MCDK_IFACE_GAME_NAME) == 0 && version == MCDK_IFACE_GAME_VERSION) {
             return gameTable();
+        }
+        if (std::strcmp(name, MCDK_IFACE_MCP_NAME) == 0 && version == MCDK_IFACE_MCP_VERSION) {
+            return mcpTable();
         }
         return nullptr;
     }

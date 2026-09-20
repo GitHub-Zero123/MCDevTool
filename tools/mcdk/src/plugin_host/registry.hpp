@@ -84,6 +84,13 @@ namespace mcdk::plugin_host::detail {
     void                             setCurrentStage(mcdk_stage stage) noexcept;
     [[nodiscard]] mcdk_stage         currentStage() noexcept;
 
+    // 阶段窗口判定。接口的可调用阶段矩阵见
+    // docs/plugin-system/05-interfaces.md §9；在错误阶段调用必须返回 MCDK_ERR_WRONG_STAGE。
+    //
+    // 这一条值得真的实施而不是「反正返回空结果」：「现在还没到时候」与「确实一条都没有」
+    // 是两回事，分不开的话插件作者会把时机错误当成数据为空去排查。
+    [[nodiscard]] inline bool stageAtLeast(mcdk_stage minimum) noexcept { return currentStage() >= minimum; }
+
     // 当前的运行期绑定快照（副本）。未绑定时各 shared_ptr 为空。
     // 定义在 session_binding.cpp。
     [[nodiscard]] SessionBinding sessionBinding();

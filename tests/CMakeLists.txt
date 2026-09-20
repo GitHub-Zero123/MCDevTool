@@ -111,6 +111,17 @@ if(TARGET abi_conformance_plugin AND MCDK_ENABLE_PLUGINS)
         MCDEV_TEST_CONFORMANCE_PLUGIN="$<TARGET_FILE:abi_conformance_plugin>"
     )
     add_test(NAME plugin-abi-conformance COMMAND plugin_abi_conformance_test)
+
+    # 同时加载全部工具链产物。本地只有一种工具链，CI 通过
+    # MCDEV_TEST_PLUGIN_PATHS 把五种产物的路径一起交进来。
+    add_executable(plugin_load_all_test plugin_load_all_test.cpp)
+    target_compile_features(plugin_load_all_test PRIVATE cxx_std_23)
+    target_link_libraries(plugin_load_all_test PRIVATE mcdk_runtime)
+    add_dependencies(plugin_load_all_test abi_conformance_plugin)
+    target_compile_definitions(plugin_load_all_test PRIVATE
+        MCDEV_TEST_CONFORMANCE_PLUGIN="$<TARGET_FILE:abi_conformance_plugin>"
+    )
+    add_test(NAME plugin-load-all COMMAND plugin_load_all_test)
 endif()
 
 # 加载器模式：一个 DLL 充当其他插件的宿主（多实例 + 动态身份）。
@@ -123,4 +134,15 @@ if(TARGET script_host_plugin AND MCDK_ENABLE_PLUGINS)
         MCDEV_TEST_LOADER_PLUGIN="$<TARGET_FILE:script_host_plugin>"
     )
     add_test(NAME plugin-loader-pattern COMMAND plugin_loader_pattern_test)
+
+    # 清单解析与依赖拓扑排序。复用 02-loader：它按 config 报出动态身份，
+    # 同一个 DLL 声明多次就能扮演多个身份不同的插件。
+    add_executable(plugin_manifest_test plugin_manifest_test.cpp)
+    target_compile_features(plugin_manifest_test PRIVATE cxx_std_23)
+    target_link_libraries(plugin_manifest_test PRIVATE mcdk_runtime)
+    add_dependencies(plugin_manifest_test script_host_plugin)
+    target_compile_definitions(plugin_manifest_test PRIVATE
+        MCDEV_TEST_SCRIPT_HOST_PLUGIN="$<TARGET_FILE:script_host_plugin>"
+    )
+    add_test(NAME plugin-manifest COMMAND plugin_manifest_test)
 endif()

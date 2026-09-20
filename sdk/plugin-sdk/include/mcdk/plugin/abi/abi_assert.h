@@ -32,6 +32,7 @@
 #include "iface/game.h"
 #include "iface/info.h"
 #include "iface/log.h"
+#include "iface/mcp.h"
 
 namespace mcdk::abi_assert {
 
@@ -122,6 +123,10 @@ namespace mcdk::abi_assert {
     MCDK_ABI_CHECK_GROWABLE(mcdk_capture_options);
     MCDK_ABI_CHECK_GROWABLE(mcdk_image_info);
 
+    MCDK_ABI_CHECK_GROWABLE(mcdk_iface_mcp);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_mcp_tool_desc);
+    static_assert(std::is_pointer_v<mcdk_mcp_tool_handler>, "mcdk_mcp_tool_handler must be a plain function pointer");
+
     MCDK_ABI_CHECK_GROWABLE(mcdk_iface_log);
     MCDK_ABI_CHECK_GROWABLE(mcdk_log_query);
     MCDK_ABI_CHECK_GROWABLE(mcdk_log_entry);
@@ -148,6 +153,7 @@ namespace mcdk::abi_assert {
     static_assert(std::is_same_v<mcdk_log_order, uint32_t>, "mcdk_log_order must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_side, uint32_t>, "mcdk_side must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_image_format, uint32_t>, "mcdk_image_format must be a fixed-width alias");
+    static_assert(std::is_same_v<mcdk_mcp_annotation, uint32_t>, "mcdk_mcp_annotation must be a fixed-width alias");
 
 #undef MCDK_ABI_CHECK_GROWABLE
 #undef MCDK_ABI_CHECK_LAYOUT

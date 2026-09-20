@@ -49,8 +49,8 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 
 | 名称 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `mcdk_plugin_entry` | 1.0 | 计划 | 插件唯一导出符号，见 [03](03-abi-reference.md) §2 |
-| `mcdk_host_info::get_interface` | 1.0 | 计划 | 接口查询入口，见 [03](03-abi-reference.md) §3 |
+| `mcdk_plugin_entry` | 1.0 | 可用 | 插件唯一导出符号，见 [03](03-abi-reference.md) §2。清单可用 `entry_symbol` 覆盖 |
+| `mcdk_host_info::get_interface` | 1.0 | 可用 | 接口查询入口，见 [03](03-abi-reference.md) §3 |
 
 ## 3. 接口表登记
 
@@ -97,8 +97,8 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `add_tool` | 1.0 | 计划 | 仅 REGISTER 阶段可用；参数是带 `struct_size` 的 `mcdk_mcp_tool_desc`，不是位置参数 |
-| `list_tools` | 1.0 | 计划 | 已注册工具清单 |
+| `add_tool` | 1.0 | 可用 | 仅 REGISTER 阶段可用；参数是带 `struct_size` 的 `mcdk_mcp_tool_desc`，不是位置参数 |
+| `list_tools` | 1.0 | 可用 | 已注册工具清单，含 `owner` 字段 |
 
 ### 3.7 `mcdk.events/1`
 
@@ -110,7 +110,11 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `emit` | 1.0 | 计划 | 插件自定义事件。当前对内置 `mcdk.*` 事件返回 `MCDK_ERR_NOT_SUPPORTED`，待自定义事件命名空间开放 |
 | `post_main` | 1.0 | 可用 | 投递到主线程 |
 
-v1 合计 **21 个 ABI 函数**。其中 `mcdk.mcp` 的两个尚未实现，其余均已可用。
+v1 合计 **21 个 ABI 函数，六张接口表，全部可用**。
+
+阶段窗口（[05-interfaces.md](05-interfaces.md) §9）由宿主 shim 实际强制执行，
+不在窗口内调用返回 `MCDK_ERR_WRONG_STAGE`——这一条不能只写在文档里：
+「现在还没到时候」与「确实一条都没有」分不开的话，插件作者会把时机错误当成数据为空去排查。
 
 ## 4. 事件登记
 

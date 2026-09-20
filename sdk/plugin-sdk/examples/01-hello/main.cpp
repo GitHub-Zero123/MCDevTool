@@ -37,9 +37,31 @@ namespace {
             context.events().on<mcdk::ev::GameExit>(mcdk::Dispatch::Main, [&context](const auto& e) {
                 context.console().info("event:game-exit-main:" + std::to_string(e.exitCode));
             });
+
+            // MCP 工具只能在 REGISTER 阶段注册。两棵 JSON 树、五个 optional、
+            // handler 闭包都由 SDK 降级成 C 形态，这里一个 mcdk_ 类型都看不到。
+            mcdk::ToolDesc tool;
+            tool.name                 = "hello_echo";
+            tool.description          = "回显参数";
+            tool.inputSchema          = R"({"type":"object","properties":{"text":{"type":"string"}}})";
+            tool.annotations.readOnly = true;
+            const auto added = context.mcp().addTool(tool, [](std::string_view args, std::string_view session) {
+                return std::string(R"({"echo":)") + std::string(args) + R"(,"session":")" + std::string(session)
+                     + R"("})";
+            });
+            context.console().info("mcp:add-tool:" + std::to_string(added));
         }
 
-        void onConfig(mcdk::Context& context) override { context.console().print(mcdk::Color::Cyan, "stage:config"); }
+        void onConfig(mcdk::Context& context) override {
+            context.console().print(mcdk::Color::Cyan, "stage:config");
+            // 注册窗口已过，必须被拒。
+            mcdk::ToolDesc late;
+            late.name        = "hello_too_late";
+            late.inputSchema = R"({"type":"object"})";
+            const auto status =
+                context.mcp().addTool(late, [](std::string_view, std::string_view) { return std::string("{}"); });
+            context.console().info("mcp:late-tool:" + std::to_string(status));
+        }
 
         void onWorld(mcdk::Context& context) override { context.console().print(mcdk::Color::Cyan, "stage:world"); }
 

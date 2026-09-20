@@ -67,6 +67,30 @@ namespace mcdk {
         virtual void onRuntime(Context& context) { (void)context; }
         // 即将终结。返回前必须 join 自己创建的全部线程。
         virtual void onShutdown(Context& context) { (void)context; }
+
+        // 由 SDK 的入口胶水调用，插件不应直接使用。
+        void bindContext(Context& context) noexcept { mContext = &context; }
+
+    protected:
+        // 本插件的 Context。
+        //
+        // 与各阶段回调收到的是**同一个对象**：一次加载只有一个 Context，从入口
+        // 返回起一直活到 on_unload。因此它可以在任意线程、任意时刻使用，不局限于
+        // 回调内部——阶段回调仍然把它作为参数传进来只是图方便。
+        //
+        // 需要在自建线程里调宿主接口时直接用它，不必自己存一份指针：
+        //
+        //   void onRegister(mcdk::Context&) override {
+        //       mWorker = std::thread([this] { context().console().info("..."); });
+        //   }
+        //
+        // 受限制的是**接口自身的阶段窗口**（见 05-interfaces.md §9），而不是能不能
+        // 拿到 Context：mcdk.mcp 只能在 REGISTER 注册，mcdk.game 只能在 RUNTIME 用。
+        [[nodiscard]] Context& context() noexcept { return *mContext; }
+
+    private:
+        // 在第一次回调（含 identity）之前就已经被绑好，不会是空的。
+        Context* mContext = nullptr;
     };
 
     namespace detail {
@@ -167,6 +191,9 @@ namespace mcdk {
                     // unique_ptr 保证此时不泄漏。
                     auto instance = std::make_unique<Instance>();
                     instance->context.bindHost(*host);
+                    // 在任何回调之前绑定，包括下一行的 identity()——这样 Plugin::context()
+                    // 在插件能观察到的任何时刻都是有效的。
+                    instance->plugin.bindContext(instance->context);
                     // config 此时已就绪，插件可以据此报出动态身份（加载器场景）。
                     instance->identity = instance->plugin.identity(instance->context);
 

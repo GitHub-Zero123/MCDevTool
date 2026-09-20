@@ -148,7 +148,9 @@ mcdk plugin remove <id>          # 移除声明
 
 `add` **必须**在写入前把该插件声明的 `permissions` 与 `id`、`version` 打印给用户确认——这是 §1 信任模型中用户做决策的那一刻。
 
-以上命令会改写 `.mcdev.json`，需与现有配置写回逻辑（`tryUpdateUserGamePath`）共用同一套保留格式的读改写实现，详见 [10-roadmap.md](10-roadmap.md) §4 待定问题 1。
+**实现状态：五条命令均已可用**（`tools/mcdk/src/plugin_cli.cpp`）。`enable` / `disable` / `remove` 的参数按 `id` 或 `path` 匹配；`add` 只接受插件目录，直指动态库的形态没有清单可展示，无法完成信任确认那一步，需用户手写声明。
+
+**已知缺陷：写回会丢掉原文件中的注释与缩进风格。** 与现有的 `tryUpdateUserGamePath` 同源——两者都是「解析成 JSON DOM 再 `dump`」，而 jsonc 注释在解析时就被丢弃了，`dump` 不可能还原。当前的做法是每次写回都向用户明说这一点，而不是假装无事发生。根治需要一套保留格式的读改写实现，见 [10-roadmap.md](10-roadmap.md) §4 待定问题 1。
 
 ## 6. 与用户级全局插件的关系
 

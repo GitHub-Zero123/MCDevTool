@@ -8,11 +8,13 @@
 #include "abi/iface/game.h"
 #include "abi/iface/info.h"
 #include "abi/iface/log.h"
+#include "abi/iface/mcp.h"
 #include "console.hpp"
 #include "events.hpp"
 #include "game.hpp"
 #include "info.hpp"
 #include "log.hpp"
+#include "mcp.hpp"
 #include "detail/abi_bridge.hpp"
 
 namespace mcdk {
@@ -42,6 +44,9 @@ namespace mcdk {
 
         // 游戏进程交互：Python 执行与窗口截图。
         [[nodiscard]] const Game& game() const noexcept { return mGame; }
+
+        // MCP 工具注册。非 const：注册要把 handler 闭包存进来。
+        [[nodiscard]] Mcp& mcp() noexcept { return mMcp; }
 
         // .mcdev.json 中本条插件声明的 config 字段，UTF-8 JSON 文本。
         // 同一个插件二进制可以声明多次、各带不同 config，据此表现出不同行为。
@@ -79,6 +84,11 @@ namespace mcdk {
                 detail::getInterface<mcdk_iface_game>(host, MCDK_IFACE_GAME_NAME, MCDK_IFACE_GAME_VERSION)
             );
 
+            mMcp = Mcp(
+                mSelf,
+                detail::getInterface<mcdk_iface_mcp>(host, MCDK_IFACE_MCP_NAME, MCDK_IFACE_MCP_VERSION)
+            );
+
             mCore = detail::getInterface<mcdk_iface_core>(host, MCDK_IFACE_CORE_NAME, MCDK_IFACE_CORE_VERSION);
             if (detail::ifaceHas(mCore, &mcdk_iface_core::get_config)) {
                 mcdk_str raw{};
@@ -99,6 +109,7 @@ namespace mcdk {
         Info                   mInfo;
         Log                    mLog;
         Game                   mGame;
+        Mcp                    mMcp;
         const mcdk_iface_core* mCore = nullptr;
     };
 

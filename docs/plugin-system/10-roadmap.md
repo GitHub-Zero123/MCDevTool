@@ -9,11 +9,11 @@
 | M0 | 前置重构 A（`mcdk::runtime::Session`） | `launchGameExe` 拆分完成，现有测试全绿 |
 | M1 | 前置重构 B（`McpToolRegistry`） | 内置 MCP 工具全部走注册表 |
 | M2 | 冻结 `abi/core.h` + `abi/entry.h`，打通 loader | 只带 `mcdk.console`，端到端：读 `.mcdev.json` 声明 → 校验 → 入口 → `on_stage` → 卸载 |
-| M3 | 异常屏障双向完成 + [09](09-compatibility.md) §1/§2 CI 矩阵 | 全部工具链组合通过一致性套件。**当前状态**：一致性套件已实现并本地通过；CI 矩阵五种工具链已配置，但"同时加载全部产物"仍是占位，见 [09](09-compatibility.md) §1 |
+| M3 | 异常屏障双向完成 + [09](09-compatibility.md) §1/§2 CI 矩阵 | **完成。** 一致性套件本地通过；`plugin_load_all_test` 从 `MCDEV_TEST_PLUGIN_PATHS` 读一组路径，CI 把五种工具链的产物一起载进同一个进程跑完整生命周期 |
 | M4 | 事件总线 + v1 全部 9 条事件 | **完成。** 总线、9 个发射点、`MCDK_ENABLE_PLUGINS` 开关、A/B/C 三组基准（[12](12-performance.md) §6）均已落地，实测 B 组 约 2.3 ns/发射。详见 §1.1 |
-| M5 | 补齐 v1 六张接口表，每张配一个 example | **进行中**：`mcdk.core` / `mcdk.console` / `mcdk.info` / `mcdk.log` / `mcdk.game` 已可用，`mcdk.mcp` 待做 |
-| M6 | `plugin.json` 完整字段、依赖拓扑排序、`mcdk plugin` 系列命令 | — |
-| M7 | [09](09-compatibility.md) §3 双向版本矩阵 | 首个 golden 二进制入库 |
+| M5 | 补齐 v1 六张接口表，每张配一个 example | **完成。** 六张表全部可用，阶段窗口由 shim 强制执行。例子集中在 `examples/01-hello`，尚未按表拆成六个独立 example |
+| M6 | `plugin.json` 完整字段、依赖拓扑排序、`mcdk plugin` 系列命令 | **完成。** 清单解析（含按平台选库、`entry_symbol`、`permissions`）、Kahn 拓扑排序（依赖缺失 / 版本不符 / 成环各自跳过）、五条 CLI 命令均已可用 |
+| M7 | [09](09-compatibility.md) §3 双向版本矩阵 | **未开始。** 需要先发一个版本才有 golden 二进制可入库 |
 
 **M3 必须在 M5 之前完成。** 屏障和 CI 矩阵是后续所有接口的安全网，补完接口再回头加验证的代价高得多。
 

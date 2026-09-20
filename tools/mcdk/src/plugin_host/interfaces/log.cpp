@@ -47,14 +47,18 @@ namespace mcdk::plugin_host::detail {
                 if (registry().find(self) == nullptr) {
                     return MCDK_ERR_INVALID_HANDLE;
                 }
+                // 日志缓冲区在 RUNTIME 之前不存在，这时返回「零条」会把时机错误
+                // 伪装成数据为空（05-interfaces.md §9）。
+                if (!stageAtLeast(MCDK_STAGE_RUNTIME)) {
+                    return MCDK_ERR_WRONG_STAGE;
+                }
                 if (query->channel != MCDK_LOG_CHANNEL_STDOUT && query->channel != MCDK_LOG_CHANNEL_STDERR) {
                     return MCDK_ERR_INVALID_ARGUMENT;
                 }
                 const auto buffer = bufferFor(query->channel);
                 if (!buffer) {
-                    // 运行期尚未绑定（REGISTER / CONFIG / WORLD 阶段），不是错误：
-                    // 缓冲区还不存在，等价于「零条」。
-                    return MCDK_OK;
+                    // 阶段对了却没有缓冲区，说明本次运行压根没启用日志缓冲。
+                    return MCDK_ERR_NOT_SUPPORTED;
                 }
 
                 const std::size_t total = buffer->size();
@@ -89,7 +93,7 @@ namespace mcdk::plugin_host::detail {
         uint32_t MCDK_CALL logCount(mcdk_handle self, mcdk_log_channel channel) noexcept {
             std::uint32_t count = 0;
             guardVoid([&] {
-                if (registry().find(self) == nullptr) {
+                if (registry().find(self) == nullptr || !stageAtLeast(MCDK_STAGE_RUNTIME)) {
                     return;
                 }
                 if (const auto buffer = bufferFor(channel)) {

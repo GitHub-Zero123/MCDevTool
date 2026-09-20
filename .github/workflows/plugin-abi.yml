@@ -141,26 +141,29 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      # TODO 这一步需要一个吃外部插件路径列表的 harness。
-      # 现有的 plugin_abi_conformance_test 把路径写死在编译期宏里，
-      # 只能加载自己构建出来的那一个。
-      # 待办：让它改从环境变量 MCDEV_TEST_PLUGIN_PATHS 读一组分号分隔的路径，
-      # 本步骤才真正生效。在那之前这里只验证产物齐全。
-      - name: Verify every toolchain produced a plugin
+      - name: Collect every toolchain's plugin
         shell: pwsh
         run: |
           $expected = @(
             'plugin-msvc-mt', 'plugin-msvc-md', 'plugin-clang-cl-md',
             'plugin-mingw-gcc', 'plugin-msvc-md-noexcept'
           )
+          $paths = @()
           $missing = @()
           foreach ($name in $expected) {
-            if (-not (Get-ChildItem -Path "artifacts/$name" -Filter *.dll -Recurse -ErrorAction SilentlyContinue)) {
-              $missing += $name
-            }
+            $dll = Get-ChildItem -Path "artifacts/$name" -Filter *.dll -Recurse -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+            if ($null -eq $dll) { $missing += $name } else { $paths += $dll.FullName }
           }
           if ($missing.Count -gt 0) {
             Write-Error "missing plugin artifacts: $($missing -join ', ')"
             exit 1
           }
-          Write-Host "all toolchains produced a plugin"
+          # 分号分隔，plugin_load_all_test 会把它们全部载进同一个进程。
+          "MCDEV_TEST_PLUGIN_PATHS=$($paths -join ';')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "collected $($paths.Count) plugins"
+
+      # 真正的那一步：五种工具链的产物同时在一个进程里跑完整生命周期。
+      # CRT 错配、符号插入这类问题只会在这里显形。
+      - name: Load them all at once
+        run: ctest --test-dir build -R plugin-load-all --output-on-failure
