@@ -34,7 +34,26 @@ CI 用 [02-abi-contract.md](02-abi-contract.md) §1 表中的每一种工具链�
 
 golden 目录的入库规则：每次 `MCDK_ABI_VERSION_MINOR` 递增时，用该版本的 SDK 以 MSVC `/MD` 与 MinGW 各构建一份 `00-abi-conformance` 存入，附带构建时的工具链信息。
 
-## 4. CI 静态检查
+## 4. 构建期闸门
+
+**规范：以下两个目标属于默认构建，不是 ctest 用例。** ABI 被破坏时应当在构建期就失败，而不是等到跑测试。实现位于 `sdk/plugin-sdk/checks/`，由 `MCDK_PLUGIN_SDK_BUILD_CHECKS` 开启（构建测试开启时自动打开）。
+
+| 目标 | 拦的是什么 |
+| --- | --- |
+| `mcdk_abi_c99_check` | 用 **C 编译器**单独编译全部 ABI 头。任何 C++ 构造——最常见的是 `std::string`、`std::function`——立刻失败 |
+| `mcdk_abi_layout_check` | 包含 `abi/abi_assert.h`，对每个跨界结构体断言标准布局、**平凡可复制**、平凡可析构、`struct_size` 在偏移 0、以及关键字段的 `offsetof` |
+
+两者分工明确，缺一不可。已实测三种破坏方式：
+
+| 注入的破坏 | C99 闸门 | 布局闸门 |
+| --- | :-: | :-: |
+| 调换 `mcdk_str` 的字段顺序 | 通过 | **拦下**（`ptr must come first`） |
+| 直接加 `std::string host_version` | **拦下**（`expected C++ compiler`） | — |
+| 用 `#ifdef __cplusplus` 藏起 `std::string` | 通过 | **拦下**（`must be trivially copyable`） |
+
+第三行是最要命的情形：C 与 C++ 两侧看到的结构体大小不同，跨 DLL 传递时不报错、只静默损坏内存。单靠 C99 编译检查拦不住它，`is_trivially_copyable` 才是那道闸门。**新增任何 ABI 结构体时，必须同时在 `abi_assert.h` 中补上对应的 `MCDK_ABI_CHECK_GROWABLE`**，否则它不受任何保护。
+
+## 5. CI 静态检查
 
 脚本对 ABI 头与宿主 shim 做机械检查，任一项失败即阻断合并：
 
@@ -54,10 +73,10 @@ golden 目录的入库规则：每次 `MCDK_ABI_VERSION_MINOR` 递增时，用�
 
 倒数第四项是 ABI 演进的真正守门人：它把"只增不改"从人的纪律变成机器的判定。登记表的双向校验同理——只查一个方向的话，删头里的注释或删表里的行都能蒙混过关。
 
-## 5. 性能回归
+## 6. 性能回归
 
 零插件开销契约的基准测试同属 CI 必须项，定义见 [12-performance.md](12-performance.md) §6。
 
-## 6. 运行期自检
+## 7. 运行期自检
 
 宿主在加载插件后**应该**做一次轻量自检并记入日志：插件报告的 ABI 版本、各接口表的 `struct_size`、插件实际取用了哪些接口。该信息在用户报告"插件在我这不工作"时是第一手诊断依据。

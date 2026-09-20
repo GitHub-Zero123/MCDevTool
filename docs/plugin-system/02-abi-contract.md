@@ -141,7 +141,7 @@ static mcdk_status MCDK_CALL game_execute_python(
 
 `host::guard` 与 SDK 侧的 `detail::guard` 结构一致，把 `std::runtime_error`、`std::filesystem::filesystem_error`、`nlohmann::json::exception` 等映射到稳定的 `mcdk_status`，并把 `what()` 存入该插件的错误槽。
 
-**规范：`components/plugin-host/src/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 该规则由 CI 静态检查，见 [09-compatibility.md](09-compatibility.md) §4。
+**规范：`components/plugin-host/src/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 该规则由 CI 静态检查，见 [09-compatibility.md](09-compatibility.md) §5。
 
 ### 4.4 `-fno-exceptions` 插件
 

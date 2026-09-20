@@ -103,6 +103,6 @@ main.cpp
 
 ## 6. shim 层规约
 
-**规范：`components/plugin-host/src/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 见 [02-abi-contract.md](02-abi-contract.md) §4.3，该规则由 CI 静态检查（见 [09-compatibility.md](09-compatibility.md) §4）。
+**规范：`components/plugin-host/src/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 见 [02-abi-contract.md](02-abi-contract.md) §4.3，该规则由 CI 静态检查（见 [09-compatibility.md](09-compatibility.md) §5）。
 
 shim 层**禁止**包含业务逻辑，只做三件事：参数转换、调用 `mcdk::runtime::Session` 上的现有实现、结果转换。任何新的业务逻辑都应落在 `mcdk_core` / `mcdk_runtime` 中，以便非插件路径复用。

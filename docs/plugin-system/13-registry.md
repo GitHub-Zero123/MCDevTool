@@ -15,7 +15,7 @@
 | **真源** | `sdk/plugin-sdk/include/mcdk/plugin/abi/**` 头文件中的 `@name` / `@since` / `@deprecated` 注释 |
 | **人读视图** | 本文件 |
 
-CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §4）：
+CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 
 - 头文件中有 `@name` 而本表无对应行 → 失败；
 - 本表有行而头文件无对应 `@name` → 失败；

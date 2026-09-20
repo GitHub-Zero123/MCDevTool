@@ -17,6 +17,11 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     endif()
 endif()
 
+# 插件 ABI 头的唯一真源。宿主与插件 SDK 共用，任何一侧改动都会被另一侧的编译发现。
+# 构建测试开启时，一并构建 ABI 的 C99 可编译性与布局静态断言两个校验目标。
+set(MCDK_PLUGIN_SDK_BUILD_CHECKS ${MC_DEV_TOOL_BUILD_TEST} CACHE BOOL "" FORCE)
+add_subdirectory(sdk/plugin-sdk)
+
 add_subdirectory(libs/nbt)
 # set(LIBUV_BUILD_SHARED OFF)
 # add_subdirectory(libs/libuv)

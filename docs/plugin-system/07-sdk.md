@@ -2,6 +2,34 @@
 
 上级索引：[README.md](README.md)
 
+## 0. 两层的分界（务必读）
+
+[02-abi-contract.md](02-abi-contract.md) 里「禁止 `std::string`」这类说法**只针对 `abi/` 那一层**，不针对 SDK。两者常被混为一谈，这里写死：
+
+| 层 | 目录 | 能用 `std::string` / `std::vector` / `nlohmann::json` 吗 | 由谁编译 |
+| --- | --- | :-: | --- |
+| C ABI | `sdk/plugin-sdk/include/mcdk/plugin/abi/` | **不能**，纯 C99 | 两侧各编一次，必须字节级一致 |
+| C++ SDK | 其余全部 | **能，随便用** | 随插件一起，与插件同编译器同 CRT |
+| 插件作者代码 | 用户工程 | **能，随便用** | 同上 |
+
+**SDK 存在的意义就是自动完成这层握手。** 插件作者从头到尾不会写出任何 `mcdk_` 前缀的 C 类型：
+
+```cpp
+// 用户写的
+context.console().info("host " + std::string(context.hostVersion()));
+
+// SDK 内部（console.hpp / detail/abi_bridge.hpp）
+void Console::info(std::string_view message) const noexcept {
+    mTable->log(mSelf, MCDK_LOG_INFO, detail::toAbi(message));  // ← 握手发生在这里
+}
+```
+
+反方向同理：`context.hostVersion()` 返回的是 `std::string`，因为 ABI 给的 `mcdk_str` 是借用的、出了入口函数就失效，`Context::bindHost` 已经替用户做了深拷贝。
+
+之所以能这么做，是因为 **SDK 随插件一起从源码编译**（§1 第 1 条）——SDK 与插件必然同编译器、同标准库、同 CRT，它们之间传 `std::string` 毫无问题。真正的边界在 SDK 与宿主之间，那里才只有 C。
+
+构建期的两道闸门（[09-compatibility.md](09-compatibility.md) §4）也只作用于 `abi/` 层：`mcdk_abi_c99_check` 只编译那几个 C 头，SDK 的 C++ 代码不在它的输入里。
+
 ## 1. 设计约束
 
 1. **SDK 禁止以预编译二进制分发**，必须随插件工程从源码构建。理由见 [01-overview.md](01-overview.md) §4.1。
