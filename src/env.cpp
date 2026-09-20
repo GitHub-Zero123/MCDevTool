@@ -13,8 +13,21 @@
 
 // 软链接目录
 bool MCDevTool::createDirectoryJunction(const std::filesystem::path& target, const std::filesystem::path& link) {
-
+    // 默认以WIN32 MSVC STL为标准
+    // 其他实现可能不遵守 MSVC 的 remove_all 语义，误判 junction 为普通目录而递归删除源目录内容。
     std::filesystem::create_directories(link.parent_path());
+    // link 从第二次运行起通常已经是上一轮留下的 junction，而 target 是用户真实的源目录。
+    // 这里的 remove_all 只摘掉链接本身，不会递归进去删掉 target 的内容：MSVC 的 remove_all
+    // 先直接调 RemoveDirectoryW，只有收到 ERROR_DIRECTORY_NOT_EMPTY 才递归；而
+    // RemoveDirectoryW 对 junction 的语义就是"无论目标是否为空都只删链接"，第一步即成功，
+    // 根本走不到递归分支。
+    //
+    // 这是实现定义行为，不是标准保证——标准只承诺不跟随 symlink，而 junction 在标准模型里
+    // 并不是 symlink。换到 MSVC STL 以外的实现（例如 MinGW 的 libstdc++）必须重新验证，
+    // 误判的后果是删掉用户的源目录。
+    //
+    // 另外：MSVC 上 is_symlink(junction) 返回 false（junction 是独立的 file_type::junction），
+    // 不要拿 is_symlink 当"是不是链接"的防护，那样写等于没写。
     if (std::filesystem::exists(link)) {
         std::filesystem::remove_all(link);
     }
@@ -124,6 +137,10 @@ namespace MCDevTool {
     }
 
     // 清理运行时行为包目录
+    // 这里删的是父目录，底下通常挂着 linkSourcePackToRuntimePack 建的 junction，所以会真正
+    // 走进 remove_all 的递归分支。依靠的是另一层保障：MSVC 把 junction 归为
+    // file_type::junction 而非 directory，递归条件不成立，于是只解除链接、不碰源目录内容。
+    // 同样是实现定义行为，完整依据见 createDirectoryJunction 处的说明。
     void cleanRuntimeBehaviorPacks() {
         auto runtimeBPPath = getBehaviorPacksPath();
         if (std::filesystem::is_directory(runtimeBPPath)) {
@@ -132,6 +149,8 @@ namespace MCDevTool {
     }
 
     // 清理运行时资源包目录
+    // 与 cleanRuntimeBehaviorPacks 同理：底下挂着 junction，靠 file_type::junction 的归类
+    // 保证只解除链接。
     void cleanRuntimeResourcePacks() {
         auto runtimeRPPath = getResourcePacksPath();
         if (std::filesystem::is_directory(runtimeRPPath)) {
