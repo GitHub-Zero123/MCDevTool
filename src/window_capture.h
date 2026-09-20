@@ -3,10 +3,12 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <cstdint>
-#include <optional>
+#include <expected>
 #include <vector>
 
+#include <mcdevtool/style.h>
+
 namespace MCDevTool::Style::Detail {
-    std::optional<std::vector<uint8_t>> captureWindow480p(HWND hwnd);
+    std::expected<std::vector<uint8_t>, CaptureError> captureWindowJpeg(HWND hwnd, CaptureOptions options = {});
 }
 #endif

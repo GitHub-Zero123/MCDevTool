@@ -275,17 +275,49 @@ namespace MCDevTool::Style {
         }
     }
 
-    // 根据指定pid获取窗口内的画面信息 返回压缩480p的jpg数据
-    std::optional<std::vector<uint8_t>> captureMinecraftWindow480p(int pid) {
+    std::string_view describeCaptureError(CaptureError error) {
+        // 每条都说清下一步：调用方（通常是自动化 Agent）需要能区分"重试可能有用"、
+        // "先把窗口恢复"和"这个会话别再截图了"。
+        switch (error) {
+        case CaptureError::WindowNotFound:
+            return "The Minecraft window was not found for this process id. The game may not have started yet, may "
+                   "have exited, or the tracked process id is stale. Check the game process before retrying.";
+        case CaptureError::WindowMinimized:
+            return "The Minecraft window is minimized. Windows Graphics Capture cannot capture a window with no "
+                   "composed content; restore the window and retry.";
+        case CaptureError::CaptureUnavailable:
+            return "Windows Graphics Capture is unavailable. It needs Windows 10 1809 or later and may be disabled "
+                   "by policy; a locked session or a disconnected remote desktop also yields no frames. Stop using "
+                   "screenshots for this session and rely on logs instead.";
+        case CaptureError::Timeout:
+            return "The capture session started but no usable frame arrived in time. The game may be frozen or not "
+                   "presenting. Retrying may succeed.";
+        case CaptureError::InvalidRegion:
+            return "The requested region is not a valid normalized rectangle. Use values within 0.0-1.0 with "
+                   "left < right and top < bottom.";
+        case CaptureError::Failed:
+            break;
+        }
+        return "Window capture failed unexpectedly, for example because the graphics device was lost or the image "
+               "could not be encoded. Retrying may succeed.";
+    }
+
+    // 根据指定 pid 获取窗口画面，返回保持比例的 JPEG。
+    std::expected<std::vector<uint8_t>, CaptureError>
+    captureMinecraftWindowJpeg(int pid, CaptureOptions options) {
 #ifdef _WIN32
         HWND hwnd = MCDevTool::Detail::findMinecraftWindow(static_cast<DWORD>(pid));
-        if (!hwnd || IsIconic(hwnd)) {
-            return std::nullopt;
+        if (!hwnd) {
+            return std::unexpected{CaptureError::WindowNotFound};
         }
-        return Detail::captureWindow480p(hwnd);
+        if (IsIconic(hwnd)) {
+            return std::unexpected{CaptureError::WindowMinimized};
+        }
+        return Detail::captureWindowJpeg(hwnd, options);
 #else
         (void)pid;
-        return std::nullopt;
+        (void)options;
+        return std::unexpected{CaptureError::CaptureUnavailable};
 #endif
     }
 

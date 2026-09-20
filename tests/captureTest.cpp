@@ -53,9 +53,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "Minecraft window not found." << std::endl;
         return 1;
     }
-    auto data = MCDevTool::Style::captureMinecraftWindow480p(pid);
+    auto data = MCDevTool::Style::captureMinecraftWindowJpeg(pid);
     if (!data.has_value()) {
-        std::cerr << "Failed to capture Minecraft window." << std::endl;
+        std::cerr << "Failed to capture Minecraft window: " << MCDevTool::Style::describeCaptureError(data.error())
+                  << std::endl;
         return 1;
     }
     const std::filesystem::path outPut = argc > 1 ? argv[1] : "capture.jpg";

@@ -522,7 +522,7 @@ namespace mcdk {
 
             server->register_tool(
                 captureTool,
-                [this](const nlohmann::json& /* params */, const std::string& /* session_id */) -> nlohmann::json {
+                [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     const int pid = mcPid.load(std::memory_order_relaxed);
                     if (pid <= 0) {
                         return nlohmann::json{
@@ -535,18 +535,32 @@ namespace mcdk {
                         };
                     }
 
-                    auto result = MCDevTool::Style::captureMinecraftWindow480p(pid);
+                    MCDevTool::Style::CaptureOptions options;
+                    if (const auto found = params.find("max_height");
+                        found != params.end() && found->is_number()) {
+                        // 上限同时保护返回体积：图越大，编码出来的 base64 越长。
+                        options.maxHeight =
+                            static_cast<unsigned>(std::clamp(found->get<double>(), 120.0, 1080.0));
+                    }
+                    if (const auto found = params.find("region"); found != params.end() && found->is_object()) {
+                        const auto axis = [&](const char* key, double fallback) {
+                            const auto entry = found->find(key);
+                            return entry != found->end() && entry->is_number() ? entry->get<double>() : fallback;
+                        };
+                        options.region = {axis("left", 0.0), axis("top", 0.0), axis("right", 1.0),
+                                          axis("bottom", 1.0)};
+                    }
+
+                    auto result = MCDevTool::Style::captureMinecraftWindowJpeg(pid, options);
                     if (!result.has_value() || result->empty()) {
+                        const auto reason =
+                            result.has_value() ? MCDevTool::Style::CaptureError::Failed : result.error();
                         return nlohmann::json{
                             {"isError", true},
                             {"content",
                              nlohmann::json::array(
                                  {{{"type", "text"},
-                                   {"text",
-                                    "Failed to capture game window. "
-                                    "The window may be missing or minimized, Windows Graphics Capture may be "
-                                    "unavailable or blocked, or no valid frame arrived within 3 seconds. "
-                                    "Window capture requires Windows 10 1903 or later."}}}
+                                   {"text", std::string{MCDevTool::Style::describeCaptureError(reason)}}}}
                              )}
                         };
                     }

@@ -54,13 +54,19 @@ Parameters:
 
         constexpr auto CaptureGameWindowName = "capture_game_window";
         constexpr auto CaptureGameWindowDescription =
-            "Captures the current Minecraft game window as a 480p JPEG screenshot and returns base64-encoded image "
-            "data. "
+            "Captures the Minecraft game window client area as a JPEG screenshot and returns base64-encoded image "
+            "data. Defaults to the whole client area at 480p. "
             "This is a relatively expensive visual inspection tool and can distract from code/log based debugging. "
             "For UI structure, layout, node visibility, or JSON UI validation, prefer the specialized jsonui_debugger "
             "tool before using screenshots. Prefer get_latest_logs, get_latest_error_logs, and deterministic file/code "
             "checks first; use screenshots only when the task explicitly requires visual confirmation or logs cannot "
-            "answer the question.";
+            "answer the question.\n"
+            "Small text such as item counts, tooltips and chat is usually unreadable at the 480p default. To read it, "
+            "crop with 'region' instead of enlarging the whole frame: a region is sharper at the same or smaller "
+            "payload size. Raise 'max_height' only when the whole frame must stay readable, and remember a larger "
+            "image costs proportionally more to send.\n"
+            "'region' uses the same 0.0-1.0 client-area coordinates as mc_input, so a point you clicked at (x, y) "
+            "sits at the same (x, y) here.";
 
     } // namespace
 
@@ -114,10 +120,32 @@ Parameters:
     }
 
     mcp::tool buildCaptureGameWindowTool() {
-        return mcp::tool_builder(CaptureGameWindowName)
-            .with_description(CaptureGameWindowDescription)
-            .with_read_only_hint(true)
-            .build();
+        mcp::tool tool;
+        tool.name              = CaptureGameWindowName;
+        tool.description       = CaptureGameWindowDescription;
+        const Json regionAxis  = {{"type", "number"}, {"minimum", 0.0}, {"maximum", 1.0}};
+        tool.parameters_schema = {
+            {"type", "object"},
+            {"properties",
+             {{"max_height",
+               {{"type", "integer"},
+                {"minimum", 120},
+                {"maximum", 1080},
+                {"description",
+                 "Maximum output height in pixels, default 480. Aspect ratio is kept and small windows are never "
+                 "upscaled."}}},
+              {"region",
+               {{"type", "object"},
+                {"description",
+                 "Client-area sub-rectangle to capture, in the same 0.0-1.0 coordinates as mc_input. Defaults to the "
+                 "whole client area."},
+                {"properties",
+                 {{"left", regionAxis}, {"top", regionAxis}, {"right", regionAxis}, {"bottom", regionAxis}}},
+                {"additionalProperties", false}}}}},
+            {"additionalProperties", false},
+        };
+        tool.annotations.read_only_hint = true;
+        return tool;
     }
 
     mcp::tool buildJsonUiDebuggerTool() {

@@ -403,7 +403,13 @@ namespace {
          {},
          "批次结束后保持按下状态，默认 false；必须用 /release-all 收尾"},
         {"dry_run", FieldType::Bool, false, 0, 0, {}, "只校验并换算坐标，不投递任何输入"},
-        {"capture", FieldType::Enum, false, 0, 0, CaptureNames, "end=结束后附带一张截图，默认 none"},
+        {"capture",
+         FieldType::Enum,
+         false,
+         0,
+         0,
+         CaptureNames,
+         "end=结束后附带一张截图，默认 none。截图不等待游戏处理完输入，需要画面反映操作结果时在步骤末尾加 wait"},
         {"logs",
          FieldType::Enum,
          false,
@@ -860,15 +866,25 @@ namespace {
         });
     }
 
-    std::optional<std::string> captureIfRequested(const Context& context, bool requested) {
-        if (!requested) return std::nullopt;
-        const auto frame = MCDevTool::Style::captureMinecraftWindow480p(context.pid);
-        return frame.has_value() && !frame->empty()
-                 ? std::optional{base64::encode(reinterpret_cast<const char*>(frame->data()), frame->size())}
-                 : std::nullopt;
+    // 截图不等待游戏消费掉刚投递的输入：输入到画面之间隔着游戏的消息泵、游戏刻和渲染
+    // 流水线，宿主这边没有任何信号能知道它走完了没有。需要画面反映操作结果时，在步骤末
+    // 尾加一个 wait 显式等待——调用方知道自己做了什么、该等多久，这里猜不出来。
+    struct Capture {
+        std::optional<std::string> image;
+        std::string                failure; // image 为空时说明原因，供警告使用。
+    };
+
+    Capture captureIfRequested(const Context& context, bool requested) {
+        if (!requested) return {};
+        auto frame = MCDevTool::Style::captureMinecraftWindowJpeg(context.pid);
+        if (frame.has_value() && !frame->empty()) {
+            return {base64::encode(reinterpret_cast<const char*>(frame->data()), frame->size()), {}};
+        }
+        const auto reason = frame.has_value() ? MCDevTool::Style::CaptureError::Failed : frame.error();
+        return {std::nullopt, std::string{MCDevTool::Style::describeCaptureError(reason)}};
     }
 
-    Json buildWarnings(const Engine::Report& report, bool captureRequested, bool captureAvailable) {
+    Json buildWarnings(const Engine::Report& report, bool captureRequested, const Capture& capture) {
         Json warnings = Json::array();
         if (!report.held.empty()) {
             warnings.push_back(
@@ -879,11 +895,12 @@ namespace {
                 }
             );
         }
-        if (captureRequested && !captureAvailable) {
+        if (captureRequested && !capture.image.has_value()) {
             warnings.push_back(
                 Json{
                     {"code", "CAPTURE_UNAVAILABLE"},
                     {"message", "The follow-up screenshot could not be taken; the input itself was dispatched."},
+                    {"reason", capture.failure},
                 }
             );
         }
@@ -897,8 +914,8 @@ namespace {
                 const auto options = readOptions(args);
                 return Engine::run(context.pid, steps, options)
                     .transform([&](const Engine::Report& report) {
-                        const bool wanted = wantsCapture(args) && !report.dryRun;
-                        auto       image  = captureIfRequested(context, wanted);
+                        const bool wanted  = wantsCapture(args) && !report.dryRun;
+                        auto       capture = captureIfRequested(context, wanted);
 
                         const std::string summary =
                             report.dryRun
@@ -912,9 +929,9 @@ namespace {
                         appendLogs(context, args, data);
                         return Payload{
                             std::move(data),
-                            buildWarnings(report, wanted, image.has_value()),
+                            buildWarnings(report, wanted, capture),
                             summary,
-                            std::move(image),
+                            std::move(capture.image),
                         };
                     })
                     .transform_error([&](const Engine::Error& error) {
