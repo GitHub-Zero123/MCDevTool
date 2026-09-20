@@ -50,30 +50,36 @@ namespace mcdk::plugin_host {
             static_cast<std::uint16_t>(offsetof(mcdk_ev_log_line, text)),
         };
 
-        struct PayloadLayout {
+        struct EventTraits {
             std::uint32_t        size;
             const std::uint16_t* strings;
             std::uint16_t        stringCount;
+            // 被否决时这个事件是否就此作废。
+            //
+            // `.before` 类事件否决即不会发生，再投给异步订阅者只会让对方
+            // 枯等一个永远不来的 `.finish`。但 log.line 不同：它的否决只抑制
+            // 控制台输出，那一行日志仍然存在，异步订阅者照收（见 04-events.md §4.2）。
+            bool vetoCancelsEvent;
         };
 
-        constexpr PayloadLayout kLayouts[] = {
-            /* McpRegisterBefore     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0},
-            /* McpRegisterFinish     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0},
-            /* GameLaunchBefore      */ {sizeof(mcdk_ev_game_launch_before), kStrGameLaunchBefore, 2},
-            /* GameLaunchFinish      */ {sizeof(mcdk_ev_game_launch_finish), kStrGameLaunchFinish, 1},
-            /* GameExit              */ {sizeof(mcdk_ev_game_exit), nullptr, 0},
-            /* LogLine               */ {sizeof(mcdk_ev_log_line), kStrLogLine, 1},
-            /* LogError              */ {sizeof(mcdk_ev_log_line), kStrLogLine, 1},
-            /* IpcClientConnected    */ {sizeof(mcdk_ev_ipc_client), nullptr, 0},
-            /* IpcClientDisconnected */ {sizeof(mcdk_ev_ipc_client), nullptr, 0},
+        constexpr EventTraits kTraits[] = {
+            /* McpRegisterBefore     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false},
+            /* McpRegisterFinish     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false},
+            /* GameLaunchBefore      */ {sizeof(mcdk_ev_game_launch_before), kStrGameLaunchBefore, 2, true},
+            /* GameLaunchFinish      */ {sizeof(mcdk_ev_game_launch_finish), kStrGameLaunchFinish, 1, false},
+            /* GameExit              */ {sizeof(mcdk_ev_game_exit), nullptr, 0, false},
+            /* LogLine               */ {sizeof(mcdk_ev_log_line), kStrLogLine, 1, false},
+            /* LogError              */ {sizeof(mcdk_ev_log_line), kStrLogLine, 1, false},
+            /* IpcClientConnected    */ {sizeof(mcdk_ev_ipc_client), nullptr, 0, false},
+            /* IpcClientDisconnected */ {sizeof(mcdk_ev_ipc_client), nullptr, 0, false},
         };
-        static_assert(std::size(kLayouts) == kEventCount, "每新增一个事件都必须在这里登记 payload 布局");
+        static_assert(std::size(kTraits) == kEventCount, "每新增一个事件都必须在这里登记 payload 布局与否决语义");
 
         // 把 payload 连同它引用的字符串字节打成一个自包含的 blob。
         // mcdk_str::ptr 位上先存「相对 blob 起点的偏移」——blob 还会被搬动（入队、
         // 出队、移动构造），此刻写真指针必然失效，必须等它落到最终地址再还原。
         void pack(EventId id, const void* payload, std::uint32_t payloadSize, std::vector<unsigned char>& blob) {
-            const auto&          layout = kLayouts[static_cast<std::size_t>(id)];
+            const auto&          layout = kTraits[static_cast<std::size_t>(id)];
             const auto* const    bytes  = static_cast<const unsigned char*>(payload);
             blob.assign(bytes, bytes + payloadSize);
             for (std::uint16_t index = 0; index < layout.stringCount; ++index) {
@@ -95,7 +101,7 @@ namespace mcdk::plugin_host {
 
         // 把 pack 存下的偏移还原成真指针。只能在 blob 不会再搬家之后调用。
         void relocate(EventId id, std::vector<unsigned char>& blob) {
-            const auto& layout = kLayouts[static_cast<std::size_t>(id)];
+            const auto& layout = kTraits[static_cast<std::size_t>(id)];
             for (std::uint16_t index = 0; index < layout.stringCount; ++index) {
                 const std::uint16_t fieldOffset = layout.strings[index];
                 mcdk_str            field{};
@@ -345,7 +351,7 @@ namespace mcdk::plugin_host {
         }
 
         bool payloadSizeMatches(EventId id, std::uint32_t payloadSize) {
-            const auto& layout = kLayouts[static_cast<std::size_t>(id)];
+            const auto& layout = kTraits[static_cast<std::size_t>(id)];
             if (payloadSize == layout.size) {
                 return true;
             }
@@ -354,7 +360,7 @@ namespace mcdk::plugin_host {
             static bool warned = false;
             warnOnce(
                 warned,
-                "[Plugin] 事件 " + std::string(eventName(id)) + " 的 payload 尺寸与布局表不符，已拒绝发射"
+                "[Plugin] 事件 " + std::string(eventName(id)) + " 的 payload 尺寸与事件表不符，已拒绝发射"
             );
             return false;
         }
@@ -460,9 +466,9 @@ namespace mcdk::plugin_host {
             }
             release(taken);
         }
-        // 被否决就不再投递给异步订阅者：`.before` 的语义是「这件事即将发生」，
-        // 否决之后它不会发生，投过去只会让对方枯等一个永远不来的 `.finish`。
-        if (!vetoed && hasAsyncSubscribers(id)) {
+        // 是否因否决而不再投递给异步订阅者，由事件自己的语义决定。
+        const bool cancelled = vetoed && kTraits[static_cast<std::size_t>(id)].vetoCancelsEvent;
+        if (!cancelled && hasAsyncSubscribers(id)) {
             enqueue(id, payload, payloadSize);
         }
         return vetoed;

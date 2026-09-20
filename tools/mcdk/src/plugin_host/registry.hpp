@@ -20,6 +20,7 @@
 
 #include <mcdk/console.hpp>
 #include <mcdk/plugin/abi/entry.h>
+#include <mcdk/plugin_host/session_binding.hpp>
 
 namespace mcdk::plugin_host::detail {
 
@@ -82,6 +83,10 @@ namespace mcdk::plugin_host::detail {
     [[nodiscard]] const std::string& hostVersion() noexcept;
     void                             setCurrentStage(mcdk_stage stage) noexcept;
     [[nodiscard]] mcdk_stage         currentStage() noexcept;
+
+    // 当前的运行期绑定快照（副本）。未绑定时各 shared_ptr 为空。
+    // 定义在 session_binding.cpp。
+    [[nodiscard]] SessionBinding sessionBinding();
 
     // 接口表分发。新增接口表时在 interfaces/ 下加实现并在此登记。
     [[nodiscard]] const void* findInterfaceTable(const char* name, std::uint32_t version) noexcept;

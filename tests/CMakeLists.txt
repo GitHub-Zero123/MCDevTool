@@ -59,7 +59,8 @@ target_link_libraries(mcp_tool_registry_test PRIVATE mcdk_runtime)
 add_test(NAME mcp-tool-registry COMMAND mcp_tool_registry_test)
 
 # 端到端：真的去 LoadLibrary 示例插件，走完整的 C ABI 握手。
-if(TARGET hello_plugin)
+# MCDK_ENABLE_PLUGINS=OFF 时插件压根不会被加载，这组测试也就不适用。
+if(TARGET hello_plugin AND MCDK_ENABLE_PLUGINS)
     add_executable(plugin_host_test plugin_host_test.cpp)
     target_compile_features(plugin_host_test PRIVATE cxx_std_23)
     target_link_libraries(plugin_host_test PRIVATE mcdk_runtime)
@@ -69,6 +70,13 @@ if(TARGET hello_plugin)
     )
     add_test(NAME plugin-host COMMAND plugin_host_test)
 endif()
+
+# 零插件开销基准。它是唯一会因为「变慢了」而失败的测试，故意留在常规 ctest 里
+# 而不是另开一个只有 CI 跑的靶——本地改坏了当场就能看到。
+add_executable(plugin_event_bench plugin_event_bench.cpp)
+target_compile_features(plugin_event_bench PRIVATE cxx_std_23)
+target_link_libraries(plugin_event_bench PRIVATE mcdk_runtime)
+add_test(NAME plugin-event-bench COMMAND plugin_event_bench)
 
 add_executable(profiler_foundation_test profiler_foundation_test.cpp)
 target_compile_features(profiler_foundation_test PRIVATE cxx_std_23)
@@ -94,7 +102,7 @@ if(TARGET mcdk-api)
 endif()
 
 # ABI 一致性套件：异常屏障双向验证 + 多实例回归。
-if(TARGET abi_conformance_plugin)
+if(TARGET abi_conformance_plugin AND MCDK_ENABLE_PLUGINS)
     add_executable(plugin_abi_conformance_test plugin_abi_conformance_test.cpp)
     target_compile_features(plugin_abi_conformance_test PRIVATE cxx_std_23)
     target_link_libraries(plugin_abi_conformance_test PRIVATE mcdk_runtime)
@@ -106,7 +114,7 @@ if(TARGET abi_conformance_plugin)
 endif()
 
 # 加载器模式：一个 DLL 充当其他插件的宿主（多实例 + 动态身份）。
-if(TARGET script_host_plugin)
+if(TARGET script_host_plugin AND MCDK_ENABLE_PLUGINS)
     add_executable(plugin_loader_pattern_test plugin_loader_pattern_test.cpp)
     target_compile_features(plugin_loader_pattern_test PRIVATE cxx_std_23)
     target_link_libraries(plugin_loader_pattern_test PRIVATE mcdk_runtime)

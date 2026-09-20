@@ -5,8 +5,14 @@
 
 #include "abi/entry.h"
 #include "abi/iface/core.h"
+#include "abi/iface/game.h"
+#include "abi/iface/info.h"
+#include "abi/iface/log.h"
 #include "console.hpp"
 #include "events.hpp"
+#include "game.hpp"
+#include "info.hpp"
+#include "log.hpp"
 #include "detail/abi_bridge.hpp"
 
 namespace mcdk {
@@ -27,6 +33,15 @@ namespace mcdk {
 
         // 事件订阅。非 const：订阅要把闭包存进来。
         [[nodiscard]] Events& events() noexcept { return mEvents; }
+
+        // 会话信息：游戏路径、MCP 端口、游戏 IPC 端口等。
+        [[nodiscard]] const Info& info() const noexcept { return mInfo; }
+
+        // 游戏日志缓冲区。
+        [[nodiscard]] const Log& log() const noexcept { return mLog; }
+
+        // 游戏进程交互：Python 执行与窗口截图。
+        [[nodiscard]] const Game& game() const noexcept { return mGame; }
 
         // .mcdev.json 中本条插件声明的 config 字段，UTF-8 JSON 文本。
         // 同一个插件二进制可以声明多次、各带不同 config，据此表现出不同行为。
@@ -49,6 +64,21 @@ namespace mcdk {
                 detail::getInterface<mcdk_iface_events>(host, MCDK_IFACE_EVENTS_NAME, MCDK_IFACE_EVENTS_VERSION)
             );
 
+            mInfo = Info(
+                mSelf,
+                detail::getInterface<mcdk_iface_info>(host, MCDK_IFACE_INFO_NAME, MCDK_IFACE_INFO_VERSION)
+            );
+
+            mLog = Log(
+                mSelf,
+                detail::getInterface<mcdk_iface_log>(host, MCDK_IFACE_LOG_NAME, MCDK_IFACE_LOG_VERSION)
+            );
+
+            mGame = Game(
+                mSelf,
+                detail::getInterface<mcdk_iface_game>(host, MCDK_IFACE_GAME_NAME, MCDK_IFACE_GAME_VERSION)
+            );
+
             mCore = detail::getInterface<mcdk_iface_core>(host, MCDK_IFACE_CORE_NAME, MCDK_IFACE_CORE_VERSION);
             if (detail::ifaceHas(mCore, &mcdk_iface_core::get_config)) {
                 mcdk_str raw{};
@@ -66,6 +96,9 @@ namespace mcdk {
         std::string            mConfigJson = "null";
         Console                mConsole;
         Events                 mEvents;
+        Info                   mInfo;
+        Log                    mLog;
+        Game                   mGame;
         const mcdk_iface_core* mCore = nullptr;
     };
 

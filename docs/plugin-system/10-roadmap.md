@@ -10,14 +10,32 @@
 | M1 | 前置重构 B（`McpToolRegistry`） | 内置 MCP 工具全部走注册表 |
 | M2 | 冻结 `abi/core.h` + `abi/entry.h`，打通 loader | 只带 `mcdk.console`，端到端：读 `.mcdev.json` 声明 → 校验 → 入口 → `on_stage` → 卸载 |
 | M3 | 异常屏障双向完成 + [09](09-compatibility.md) §1/§2 CI 矩阵 | 全部工具链组合通过一致性套件。**当前状态**：一致性套件已实现并本地通过；CI 矩阵五种工具链已配置，但"同时加载全部产物"仍是占位，见 [09](09-compatibility.md) §1 |
-| M4 | 事件总线 + v1 全部 9 条事件 | **当前状态**：总线（订阅计数、SYNC/QUEUED/MAIN 三种派发、惰性线程、有界队列、detach 等 in-flight）已实现；9 个事件的 id 与 payload 已定义、订阅可用；**5 个已接发射点**，`log.line` / `log.error` / `ipc.client.*` 四个待接。零插件开销基准未做 |
-| M5 | 补齐 v1 六张接口表，每张配一个 example | 见 [05-interfaces.md](05-interfaces.md) §1 |
+| M4 | 事件总线 + v1 全部 9 条事件 | **完成。** 总线、9 个发射点、`MCDK_ENABLE_PLUGINS` 开关、A/B/C 三组基准（[12](12-performance.md) §6）均已落地，实测 B 组 约 2.3 ns/发射。详见 §1.1 |
+| M5 | 补齐 v1 六张接口表，每张配一个 example | **进行中**：`mcdk.core` / `mcdk.console` / `mcdk.info` / `mcdk.log` / `mcdk.game` 已可用，`mcdk.mcp` 待做 |
 | M6 | `plugin.json` 完整字段、依赖拓扑排序、`mcdk plugin` 系列命令 | — |
 | M7 | [09](09-compatibility.md) §3 双向版本矩阵 | 首个 golden 二进制入库 |
 
 **M3 必须在 M5 之前完成。** 屏障和 CI 矩阵是后续所有接口的安全网，补完接口再回头加验证的代价高得多。
 
 M5 的六张接口表按依赖顺序实现：`mcdk.core` → `mcdk.console` → `mcdk.info` → `mcdk.log` → `mcdk.game` → `mcdk.mcp`。`mcdk.mcp` 排最后，因为它的 handler 通常要调用 `mcdk.game`，先把被依赖方做完才好写 example。
+
+### 1.1 M4 实现纪要
+
+总线：订阅计数数组、SYNC/QUEUED/MAIN 三种派发、惰性派发线程、有界队列、槽位复用的订阅表、
+detach 等 in-flight。九个事件全部接上发射点。
+
+实现过程中被抓出并修正的四个缺陷，在此留档以免重踈：
+
+1. **QUEUED 的「深拷贝」曾经是一次 `memcpy`。** `mcdk_str` 里只有指针被复制，指向的字节没有——
+   发射方作用域一结束就是 use-after-free。它当时能跦着测试，因为测试只断言了整数字段，
+   而释放掉的内存往往还留着原字节。现在 payload 连同字符串字节打成自包含 blob，指针位先存偏移、
+   落到最终地址后再还原。
+2. **`MCDK_DISPATCH_MAIN` 当时完全不工作。** 它会在派发线程上被调用（等于退化成 QUEUED），
+   而且只有 MAIN 订阅者时派发线程压根不会被创建，事件堆满后静静丢弃。
+3. **无异步订阅者时仍无条件入队。** 纯 SYNC 订阅的场景下队列会涨满 4096，然后报出一句
+   「某个插件的处理器过慢」的假告警。
+4. **为了抽干 `post_main` 而把主线程改成定时轮询，违反了零插件开销契约。**
+   现改为事件驱动的唤醒信号，见 [12-performance.md](12-performance.md) §1.1。
 
 ## 2. ABI 冻结点
 

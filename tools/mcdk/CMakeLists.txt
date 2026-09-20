@@ -67,15 +67,26 @@ add_library(mcdk_runtime STATIC
     src/plugin_host/abi_layout_check.cpp
     src/plugin_host/event_bus.cpp
     src/plugin_host/guard.cpp
+    src/plugin_host/images.cpp
     src/plugin_host/host.cpp
     src/plugin_host/registry.cpp
+    src/plugin_host/session_binding.cpp
     src/plugin_host/interfaces/console.cpp
     src/plugin_host/interfaces/core.cpp
     src/plugin_host/interfaces/events.cpp
+    src/plugin_host/interfaces/game.cpp
+    src/plugin_host/interfaces/info.cpp
+    src/plugin_host/interfaces/log.cpp
     src/runtime/mcp_tool_registry.cpp
     src/runtime/session.cpp
 )
 target_compile_features(mcdk_runtime PUBLIC cxx_std_23)
+
+# 插件系统的总开关。关闭时所有发射点在预处理阶段就消失，连订阅计数的那次
+# 原子读也不剩。PUBLIC：events.hpp 是公开头，宏的展开必须在所有使用方一致。
+option(MCDK_ENABLE_PLUGINS "Enable the mcdk plugin system" ON)
+target_compile_definitions(mcdk_runtime PUBLIC MCDK_ENABLE_PLUGINS=$<BOOL:${MCDK_ENABLE_PLUGINS}>)
+
 # 插件 ABI 头的唯一真源在 sdk/plugin-sdk，宿主与插件 SDK 共用同一份。
 target_link_libraries(mcdk_runtime PUBLIC mcdk_core mcdk::plugin-abi PRIVATE mcp MCDevLink::MCDevLink)
 if(WIN32)

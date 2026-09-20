@@ -103,11 +103,14 @@ namespace MCDevTool::Debug {
                 u_long mode = 1;
                 ioctlsocket(clientSock, FIONBIO, &mode);
 
-                void* clientPtr = reinterpret_cast<void*>(clientSock);
+                void*       clientPtr = reinterpret_cast<void*>(clientSock);
+                std::size_t clientCount = 0;
                 {
                     std::lock_guard<std::mutex> lockGuard(mClientsMutex);
                     mClients.push_back(clientPtr);
+                    clientCount = mClients.size();
                 }
+                notifyClientCountChanged(clientCount, true);
                 {
                     std::lock_guard<std::mutex> lockGuard(mClientThreadsMutex);
                     mClientThreads.emplace_back([this, clientPtr]() { clientReadLoop(clientPtr); });
@@ -523,7 +526,8 @@ namespace MCDevTool::Debug {
 
     void DebugIPCServer::eraseClient(void* socketPtr, bool closeSocket) {
         if (!socketPtr) return;
-        bool existed = false;
+        bool        existed     = false;
+        std::size_t clientCount = 0;
         {
             std::lock_guard<std::mutex> lockGuard(mClientsMutex);
             auto it = std::find(mClients.begin(), mClients.end(), socketPtr);
@@ -531,9 +535,23 @@ namespace MCDevTool::Debug {
                 mClients.erase(it);
                 existed = true;
             }
+            clientCount = mClients.size();
         }
         if (existed && closeSocket) {
             closesocket(reinterpret_cast<SOCKET>(socketPtr));
+        }
+        if (existed) {
+            notifyClientCountChanged(clientCount, false);
+        }
+    }
+
+    void DebugIPCServer::setClientCountChangedCallback(std::function<void(std::size_t, bool)> callback) {
+        mClientCountChanged = std::move(callback);
+    }
+
+    void DebugIPCServer::notifyClientCountChanged(std::size_t count, bool connected) const {
+        if (mClientCountChanged) {
+            mClientCountChanged(count, connected);
         }
     }
 

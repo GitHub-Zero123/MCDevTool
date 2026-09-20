@@ -62,6 +62,13 @@ namespace MCDevTool::Debug {
         // 获取链接的客户端数量
         size_t getClientCount() const;
 
+        // 客户端连上 / 断开时的回调，参数是变化后的客户端数。
+        //
+        // 本层不认识插件系统（mcdevtool 是 mcdk_runtime 的上游），所以只提供钩子，
+        // 由 mcdk::runtime 那一层去发 mcdk.ipc.client.* 事件。回调跑在 accept 线程或
+        // 客户端读线程上，实现必须线程安全且快。
+        void setClientCountChangedCallback(std::function<void(std::size_t, bool)> callback);
+
         std::atomic<bool>* getStopFlag();
 
         unsigned short getPort() const;
@@ -88,6 +95,8 @@ namespace MCDevTool::Debug {
         std::map<uint64_t, std::shared_ptr<PendingJsonRequest>> mPendingJsonRequests;
         std::atomic<uint64_t>                               mNextJsonRequestId = 1;
         std::atomic<bool>                                   mStopFlag = false;
+        std::function<void(std::size_t, bool)>              mClientCountChanged;
+        void notifyClientCountChanged(std::size_t count, bool connected) const;
         bool sendMessageToOneClient(uint16_t messageType, const uint8_t* data, size_t length);
         bool sendBufferToSocket(void* socketPtr, const uint8_t* data, size_t length);
         IPCJsonResult requestJsonRawWithId(

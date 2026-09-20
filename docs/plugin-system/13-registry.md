@@ -74,24 +74,24 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `get_session` | 1.0 | 计划 | 会话信息快照：路径、端口、pid |
+| `get_session` | 1.0 | 可用 | 会话信息快照：路径、端口、pid |
 
 ### 3.4 `mcdk.game/1`
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `execute_python` | 1.0 | 计划 | 阻塞执行，禁止在 SYNC 回调中调用 |
-| `capture_window` | 1.0 | 计划 | 返回宿主持有的图像句柄 |
-| `image_get_info` | 1.0 | 计划 | 查询尺寸与字节数 |
-| `image_copy` | 1.0 | 计划 | 拷入调用方缓冲 |
-| `image_release` | 1.0 | 计划 | 释放图像句柄 |
+| `execute_python` | 1.0 | 可用 | 阻塞执行，禁止在 SYNC 回调中调用 |
+| `capture_window` | 1.0 | 可用 | 返回宿主持有的图像句柄；截取范围是归一化 double |
+| `image_get_info` | 1.0 | 可用 | 查询尺寸与字节数；尺寸由 JPEG 的 SOF 段解出 |
+| `image_copy` | 1.0 | 可用 | 拷入调用方缓冲 |
+| `image_release` | 1.0 | 可用 | 释放图像句柄；插件终结时宿主兜底回收并告警 |
 
 ### 3.5 `mcdk.log/1`
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `query` | 1.0 | 计划 | 回调式枚举，持锁期间调用 sink |
-| `count` | 1.0 | 计划 | 指定通道的条目数 |
+| `query` | 1.0 | 可用 | 回调式枚举，持锁期间调用 sink；`timestamp_ms` 在 v1 恒为 0 |
+| `count` | 1.0 | 可用 | 指定通道的条目数 |
 
 ### 3.6 `mcdk.mcp/1`
 
@@ -110,7 +110,7 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `emit` | 1.0 | 计划 | 插件自定义事件。当前对内置 `mcdk.*` 事件返回 `MCDK_ERR_NOT_SUPPORTED`，待自定义事件命名空间开放 |
 | `post_main` | 1.0 | 可用 | 投递到主线程 |
 
-v1 合计 **21 个 ABI 函数**。
+v1 合计 **21 个 ABI 函数**。其中 `mcdk.mcp` 的两个尚未实现，其余均已可用。
 
 ## 4. 事件登记
 
@@ -123,14 +123,18 @@ v1 合计 **21 个 ABI 函数**。
 | `mcdk.game.launch.before` | 1.0 | 可用 | `mcdk_ev_game_launch_before` | 是 |
 | `mcdk.game.launch.finish` | 1.0 | 可用 | `mcdk_ev_game_launch_finish` | 否 |
 | `mcdk.game.exit` | 1.0 | 可用 | `mcdk_ev_game_exit` | 否 |
-| `mcdk.log.line` | 1.0 | 计划 | `mcdk_ev_log_line` | 是 |
-| `mcdk.log.error` | 1.0 | 计划 | `mcdk_ev_log_line` | 是 |
-| `mcdk.ipc.client.connected` | 1.0 | 计划 | `mcdk_ev_ipc_client` | 否 |
-| `mcdk.ipc.client.disconnected` | 1.0 | 计划 | `mcdk_ev_ipc_client` | 否 |
+| `mcdk.log.line` | 1.0 | 可用 | `mcdk_ev_log_line` | 是 |
+| `mcdk.log.error` | 1.0 | 可用 | `mcdk_ev_log_line` | 是 |
+| `mcdk.ipc.client.connected` | 1.0 | 可用 | `mcdk_ev_ipc_client` | 否 |
+| `mcdk.ipc.client.disconnected` | 1.0 | 可用 | `mcdk_ev_ipc_client` | 否 |
 
-v1 合计 **9 个事件、6 个 payload 结构体**。其中 5 个已有发射点；`log.line` / `log.error` /
-`ipc.client.*` 四个的 payload 与 id 已定义、订阅可用，但**宿主尚未接上发射点**——
-它们分别要接进 `LogBuffer` 写入路径与 `DebugIPCServer` 的连接回调。
+v1 合计 **9 个事件、6 个 payload 结构体**，全部已接上发射点（位置见
+[08-host-integration.md](08-host-integration.md) §5）。
+
+含 `mcdk_str` 字段的 payload（`game_launch_before` / `game_launch_finish` / `log_line`）在
+`QUEUED` / `MAIN` 投递时必须**真正深拷贝**：字符串字节要跟结构体一起打包，memcpy
+结构体只会复制指针。各事件的 `mcdk_str` 字段偏移登记在 `event_bus.cpp` 的 `kTraits`
+表中，**新增带字符串的事件时必须同步填写**；漏填会被发射时的 payload 尺寸校验拦住。
 
 ### 4.2 已设计未实现
 

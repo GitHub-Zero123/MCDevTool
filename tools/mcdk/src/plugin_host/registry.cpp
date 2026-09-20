@@ -7,6 +7,9 @@
 #include <mcdk/plugin/abi/iface/console.h>
 #include <mcdk/plugin/abi/iface/core.h>
 #include <mcdk/plugin/abi/iface/events.h>
+#include <mcdk/plugin/abi/iface/game.h>
+#include <mcdk/plugin/abi/iface/info.h>
+#include <mcdk/plugin/abi/iface/log.h>
 
 namespace mcdk::plugin_host::detail {
 
@@ -139,6 +142,9 @@ namespace mcdk::plugin_host::detail {
     const mcdk_iface_console* consoleTable() noexcept;
     const mcdk_iface_core*    coreTable() noexcept;
     const mcdk_iface_events*  eventsTable() noexcept;
+    const mcdk_iface_game*    gameTable() noexcept;
+    const mcdk_iface_info*    infoTable() noexcept;
+    const mcdk_iface_log*     logTable() noexcept;
 
     const void* findInterfaceTable(const char* name, std::uint32_t version) noexcept {
         if (name == nullptr) {
@@ -153,6 +159,15 @@ namespace mcdk::plugin_host::detail {
         }
         if (std::strcmp(name, MCDK_IFACE_EVENTS_NAME) == 0 && version == MCDK_IFACE_EVENTS_VERSION) {
             return eventsTable();
+        }
+        if (std::strcmp(name, MCDK_IFACE_INFO_NAME) == 0 && version == MCDK_IFACE_INFO_VERSION) {
+            return infoTable();
+        }
+        if (std::strcmp(name, MCDK_IFACE_LOG_NAME) == 0 && version == MCDK_IFACE_LOG_VERSION) {
+            return logTable();
+        }
+        if (std::strcmp(name, MCDK_IFACE_GAME_NAME) == 0 && version == MCDK_IFACE_GAME_VERSION) {
+            return gameTable();
         }
         return nullptr;
     }

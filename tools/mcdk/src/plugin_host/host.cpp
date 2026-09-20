@@ -4,6 +4,7 @@
 #include <mcdk/plugin_host/events.hpp>
 #include <mcdk/plugin_host/guard.hpp>
 
+#include "images.hpp"
 #include "registry.hpp"
 
 #include <cstdlib>
@@ -139,6 +140,16 @@ namespace mcdk::plugin_host {
             if (declarations.empty()) {
                 return;
             }
+#if !MCDK_ENABLE_PLUGINS
+            // 开关关闭时不能只把发射点去掉而照常加载：那会得到一个插件跑着但
+            // 一个事件也收不到的半残状态，比干脆不加载难排查得多。
+            report(
+                "插件系统在本次构建中已关闭（MCDK_ENABLE_PLUGINS=OFF），"
+                    + std::to_string(declarations.size()) + " 条声明全部跳过",
+                ConsoleColor::Yellow
+            );
+            return;
+#else
             std::size_t loaded   = 0;
             std::size_t disabled = 0;
             for (const auto& declaration : declarations) {
@@ -159,6 +170,7 @@ namespace mcdk::plugin_host {
                 "已加载 " + std::to_string(loaded) + " 个插件，" + std::to_string(disabled) + " 个已禁用",
                 loaded > 0 ? ConsoleColor::Green : ConsoleColor::DarkGray
             );
+#endif
         }
 
         void advance(mcdk_stage stage) {
@@ -230,7 +242,14 @@ namespace mcdk::plugin_host {
             if (record.desc.on_unload != nullptr) {
                 record.desc.on_unload(record.desc.user);
             }
-            // 5. 回收其遗留的宿主资源（图像句柄等）—— v1 尚无此类资源
+            // 5. 回收其遗留的宿主资源。兑现 05-interfaces.md §6.2：不能因为插件忘了
+            //    release 就让内存留到进程结束，但也不能默默收掉——那是插件的 bug，要说出来。
+            if (const auto leaked = detail::releaseAllImages(handle); leaked > 0) {
+                report(
+                    record.id + " 遗留了 " + std::to_string(leaked) + " 个未释放的图像句柄，已代为回收",
+                    ConsoleColor::Yellow
+                );
+            }
             // 6. 作废句柄。此后该插件的任何调用都返回 MCDK_ERR_INVALID_HANDLE 而非崩溃。
             detail::registry().retire(handle);
 

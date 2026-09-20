@@ -156,12 +156,12 @@ enum { MCDK_IMAGE_JPEG = 0 };
 typedef struct mcdk_capture_options {
     uint32_t struct_size;
     uint32_t max_height;    /* 等比缩放高度上限；0 = 宿主默认（480） */
-    int32_t  region_x;
-    int32_t  region_y;
-    int32_t  region_w;      /* region_w 或 region_h 为 0 时捕获整个客户区 */
-    int32_t  region_h;
-    uint32_t jpeg_quality;  /* 1..100；0 = 宿主默认 */
-    uint32_t _reserved;
+    /* 客户区内的截取范围，归一化到 0.0~1.0，与 mc_input 同构。
+       四个值全为 0 表示整块客户区。 */
+    double region_left;
+    double region_top;
+    double region_right;
+    double region_bottom;
 } mcdk_capture_options;
 
 typedef struct mcdk_image_info {
@@ -227,6 +227,13 @@ if (game->capture_window(self, &opts, &img) == MCDK_OK) {
 
 采用宿主持有句柄而非共享分配器，是为了让边界上不出现任何分配器穿越（见 [02-abi-contract.md](02-abi-contract.md) §6）。`capacity` 小于 `byte_size` 时 `image_copy` 不写入任何数据，回填所需长度并返回 `MCDK_ERR_BUFFER_TOO_SMALL`。
 
+SDK 把这四步收成了一个 `ctx.game().capture()`，直接返回 `CapturedImage`（含 `std::vector<std::uint8_t>`），句柄在函数内部就释放干净了——用户没有机会忘掉 `image_release`。
+
+#### 实现时对本节的两处修正
+
+- **截取范围改成归一化 `double`。** 原本写的是像素的 `region_x/y/w/h`，但插件拿不到客户区尺寸（它既不持有窗口句柄，也不该持有），那组参数根本无法被正确使用。底层 `MCDevTool::Style::CaptureRegion` 本来就是归一化的，与 `mc_input` 同构。
+- **去掉了 `jpeg_quality`。** 底层 `CaptureOptions` 没有这个旋钮，留一个恒不生效的字段是陷阱。结构体带 `struct_size`，将来真支持了再追加即可。
+
 **规范：`image_release` 必须被调用。** 宿主**应该**在 `MCDK_STAGE_SHUTDOWN` 时清理该插件遗留的全部图像句柄并就每个泄漏项打印警告——不能因为插件忘记 release 就让内存留到进程结束。
 
 非 Windows 平台上 `capture_window` 返回 `MCDK_ERR_NOT_SUPPORTED`。
@@ -268,6 +275,8 @@ typedef struct mcdk_iface_log {
 ```
 
 索引语义与现有 MCP 工具 `get_latest_logs` / `get_log_range` 完全一致：**索引 0 是最新一条**，1 是次新，以此类推。底层是现有的 `LogBuffer`（stdout 与 stderr 各一份环形缓冲）。
+
+**`timestamp_ms` 在 v1 恒为 0。** `LogBuffer` 只存文本，不存逐条时间戳，而为了这个字段去改现有缓冲区的存储形态不值得。字段保留是因为它将来会有值，而结构体布局一旦发布就只能追加。**需要时间戳的插件应订阅 `mcdk.log.line`**——那条路径上的 payload 带真实时间戳。日志行文本本身也带着游戏输出的时间。
 
 ### 7.1 sink 回调约束（规范）
 

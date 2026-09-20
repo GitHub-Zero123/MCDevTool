@@ -44,6 +44,7 @@
 #include <mcdk/particle_reload_support.hpp>
 #include <mcdk/performance/profiler_runtime_owner.hpp>
 #include <mcdk/plugin_host/events.hpp>
+#include <mcdk/plugin_host/session_binding.hpp>
 #include <mcdk/plugin_host/host.hpp>
 #include <mcdk/performance/profiler_service_factory.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
@@ -178,6 +179,34 @@ void mcdk::launchGameExe(
     auto& particleReloadTask = session.particleReloadTask();
     auto& styleProcessor     = session.styleProcessor();
     auto& hostBridgeTask     = session.hostBridgeTask();
+
+    // 把运行期子系统接给插件接口层。尽早做：插件在 mcdk.mcp.register.before
+    // 里就可能要读 mcdk.info，而那个事件就在几十行之后。此刻游戏进程还没创建，
+    // game_pid 为 0——这正是该字段的语义，不需要等到进程起来再绑。
+    {
+        mcdk::plugin_host::SessionBinding binding;
+        binding.facts.mcdkPid    = GetCurrentProcessId();
+        binding.facts.mcpPort    = static_cast<std::uint16_t>(mcpServerConfig.serverPort);
+        binding.facts.mcpEnabled = mcpServerConfig.enabled;
+        binding.facts.mcpIp      = mcpServerConfig.serverIp;
+        binding.facts.gameExePath      = MCDevTool::Utils::pathToGenericUtf8(exePath);
+        binding.facts.projectRoot      = MCDevTool::Utils::pathToGenericUtf8(std::filesystem::current_path());
+        binding.facts.worldName        = userConfig.world.name;
+        binding.facts.worldFolderName  = userConfig.world.folderName;
+        binding.facts.worldRuntimePath = MCDevTool::Utils::pathToGenericUtf8(
+            MCDevTool::getMinecraftWorldsPath() / std::filesystem::u8path(userConfig.world.folderName)
+        );
+        if (const auto worldSource = mcdk::resolveWorldSourcePath(userConfig.world.source)) {
+            binding.facts.worldSourcePath = MCDevTool::Utils::pathToGenericUtf8(*worldSource);
+        }
+        binding.gamePid         = profilerGamePid;
+        binding.ipcServer       = ipcServer;
+        binding.logBuffer       = logBuffer;
+        binding.errBuffer       = errBuffer;
+        binding.mcpToolRegistry = session.mcpToolRegistry();
+        mcdk::plugin_host::bindSession(std::move(binding));
+    }
+
     if (mcpServerConfig.enabled) {
         // 若启用MCP服务器将自动启用IPC调试功能
         enableIPC     = true;
@@ -694,6 +723,18 @@ void mcdk::launchGameExe(
     hostBridgeTask.setOutputCallback(printColoredAtomic);
 
     if (enableIPC) {
+        // 插件侧的 mcdk.ipc.client.*。DebugIPCServer 在 mcdevtool 层，不认识插件系统，
+        // 所以由它提供钩子、这里负责发事件。回调跑在 accept / 客户端读线程上。
+        ipcServer->setClientCountChangedCallback([](std::size_t clientCount, bool connected) {
+            const auto eventId = connected ? mcdk::plugin_host::EventId::IpcClientConnected
+                                           : mcdk::plugin_host::EventId::IpcClientDisconnected;
+            MCDK_EMIT(eventId, [clientCount] {
+                mcdk_ev_ipc_client payload{};
+                payload.struct_size  = static_cast<std::uint32_t>(sizeof(payload));
+                payload.client_count = static_cast<std::uint32_t>(clientCount);
+                return payload;
+            });
+        });
         ipcServer->start();
         const int port = ipcServer->getPort();
         printColoredAtomic("[MCDK] IPC Bridge listening on port " + std::to_string(port), ConsoleColor::Green);
@@ -1029,6 +1070,9 @@ void mcdk::launchGameExe(
     // 可能还要用到它们。终结顺序见 docs/plugin-system/03-abi-reference.md §5。
     mcdk::plugin_host::instance().advance(MCDK_STAGE_SHUTDOWN);
     mcdk::plugin_host::instance().shutdown();
+
+    // 插件已经全部终结，把运行期子系统从接口层解绑，释放那几个 shared_ptr。
+    mcdk::plugin_host::unbindSession();
 
     // 按依赖关系逆序停止全部子系统，顺序约束见 mcdk::runtime::Session::shutdown 的实现
     session.shutdown(minecraftExitCode);

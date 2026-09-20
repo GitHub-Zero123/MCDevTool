@@ -108,6 +108,12 @@ namespace mcdk::plugin_host {
 
 } // namespace mcdk::plugin_host
 
+#ifndef MCDK_ENABLE_PLUGINS
+#define MCDK_ENABLE_PLUGINS 1
+#endif
+
+#if MCDK_ENABLE_PLUGINS
+
 // 发射点的唯一写法。禁止手写 if + dispatch —— 手写会逐渐分化，几年后没人
 // 知道哪些发射点还是安全的（12-performance.md §2）。
 #define MCDK_EMIT(eventId, makePayload)                                                                                \
@@ -121,3 +127,12 @@ namespace mcdk::plugin_host {
 #define MCDK_EMIT_VETOABLE(eventId, makePayload)                                                                       \
     (::mcdk::plugin_host::hasSubscribers(eventId) ? ::mcdk::plugin_host::dispatchVetoable((eventId), (makePayload))    \
                                                   : false)
+
+#else
+
+// 插件系统在本次构建中被关闭。发射点必须在预处理阶段就完全消失，
+// 连订阅计数的那一次原子读也不留——这组宏就是 12-performance.md §6 里 A 组的定义。
+#define MCDK_EMIT(eventId, makePayload) ((void)0)
+#define MCDK_EMIT_VETOABLE(eventId, makePayload) (false)
+
+#endif

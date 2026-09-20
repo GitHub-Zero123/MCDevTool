@@ -95,8 +95,8 @@ main.cpp
 | `mcdk.world.deploy.*` | `deployWorldSource()` / `createUserLevel()` 前后 |
 | `mcdk.game.launch.*` | `launchGameExe()` 中创建游戏进程前后 |
 | `mcdk.game.exit` | 游戏进程监视线程检出退出时 |
-| `mcdk.log.line` / `.error` | `LogBuffer` 写入路径 |
-| `mcdk.ipc.client.*` | `DebugIPCServer` 客户端连接回调 |
+| `mcdk.log.line` / `.error` | `createGameLogHandlers()` 产出的两个行处理器入口 |
+| `mcdk.ipc.client.*` | `DebugIPCServer::setClientCountChangedCallback` 的回调 |
 | `mcdk.hotreload.*` | `ConsoleWatcherTask::onFileChanged` / `onHotReloadTriggered` |
 | `mcdk.mcp.tool_call.*` | `McpToolRegistry` 分发入口 |
 | `mcdk.host_bridge.connected` | `HostBridgeTask` 连接建立回调 |
@@ -110,6 +110,19 @@ main.cpp
 **该循环只能有一条。** 日志走 Safaia 接收器还是走 stdout/stderr 管道，只影响 tick 里额外
 做什么，不得为此分成两条等待循环——一旦分叉，将来新增的日志通道就会多出一条忘了 pump
 的分支，表现为“某些配置下插件的主线程回调永远不触发”这种极难定位的问题。
+
+### 5.2 两个发射点的位置说明
+
+**日志事件不在 `LogBuffer::add` 上。** 看上去那里才是「日志写入路径」，但 `handlers.output`
+对带 `[INFO][Developer]` / `SUC` / `ERROR` / `WARN` / `DEBUG` 的行都是打完就 `return`，根本不进
+`LogBuffer`。挂在 `add` 上的话插件会漏掉绝大多数行。所以发射点在两个行处理器的**入口**，
+语义是「游戏输出了一行」而非「某行进了缓冲区」。例外是 ` [INFO][Engine] ` 噪声行：mcdk 自己
+就丢弃它们，事件也不发。
+
+**IPC 事件要经过一层钩子。** `DebugIPCServer` 在 `mcdevtool` 库里，而 `plugin_host` 在
+`mcdk_runtime`，后者依赖前者——直接 include 会形成环依赖。因此 `DebugIPCServer` 只暴露
+`setClientCountChangedCallback`，由 `game_process.cpp`（在 `mcdk_runtime` 层）负责发事件。
+这也是§6 那条「低层不含业务逻辑」规约在发射点上的对应做法。
 
 ## 6. shim 层规约
 
