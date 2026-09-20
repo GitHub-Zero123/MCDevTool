@@ -56,5 +56,7 @@ if(MCDK_PLUGIN_SDK_BUILD_CHECKS)
 endif()
 
 if(MCDK_PLUGIN_SDK_BUILD_EXAMPLES)
+    add_subdirectory(examples/00-abi-conformance)
     add_subdirectory(examples/01-hello)
+    add_subdirectory(examples/02-loader)
 endif()

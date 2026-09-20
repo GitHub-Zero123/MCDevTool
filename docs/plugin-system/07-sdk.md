@@ -77,9 +77,10 @@ MCDK_PLUGIN(MyPlugin, "com.example.my-plugin", "1.0.0")
 ## 3. `MCDK_PLUGIN` 宏的职责
 
 1. 生成 `mcdk_plugin_entry` 导出函数；
-2. 填充 `mcdk_plugin_desc`（id、version、ABI 版本由 SDK 编译期写死）；
-3. 为每个虚函数生成 `noexcept` 静态蹦床，并装上异常屏障（见 [02-abi-contract.md](02-abi-contract.md) §4.2）；
-4. 缓存各接口表指针并做 `struct_size` 能力探测。
+2. 为本次加载 `new` 一个独占实例（`Context` + 插件对象 + 身份），指针放进 `mcdk_plugin_desc::user`，`on_unload` 时释放——**禁止**用静态单例，理由见 §5；
+3. 填充 `mcdk_plugin_desc`：ABI 版本编译期写死，id / name / version 取自宏参数，但会被 `identity()` 的非空返回值覆盖；
+4. 为每个虚函数生成 `noexcept` 静态蹦床，并装上异常屏障（见 [02-abi-contract.md](02-abi-contract.md) §4.2）；
+5. 缓存各接口表指针并做 `struct_size` 能力探测。
 
 这正是 godot-cpp 中 `GDCLASS` 宏的做法——其生成的 `notification_bind(GDExtensionClassInstancePtr p_instance, ...)` 内部 `reinterpret_cast` 回 C++ 对象再调虚函数，边界上只剩 `void*` 与函数指针。
 
@@ -125,12 +126,49 @@ mcdk_add_plugin(my_plugin
   或执行： mcdk plugin add D:/dev/my-plugin/build/plugins/my-plugin
 ```
 
-## 5. 示例工程
+## 5. 加载器模式：一个 DLL 充当其他插件的宿主
+
+这是 `config` 字段真正的用途，也是多实例与动态身份两项设计的由来。
+
+原生插件天然不会被重复加载，真要那么做也有别的办法。但**绑定别的语言**不一样：一个 Python / Lua 宿主 DLL 只有一份，却要承载任意多个脚本。做法是把同一个 DLL 在 `plugins` 数组里声明多次，每条 `config` 指向不同脚本：
+
+```jsonc
+"plugins": [
+    { "enable": true, "path": "./plugins/py-host/py_host.dll",
+      "id": "com.me.py.hud",
+      "config": { "id": "com.me.py.hud",   "name": "HUD",   "script": "hud/main.py" } },
+    { "enable": true, "path": "./plugins/py-host/py_host.dll",
+      "id": "com.me.py.timer",
+      "config": { "id": "com.me.py.timer", "name": "Timer", "script": "timer/main.py" } }
+]
+```
+
+要让这条路成立，两件事必须同时为真，缺一不可：
+
+**其一，每条声明必须有独立实例。** SDK **禁止**把插件状态放在静态变量里——那样第二次加载会把第一次的 `Context` 与 `config` 整个覆盖掉。实例由 `MCDK_PLUGIN` 宏在入口里 `new` 出来，指针放进 `mcdk_plugin_desc::user` 交给宿主，宿主原样回传给每个回调，`on_unload` 里释放。这正是 `user` 字段存在的意义。
+
+**其二，每个实例必须能报出自己的身份。** 重写 `Plugin::identity()`，它在任何阶段回调之前被调用，此时 `config` 已可读：
+
+```cpp
+mcdk::PluginIdentity identity(mcdk::Context& context) override {
+    const auto script = parseScript(context.configJson());
+    return {.id = "com.me.py." + script, .name = script};   // version 留空则沿用宏里的值
+}
+```
+
+不这么做，五个脚本都会报出宿主 DLL 编译期写死的那个 id，后果是：日志分不清是哪个脚本打的、声明里的 `id` 防替换校验形同虚设、将来的重名检测与依赖解析一并失效。
+
+**失败是按实例隔离的。** 某个脚本加载不起来，只有那一条声明对应的实例在 REGISTER 阶段失败并被卸载，同一个 DLL 的其余实例照常运行。
+
+完整可运行的示例见 `sdk/plugin-sdk/examples/02-loader/`，回归测试见 `tests/plugin_loader_pattern_test.cpp`。
+
+## 6. 示例工程
 
 | 目录 | 用途 |
 | --- | --- |
 | `examples/00-abi-conformance/` | ABI 一致性测试插件，见 [09-compatibility.md](09-compatibility.md) §2 |
-| `examples/01-hello/` | 最小插件：注册、打日志、订阅一个事件 |
-| `examples/02-mcp-tool/` | 注册一个 MCP 工具并调用游戏内 Python |
-| `examples/03-hotreload/` | 注册自定义 watcher |
+| `examples/01-hello/` | 最小插件：注册、打日志、读 config |
+| `examples/02-loader/` | 加载器模式：一个 DLL 充当其他插件的宿主，见 §5 |
+| `examples/03-mcp-tool/` | 注册一个 MCP 工具并调用游戏内 Python（待 `mcdk.mcp` 开放） |
+| `examples/04-hotreload/` | 注册自定义 watcher（待 `mcdk.hotreload` 开放） |
 | `templates/plugin-template/` | 供用户复制的起步工程，含 `CMakeLists.txt` 与 `plugin.json` |

@@ -1,0 +1,166 @@
+name: Plugin ABI
+
+# 插件 ABI 的兼容性防线。
+#
+# 契约见 docs/plugin-system/02-abi-contract.md §1：插件必须能由不同编译器、
+# 不同标准库、不同 CRT 构建，并被同一个宿主二进制加载。这个 workflow 是该
+# 契约的唯一客观检验——没有它，契约只是一句愿望。
+
+on:
+  push:
+    paths:
+      - "sdk/plugin-sdk/**"
+      - "tools/mcdk/src/plugin_host/**"
+      - "tools/mcdk/include/mcdk/plugin_host/**"
+      - ".github/workflows/plugin-abi.yml"
+  pull_request:
+    paths:
+      - "sdk/plugin-sdk/**"
+      - "tools/mcdk/src/plugin_host/**"
+      - "tools/mcdk/include/mcdk/plugin_host/**"
+      - ".github/workflows/plugin-abi.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------
+  # 一、宿主 + 一致性套件（MSVC，宿主的标准构建）
+  #
+  # 跑 09-compatibility.md §2 的全部断言：双向异常屏障、失败语义、多实例。
+  # 两个构建期闸门（mcdk_abi_c99_check / mcdk_abi_layout_check）随默认构建
+  # 一起跑，ABI 被破坏时在这里就失败。
+  # ------------------------------------------------------------------
+  host-and-conformance:
+    name: host + conformance (msvc)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DMC_DEV_TOOL_BUILD_TEST=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Upload the reference plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-msvc-mt
+          path: build/plugins/**/*.dll
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # 二、插件侧的编译器矩阵
+  #
+  # 只构建 SDK 与示例插件——插件作者的工具链与宿主无关，这正是要验证的。
+  # 每种组合产出一个 DLL，供第三步统一加载。
+  # ------------------------------------------------------------------
+  plugin-toolchains:
+    name: plugin (${{ matrix.name }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 与宿主同 CRT
+          - name: msvc-mt
+            preset_args: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          # 与宿主不同 CRT：允许，因为边界上没有分配器穿越（02 §6）
+          - name: msvc-md
+            preset_args: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+          - name: clang-cl-md
+            preset_args: >
+              -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+              -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+          # 完全不同的标准库（libstdc++）与异常模型
+          - name: mingw-gcc
+            preset_args: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+          # 关闭异常：屏障退化为直通，ABI 签名必须完全不变（02 §4.4）
+          - name: msvc-md-noexcept
+            preset_args: >
+              -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+              -DCMAKE_CXX_FLAGS=/EHs-c-
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SDK only
+        working-directory: sdk/plugin-sdk
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DMCDK_PLUGIN_SDK_BUILD_CHECKS=ON
+          ${{ matrix.preset_args }}
+
+      - name: Build
+        working-directory: sdk/plugin-sdk
+        run: cmake --build build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.name }}
+          path: sdk/plugin-sdk/build/plugins/**/*.dll
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # 三、同时加载
+  #
+  # 关键的一步：分别加载只能证明各自能跑，同时加载才能暴露 CRT 冲突、
+  # 符号插入、分配器错配这类真实问题（09-compatibility.md §1）。
+  # ------------------------------------------------------------------
+  load-all-together:
+    name: load every toolchain's plugin at once
+    runs-on: windows-latest
+    needs: [host-and-conformance, plugin-toolchains]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-*
+          path: artifacts
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DMC_DEV_TOOL_BUILD_TEST=ON
+
+      - name: Build
+        run: cmake --build build
+
+      # TODO 这一步需要一个吃外部插件路径列表的 harness。
+      # 现有的 plugin_abi_conformance_test 把路径写死在编译期宏里，
+      # 只能加载自己构建出来的那一个。
+      # 待办：让它改从环境变量 MCDEV_TEST_PLUGIN_PATHS 读一组分号分隔的路径，
+      # 本步骤才真正生效。在那之前这里只验证产物齐全。
+      - name: Verify every toolchain produced a plugin
+        shell: pwsh
+        run: |
+          $expected = @(
+            'plugin-msvc-mt', 'plugin-msvc-md', 'plugin-clang-cl-md',
+            'plugin-mingw-gcc', 'plugin-msvc-md-noexcept'
+          )
+          $missing = @()
+          foreach ($name in $expected) {
+            if (-not (Get-ChildItem -Path "artifacts/$name" -Filter *.dll -Recurse -ErrorAction SilentlyContinue)) {
+              $missing += $name
+            }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Error "missing plugin artifacts: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "all toolchains produced a plugin"

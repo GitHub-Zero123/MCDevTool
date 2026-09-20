@@ -92,3 +92,27 @@ if(TARGET mcdk-api)
     add_executable(mcdk_api_test mcdk_api_test.c)
     target_link_libraries(mcdk_api_test PRIVATE mcdk-api)
 endif()
+
+# ABI 一致性套件：异常屏障双向验证 + 多实例回归。
+if(TARGET abi_conformance_plugin)
+    add_executable(plugin_abi_conformance_test plugin_abi_conformance_test.cpp)
+    target_compile_features(plugin_abi_conformance_test PRIVATE cxx_std_23)
+    target_link_libraries(plugin_abi_conformance_test PRIVATE mcdk_runtime)
+    add_dependencies(plugin_abi_conformance_test abi_conformance_plugin)
+    target_compile_definitions(plugin_abi_conformance_test PRIVATE
+        MCDEV_TEST_CONFORMANCE_PLUGIN="$<TARGET_FILE:abi_conformance_plugin>"
+    )
+    add_test(NAME plugin-abi-conformance COMMAND plugin_abi_conformance_test)
+endif()
+
+# 加载器模式：一个 DLL 充当其他插件的宿主（多实例 + 动态身份）。
+if(TARGET script_host_plugin)
+    add_executable(plugin_loader_pattern_test plugin_loader_pattern_test.cpp)
+    target_compile_features(plugin_loader_pattern_test PRIVATE cxx_std_23)
+    target_link_libraries(plugin_loader_pattern_test PRIVATE mcdk_runtime)
+    add_dependencies(plugin_loader_pattern_test script_host_plugin)
+    target_compile_definitions(plugin_loader_pattern_test PRIVATE
+        MCDEV_TEST_LOADER_PLUGIN="$<TARGET_FILE:script_host_plugin>"
+    )
+    add_test(NAME plugin-loader-pattern COMMAND plugin_loader_pattern_test)
+endif()

@@ -17,6 +17,13 @@
 
 namespace mcdk {
 
+    // 插件向宿主报告的身份。任一字段留空表示沿用 MCDK_PLUGIN 宏里写死的值。
+    struct PluginIdentity {
+        std::string id;
+        std::string name;
+        std::string version;
+    };
+
     // 插件基类。全部回调都有空实现，只重写用得上的那些。
     //
     // 这些是正常的 C++ 虚函数；SDK 的 MCDK_PLUGIN 宏会为它们生成 noexcept 的
@@ -28,6 +35,26 @@ namespace mcdk {
         virtual ~Plugin()                = default;
         Plugin(const Plugin&)            = delete;
         Plugin& operator=(const Plugin&) = delete;
+
+        // 在任何阶段回调之前调用，此时 Context 的 config 已可读。
+        // 返回的非空字段会覆盖 MCDK_PLUGIN 宏里写死的对应值。
+        //
+        // 这是「一个 DLL 充当其他插件的加载器」的关键。一个 Python / Lua 绑定
+        // 宿主在 .mcdev.json 里被声明多次、每条 config 指向不同脚本，此时每个
+        // 实例必须报出属于那个脚本的身份——否则五个脚本在宿主眼里是同一个
+        // 插件：日志分不清是谁打的，声明里的 id 防替换校验失效，将来的重名
+        // 检测与依赖解析也一并失效。
+        //
+        //   PluginIdentity identity(Context& ctx) override {
+        //       const auto script = parseScriptName(ctx.configJson());
+        //       return {.id = "com.me.py." + script, .name = script, .version = "1.0.0"};
+        //   }
+        //
+        // 普通插件不必重写：身份是编译期固定的。
+        virtual PluginIdentity identity(Context& context) {
+            (void)context;
+            return {};
+        }
 
         // 只能注册：事件、MCP 工具。
         virtual void onRegister(Context& context) { (void)context; }
@@ -43,39 +70,55 @@ namespace mcdk {
 
     namespace detail {
 
-        // 每个插件类型一份的静态状态。插件是单例，宿主一个进程只加载一次。
+        // 一次加载对应的全部插件侧状态。
+        //
+        // 刻意不用静态单例：宿主允许同一个动态库在 .mcdev.json 里被声明多次、
+        // 各带不同的 config（「可传参式插件」）。此时入口会被调用多次，每次都
+        // 必须得到自己的 Context 与插件对象，否则后一次会把前一次覆盖掉。
+        //
+        // 实例指针放进 mcdk_plugin_desc::user，由宿主原样回传给每个回调——
+        // 这正是该字段存在的意义。所有权随之交给宿主，在 on_unload 中释放。
+        template <class PluginT>
+        struct PluginInstance {
+            Context context;
+            PluginT plugin;
+            // 动态身份的字符串必须活在实例里：mcdk_plugin_desc 中的 mcdk_str
+            // 指向它们，宿主在入口返回后立刻深拷贝，而实例此时已交给宿主。
+            PluginIdentity identity;
+        };
+
         template <class PluginT>
         struct PluginBootstrap {
-            static inline Context                  context;
-            static inline std::unique_ptr<PluginT> instance;
+            using Instance = PluginInstance<PluginT>;
 
-            static mcdk_status MCDK_CALL onStage(void* /*user*/, mcdk_stage stage) noexcept {
+            static mcdk_status MCDK_CALL onStage(void* user, mcdk_stage stage) noexcept {
                 // 出错时返回 MCDK_ERR_PLUGIN_EXCEPTION，宿主据此判定该插件在本阶段
                 // 失败。异常本身在 guard 内被吃掉，绝不穿越边界。
                 return guard(
-                    [stage]() -> mcdk_status {
-                        if (!instance) {
+                    [user, stage]() -> mcdk_status {
+                        auto* instance = static_cast<Instance*>(user);
+                        if (instance == nullptr) {
                             return MCDK_ERR_INVALID_HANDLE;
                         }
                         switch (stage) {
-                    case MCDK_STAGE_REGISTER:
-                        instance->onRegister(context);
-                        break;
-                    case MCDK_STAGE_CONFIG:
-                        instance->onConfig(context);
-                        break;
-                    case MCDK_STAGE_WORLD:
-                        instance->onWorld(context);
-                        break;
-                    case MCDK_STAGE_RUNTIME:
-                        instance->onRuntime(context);
-                        break;
-                    case MCDK_STAGE_SHUTDOWN:
-                        instance->onShutdown(context);
-                        break;
-                    default:
-                        // 新宿主可能推进旧插件不认识的阶段，忽略即可，不是错误。
-                        break;
+                        case MCDK_STAGE_REGISTER:
+                            instance->plugin.onRegister(instance->context);
+                            break;
+                        case MCDK_STAGE_CONFIG:
+                            instance->plugin.onConfig(instance->context);
+                            break;
+                        case MCDK_STAGE_WORLD:
+                            instance->plugin.onWorld(instance->context);
+                            break;
+                        case MCDK_STAGE_RUNTIME:
+                            instance->plugin.onRuntime(instance->context);
+                            break;
+                        case MCDK_STAGE_SHUTDOWN:
+                            instance->plugin.onShutdown(instance->context);
+                            break;
+                        default:
+                            // 新宿主可能推进旧插件不认识的阶段，忽略即可，不是错误。
+                            break;
                         }
                         return MCDK_OK;
                     },
@@ -83,8 +126,10 @@ namespace mcdk {
                 );
             }
 
-            static void MCDK_CALL onUnload(void* /*user*/) noexcept {
-                guardVoid([] { instance.reset(); });
+            static void MCDK_CALL onUnload(void* user) noexcept {
+                // 实例是在插件自己的堆上 new 出来的，也在这里 delete——
+                // 跨界的只有这个不透明指针，分配器不穿越边界（02 §6）。
+                guardVoid([user] { delete static_cast<Instance*>(user); });
             }
 
             // 入口函数的实际实现。
@@ -117,21 +162,32 @@ namespace mcdk {
                         return;
                     }
 
-                    context.bindHost(*host);
-                    instance = std::make_unique<PluginT>();
+                    // 本次加载独占的状态。构造期间抛异常由外层 guardVoid 吃掉，
+                    // unique_ptr 保证此时不泄漏。
+                    auto instance = std::make_unique<Instance>();
+                    instance->context.bindHost(*host);
+                    // config 此时已就绪，插件可以据此报出动态身份（加载器场景）。
+                    instance->identity = instance->plugin.identity(instance->context);
+
+                    // 留空的字段沿用 MCDK_PLUGIN 宏里的静态字面量。
+                    const auto pick = [](const std::string& dynamic, const char* fallback) -> std::string_view {
+                        return dynamic.empty() ? std::string_view(fallback) : std::string_view(dynamic);
+                    };
 
                     *out             = mcdk_plugin_desc{};
                     out->struct_size = static_cast<uint32_t>(sizeof(mcdk_plugin_desc));
                     out->abi_major   = MCDK_ABI_VERSION_MAJOR;
                     out->abi_minor   = MCDK_ABI_VERSION_MINOR;
                     out->min_stage   = MCDK_STAGE_REGISTER;
-                    // 这些都是静态存储期的字面量，宿主可以安全地长期持有。
-                    out->id        = toAbi(std::string_view(id));
-                    out->name      = toAbi(std::string_view(name));
-                    out->version   = toAbi(std::string_view(version));
-                    out->user      = nullptr;
+                    // 指向静态字面量或实例内的字符串，两者都活过入口返回，
+                    // 宿主随后立即深拷贝。
+                    out->id        = toAbi(pick(instance->identity.id, id));
+                    out->name      = toAbi(pick(instance->identity.name, name));
+                    out->version   = toAbi(pick(instance->identity.version, version));
                     out->on_stage  = &onStage;
                     out->on_unload = &onUnload;
+                    // 填完描述才移交所有权：前面任何一步失败都不会留下孤儿实例。
+                    out->user = instance.release();
 
                     ok = MCDK_TRUE;
                 });

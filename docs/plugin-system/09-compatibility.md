@@ -10,7 +10,21 @@ CI 用 [02-abi-contract.md](02-abi-contract.md) §1 表中的每一种工具链�
 
 "同时加载"是关键：分别加载只能证明各自能跑，同时加载才能暴露 CRT 冲突、符号插入、分配器错配这类真实问题。
 
+> 实现状态：`.github/workflows/plugin-abi.yml` 已就位，五种工具链（MSVC `/MT`、
+> MSVC `/MD`、clang-cl、MinGW GCC、`/MD` + 关闭异常）各自构建插件并上传产物。
+>
+> **但"同时加载"那一步还是占位的**，只校验产物齐全。原因：
+> `plugin_abi_conformance_test` 把插件路径写死在编译期宏里，只能加载自己构建的
+> 那一个。需要先让它改从环境变量 `MCDEV_TEST_PLUGIN_PATHS` 读一组分号分隔的
+> 路径，这一步才真正生效。在那之前，本章最有价值的那条验证并未真正运行。
+
 ## 2. 一致性套件内容
+
+> 已实现：`sdk/plugin-sdk/examples/00-abi-conformance`（插件）+ `tests/plugin_abi_conformance_test.cpp`（宿主侧断言），ctest 名 `plugin-abi-conformance`。
+>
+> 插件的行为完全由它那条声明的 `config` 决定（在哪个阶段抛、抛什么类型），因此
+> **同一个 DLL 被声明五次即可覆盖全部屏障路径**，顺带也成了「可传参式插件必须是
+> 多实例」的回归测试。
 
 `examples/00-abi-conformance` 插件必须覆盖：
 
