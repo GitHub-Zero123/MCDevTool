@@ -6,7 +6,7 @@
 
 | 阶段 | 内容 | 产出判据 |
 | --- | --- | --- |
-| M0 | 前置重构 A（`RuntimeSession`） | `launchGameExe` 拆分完成，现有测试全绿 |
+| M0 | 前置重构 A（`mcdk::runtime::Session`） | `launchGameExe` 拆分完成，现有测试全绿 |
 | M1 | 前置重构 B（`McpToolRegistry`） | 内置 MCP 工具全部走注册表 |
 | M2 | 冻结 `abi/core.h` + `abi/entry.h`，打通 loader | 只带 `mcdk.console`，端到端：读 `.mcdev.json` 声明 → 校验 → 入口 → `on_stage` → 卸载 |
 | M3 | 异常屏障双向完成 + [09](09-compatibility.md) §1/§2 CI 矩阵 | 全部工具链组合通过一致性套件 |

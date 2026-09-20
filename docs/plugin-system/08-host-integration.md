@@ -2,11 +2,13 @@
 
 上级索引：[README.md](README.md)
 
-## 1. 前置 A：抽出 `RuntimeSession`
+## 1. 前置 A：抽出 `mcdk::runtime::Session`
+
+> 已完成。实现位于 `tools/mcdk/include/mcdk/runtime/session.hpp` 与 `tools/mcdk/src/runtime/session.cpp`。
 
 `launchGameExe()` 现有 979 行，把 `ipcServer`、`logBuffer`、`errBuffer`、`mcpServer`、5 个 watcher task、`hostBridgeTask`、`profilerRuntime` 全部作为局部变量持有。接口 shim 无法访问这些对象，因而无从实现 `mcdk.game` 等接口。
 
-**必须**先抽出 `RuntimeSession`，持有上述全部运行期对象并提供访问器；`launchGameExe` 改为构造 `RuntimeSession` 并驱动它。接口 shim 一律通过 `host::sessionOf(self)` 取得会话再转发。
+**必须**先抽出 `mcdk::runtime::Session`，持有上述全部运行期对象并提供访问器；`launchGameExe` 改为构造 `mcdk::runtime::Session` 并驱动它。接口 shim 一律通过 `host::sessionOf(self)` 取得会话再转发。
 
 不做这一步，后续每新增一个接口都要修改 `launchGameExe`。
 
@@ -20,11 +22,11 @@
 | 二 | `ipcServer`、`profilerRuntime`、`mcpServer` | 批一 |
 | 三 | 5 个 watcher task、`hostBridgeTask`、`styleProcessor` | 批一、批二、`UserConfig` |
 
-**第一个 PR 只做纯机械替换**：`RuntimeSession` 仅持有对象并提供访问器，不搬任何逻辑，`launchGameExe` 的函数体结构保持原样，局部变量换成 `session.xxx()`。这样 diff 全是改名，review 成本低，也不会掩盖行为变化。
+**第一个 PR 只做纯机械替换**：`mcdk::runtime::Session` 仅持有对象并提供访问器，不搬任何逻辑，`launchGameExe` 的函数体结构保持原样，局部变量换成 `session.xxx()`。这样 diff 全是改名，review 成本低，也不会掩盖行为变化。
 
-逻辑搬迁（例如把 `mcpServer` 的那一大串 `setXxxHandler` 绑定挪进 `RuntimeSession` 的成员函数）放在第二个 PR，届时已有 `session` 作为落脚点。
+逻辑搬迁（例如把 `mcpServer` 的那一大串 `setXxxHandler` 绑定挪进 `mcdk::runtime::Session` 的成员函数）放在第二个 PR，届时已有 `session` 作为落脚点。
 
-完成判据：`launchGameExe` 只剩"构造 session → 配置 → 启动进程 → 等待 → 终结"的骨架，各子系统的装配细节都在 `RuntimeSession` 内部。
+完成判据：`launchGameExe` 只剩"构造 session → 配置 → 启动进程 → 等待 → 终结"的骨架，各子系统的装配细节都在 `mcdk::runtime::Session` 内部。
 
 ## 2. 前置 B：MCP 工具动态注册表
 
@@ -52,7 +54,7 @@ McpToolRegistry 创建
 | `REGISTER` | `main.cpp`，`userParseConfig()` 之后、`startGame()` 之前 |
 | `CONFIG` | `startGame()` 开头，游戏路径校验之后 |
 | `WORLD` | `startGame()` 中 manifest 写盘之前 |
-| `RUNTIME` | `launchGameExe()` 中 `RuntimeSession` 构造完成、游戏进程启动之后 |
+| `RUNTIME` | `launchGameExe()` 中 `mcdk::runtime::Session` 构造完成、游戏进程启动之后 |
 | `SHUTDOWN` | `launchGameExe()` 返回前，逆序 |
 
 `SHUTDOWN` 之后的插件终结顺序是强规范，见 [03-abi-reference.md](03-abi-reference.md) §5——必须先断开事件派发并排空 in-flight 回调，再调 `on_unload`，顺序反了会把事件打进正在析构的插件对象。
@@ -96,4 +98,4 @@ main.cpp
 
 **规范：`components/plugin-host/src/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 见 [02-abi-contract.md](02-abi-contract.md) §4.3，该规则由 CI 静态检查（见 [09-compatibility.md](09-compatibility.md) §4）。
 
-shim 层**禁止**包含业务逻辑，只做三件事：参数转换、调用 `RuntimeSession` 上的现有实现、结果转换。任何新的业务逻辑都应落在 `mcdk_core` / `mcdk_runtime` 中，以便非插件路径复用。
+shim 层**禁止**包含业务逻辑，只做三件事：参数转换、调用 `mcdk::runtime::Session` 上的现有实现、结果转换。任何新的业务逻辑都应落在 `mcdk_core` / `mcdk_runtime` 中，以便非插件路径复用。

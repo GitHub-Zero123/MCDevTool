@@ -45,6 +45,7 @@
 #include <mcdk/performance/profiler_runtime_owner.hpp>
 #include <mcdk/performance/profiler_service_factory.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
+#include <mcdk/runtime/session.hpp>
 #include <mcdk/shader_reload_support.hpp>
 #include <mcdk/style_processor.hpp>
 #include <mcdk/utils.hpp>
@@ -131,51 +132,31 @@ void mcdk::launchGameExe(
     bool  enableIPC     = mcpServerConfig.enabled || enableAnyHotReload || hostBridgeConfig.enabled;
     bool  needLogBuffer = false;
 
-    auto ipcServer = MCDevTool::Debug::createDebugServer();
-    auto logBuffer = std::make_shared<mcdk::LogBuffer>(1000, 250);
-    auto errBuffer = std::make_shared<mcdk::LogBuffer>(1000, 400);
-    auto profilerGamePid = std::make_shared<std::atomic<std::uint32_t>>(0);
-    auto profilerRuntime = std::make_shared<mcdk::performance::ProfilerRuntimeOwner>(
-        [ipcServer, profilerGamePid, storageRoot = std::filesystem::current_path() / ".mcdev" / "profiles"] {
-            return mcdk::performance::createProfilerService({
-                .executeCode = [ipcServer](
-                    std::string code,
-                    mcdk::performance::ProfileTarget side,
-                    std::chrono::milliseconds timeout
-                ) -> std::expected<nlohmann::json, mcdk::performance::GameExecutionError> {
-                    if (!ipcServer || ipcServer->getClientCount() == 0) {
-                        return std::unexpected(mcdk::performance::GameExecutionError{
-                            .code = "GAME_WORLD_NOT_READY",
-                            .message = "Minecraft has not entered a world or the debug IPC is unavailable.",
-                            .retryable = true,
-                        });
-                    }
-                    const bool isClient = side != mcdk::performance::ProfileTarget::Server;
-                    auto value = mcdk::ipc_code_execution::requestCodeReturnValueJson(
-                        ipcServer,
-                        std::move(code),
-                        isClient,
-                        static_cast<std::uint32_t>(std::clamp<std::int64_t>(timeout.count(), 1, 120000))
-                    );
-                    if (value.is_object() && value.contains("error") && !value.contains("reason")) {
-                        return std::unexpected(mcdk::performance::GameExecutionError{
-                            .code = "GAME_EXECUTION_FAILED",
-                            .message = value.value("error", "Game IPC execution failed."),
-                            .retryable = true,
-                        });
-                    }
-                    return value;
-                },
-                .currentGameProcessId = [profilerGamePid] {
-                    return profilerGamePid->load(std::memory_order_acquire);
-                },
-                .storageRoot = storageRoot,
-                .executableDirectory = currentExecutableDirectory(),
-                .memoryIdleTimeout = std::chrono::minutes(20),
-            });
+    // 运行期子系统集中由 mcdk::runtime::Session 持有，便于插件宿主统一访问。
+    // 详见 docs/plugin-system/08-host-integration.md。
+    mcdk::runtime::Session session(
+        userConfig,
+        std::move(hostBridgeConfig),
+        {
+            .executableDirectory = currentExecutableDirectory(),
+            .profileStorageRoot  = std::filesystem::current_path() / ".mcdev" / "profiles",
         }
     );
-    auto mcpServer = mcdk::MCPServer(mcpServerConfig);
+
+    // 沿用原有局部名字引用 session 的成员，函数其余部分无需改动。
+    auto& ipcServer          = session.ipcServer();
+    auto& logBuffer          = session.logBuffer();
+    auto& errBuffer          = session.errBuffer();
+    auto& profilerGamePid    = session.profilerGamePid();
+    auto& profilerRuntime    = session.profilerRuntime();
+    auto& mcpServer          = session.mcpServer();
+    auto& pyReloadTask       = session.pyReloadTask();
+    auto& uiReloadTask       = session.uiReloadTask();
+    auto& shaderReloadTask   = session.shaderReloadTask();
+    auto& materialReloadTask = session.materialReloadTask();
+    auto& particleReloadTask = session.particleReloadTask();
+    auto& styleProcessor     = session.styleProcessor();
+    auto& hostBridgeTask     = session.hostBridgeTask();
     if (mcpServerConfig.enabled) {
         // 若启用MCP服务器将自动启用IPC调试功能
         enableIPC     = true;
@@ -300,14 +281,7 @@ void mcdk::launchGameExe(
         // Publish the MCP server only after every buffer and callback has been configured.
         mcpServer.start();
     }
-    mcdk::PyReloadWatcherTask       pyReloadTask;
-    mcdk::UiReloadWatcherTask       uiReloadTask;
-    mcdk::ShaderReloadWatcherTask   shaderReloadTask;
-    mcdk::MaterialReloadWatcherTask materialReloadTask;
-    mcdk::ParticleReloadWatcherTask particleReloadTask;
-    mcdk::UserStyleProcessor        styleProcessor(0, userConfig.windowStyle);
-    mcdk::HostBridgeTask            hostBridgeTask(std::move(hostBridgeConfig));
-    const bool                      debugCapabilityEnabled = userConfig.includeDebugMod && enableIPC;
+    const bool debugCapabilityEnabled = userConfig.includeDebugMod && enableIPC;
 
     auto mustBindHostMethod = [](std::expected<void, mcdk::RpcBindError> result) {
         if (!result) {
@@ -814,10 +788,8 @@ void mcdk::launchGameExe(
             throw;
         }
     }
-    profilerGamePid->store(pid, std::memory_order_release);
-    // 设置样式处理器PID
-    styleProcessor.setPid(pid);
-    mcpServer.setMinecraftProcessId(pid);
+    // 把进程 id 分发给 profiler、样式处理器与 MCP 服务
+    session.onGameProcessStarted(pid);
 
     if (hostBridgeTask.enabled()) {
         hostBridgeTask.setGameStateProvider([ipcServer, debugCapabilityEnabled] {
@@ -954,23 +926,8 @@ void mcdk::launchGameExe(
     if (!GetExitCodeProcess(processHandle.get(), &minecraftExitCode)) {
         minecraftExitCode = static_cast<DWORD>(-1);
     }
-    hostBridgeTask.notifyMinecraftExited(minecraftExitCode);
-    profilerGamePid->store(0, std::memory_order_release);
-
-    // 停止热更新任务
-    pyReloadTask.safeExit();
-    uiReloadTask.safeExit();
-    shaderReloadTask.safeExit();
-    materialReloadTask.safeExit();
-    particleReloadTask.safeExit();
-    // Stop new MCP calls before tearing down the profiler runtime they invoke.
-    mcpServer.stop();
-    // Profiler cleanup must finish while the game IPC executor is still available.
-    profilerRuntime->shutdown();
-    ipcServer->safeExit();
-    hostBridgeTask.safeExit();
-    // 停止样式处理器
-    styleProcessor.safeExit();
+    // 按依赖关系逆序停止全部子系统，顺序约束见 mcdk::runtime::Session::shutdown 的实现
+    session.shutdown(minecraftExitCode);
 
     // 等待读线程退出并关闭读端句柄
     pipeReaders.join();

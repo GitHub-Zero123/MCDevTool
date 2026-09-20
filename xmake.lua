@@ -261,7 +261,8 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/game_process/logging.cpp",
             "tools/mcdk/src/game_process/platform.cpp",
             "tools/mcdk/src/host_bridge.cpp",
-            "tools/mcdk/src/mcp_server.cpp"
+            "tools/mcdk/src/mcp_server.cpp",
+            "tools/mcdk/src/runtime/session.cpp"
         )
         add_deps("mcdk_core", "mcp", "MCDevLink")
         if is_plat("windows") then
