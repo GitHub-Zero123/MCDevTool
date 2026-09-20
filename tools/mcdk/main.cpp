@@ -2,6 +2,9 @@
 #include <mcdk/config.hpp>
 #include <mcdk/console_output.hpp>
 #include <mcdk/env.hpp>
+#include <mcdk/plugin_host/host.hpp>
+
+#include <filesystem>
 
 #include <cstdio>
 #include <exception>
@@ -42,6 +45,13 @@ int main(int argc, char* argv[]) {
 #endif
         mcdk::printStartupLogo(mcdk::getEnvIsPluginEnv());
         const auto config = mcdk::userParseConfig();
+
+        // 插件只从 .mcdev.json 的 plugins 声明加载，宿主不扫描任何目录。
+        // 相对路径以 .mcdev.json 所在目录（即当前工作目录）为基准。
+        auto& pluginHost = mcdk::plugin_host::instance();
+        pluginHost.loadDeclared(config.plugins, std::filesystem::current_path());
+        pluginHost.advance(MCDK_STAGE_REGISTER);
+
         mcdk::startGame(config);
 #ifdef NDEBUG
     } catch (const std::exception& exception) {

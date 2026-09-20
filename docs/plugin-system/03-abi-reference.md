@@ -60,13 +60,15 @@ typedef struct mcdk_plugin_desc {
     mcdk_str  name;
     mcdk_str  version;
     void*     user;
-    void (MCDK_CALL *on_stage)(void* user, uint32_t stage);
+    mcdk_status (MCDK_CALL *on_stage)(void* user, mcdk_stage stage); /* 返回值不可省略 */
     void (MCDK_CALL *on_unload)(void* user);
 } mcdk_plugin_desc;
 
 MCDK_PLUGIN_EXPORT mcdk_bool MCDK_CALL
 mcdk_plugin_entry(const mcdk_host_info* host, mcdk_plugin_desc* out_desc);
 ```
+
+`on_stage` **必须**返回 `mcdk_status`，不可改成 `void`：插件侧的异常被 SDK 屏障就地吃掉之后，宿主没有别的途径知道该阶段是否失败，而 [02-abi-contract.md](02-abi-contract.md) §4.2 要求 REGISTER 阶段失败时卸载该插件、其余阶段失败时降级——两者都得拿得到结果。`on_unload` 保持 `void`，卸载失败没有可采取的补救动作。
 
 入口符号名写在插件清单的 `entry_symbol` 字段中，默认 `mcdk_plugin_entry`，**可以**自定义（同一动态库承载多个插件时需要）。详见 [06-loading.md](06-loading.md)。
 

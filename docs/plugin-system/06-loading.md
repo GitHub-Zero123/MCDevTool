@@ -50,7 +50,7 @@
 | `enable` | bool | 是 | `false` 时宿主**禁止**加载该动态库，仅在 `mcdk plugin list` 中列出 |
 | `path` | string | 是 | 插件目录（内含 `plugin.json`）或直接指向动态库文件。见 §2.2 |
 | `id` | string | 否 | 期望的插件 id。填写后，与清单中 `id` 不符则拒绝加载并报错 |
-| `config` | object | 否 | 该插件的私有配置，透传给插件（v1 暂不提供读取接口，见 [05-interfaces.md](05-interfaces.md) §5） |
+| `config` | 任意 JSON | 否 | 传给该插件的配置，原样序列化后透传，插件通过 `mcdk.core` 的 `get_config` 取回文本自行解析。**这是「同一个插件二进制按不同参数声明多次」的基础。** 未写时插件收到字面量 `"null"` |
 | `priority` | int | 否 | 覆盖默认的声明顺序，小者先加载 |
 
 `enable` 与 `path` 之外全部可选，最小形态就是 `{ "enable": true, "path": "./plugins/foo" }`。

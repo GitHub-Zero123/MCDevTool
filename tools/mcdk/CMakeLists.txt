@@ -64,11 +64,18 @@ add_library(mcdk_runtime STATIC
     src/game_process/platform.cpp
     src/host_bridge.cpp
     src/mcp_server.cpp
+    src/plugin_host/abi_layout_check.cpp
+    src/plugin_host/guard.cpp
+    src/plugin_host/host.cpp
+    src/plugin_host/registry.cpp
+    src/plugin_host/interfaces/console.cpp
+    src/plugin_host/interfaces/core.cpp
     src/runtime/mcp_tool_registry.cpp
     src/runtime/session.cpp
 )
 target_compile_features(mcdk_runtime PUBLIC cxx_std_23)
-target_link_libraries(mcdk_runtime PUBLIC mcdk_core PRIVATE mcp MCDevLink::MCDevLink)
+# 插件 ABI 头的唯一真源在 sdk/plugin-sdk，宿主与插件 SDK 共用同一份。
+target_link_libraries(mcdk_runtime PUBLIC mcdk_core mcdk::plugin-abi PRIVATE mcp MCDevLink::MCDevLink)
 if(WIN32)
     target_link_libraries(mcdk_runtime PRIVATE ws2_32)
 endif()

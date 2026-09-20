@@ -9,6 +9,7 @@
 #include <mcdk/plugin/abi/core.h>
 #include <mcdk/plugin/abi/entry.h>
 #include <mcdk/plugin/abi/iface/console.h>
+#include <mcdk/plugin/abi/iface/core.h>
 
 /* 顺带验证接口表可以在纯 C 下正常定义与填充。 */
 static void MCDK_CALL mcdkAbiCheckLog(mcdk_handle self, mcdk_log_level level, mcdk_str message) {

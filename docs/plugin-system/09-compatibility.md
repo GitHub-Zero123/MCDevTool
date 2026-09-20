@@ -64,7 +64,7 @@ golden 目录的入库规则：每次 `MCDK_ABI_VERSION_MINOR` 递增时，用�
 | ABI 头能被 C99 编译器单独编译通过 | [02](02-abi-contract.md) §5.11 |
 | 可增长结构体首字段不是 `uint32_t struct_size` | [02](02-abi-contract.md) §5.8 |
 | 函数指针缺少 `MCDK_CALL` | [02](02-abi-contract.md) §5.1 |
-| `interfaces/` 下存在未经 `host::guard` 的导出函数 | [02](02-abi-contract.md) §4.3 |
+| `plugin_host/interfaces/` 下存在未经 `host::guard` 的导出函数 | [02](02-abi-contract.md) §4.3 |
 | ABI 函数字段缺少 `@name` / `@since` 注释 | [02](02-abi-contract.md) §8 |
 | 与上一版 ABI 头比对，出现字段删除 / 类型变更 / 顺序调整 / 枚举值复用 | [02](02-abi-contract.md) §5.9–5.10 |
 | 登记表与 ABI 头的 `@name` / `@since` 双向不一致 | [13](13-registry.md) §1.1 |

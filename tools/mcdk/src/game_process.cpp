@@ -43,6 +43,7 @@
 #include <mcdk/mod_register.hpp>
 #include <mcdk/particle_reload_support.hpp>
 #include <mcdk/performance/profiler_runtime_owner.hpp>
+#include <mcdk/plugin_host/host.hpp>
 #include <mcdk/performance/profiler_service_factory.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
 #include <mcdk/runtime/session.hpp>
@@ -797,6 +798,9 @@ void mcdk::launchGameExe(
     // 把进程 id 分发给 profiler、样式处理器与 MCP 服务
     session.onGameProcessStarted(pid);
 
+    // 运行期子系统均已就绪、游戏进程已创建。
+    mcdk::plugin_host::instance().advance(MCDK_STAGE_RUNTIME);
+
     if (hostBridgeTask.enabled()) {
         hostBridgeTask.setGameStateProvider([ipcServer, debugCapabilityEnabled] {
             return mcdk::HostBridgeGameState{
@@ -932,6 +936,11 @@ void mcdk::launchGameExe(
     if (!GetExitCodeProcess(processHandle.get(), &minecraftExitCode)) {
         minecraftExitCode = static_cast<DWORD>(-1);
     }
+    // 先让插件收到 SHUTDOWN 并终结，再拆运行期子系统：插件的 onShutdown 里
+    // 可能还要用到它们。终结顺序见 docs/plugin-system/03-abi-reference.md §5。
+    mcdk::plugin_host::instance().advance(MCDK_STAGE_SHUTDOWN);
+    mcdk::plugin_host::instance().shutdown();
+
     // 按依赖关系逆序停止全部子系统，顺序约束见 mcdk::runtime::Session::shutdown 的实现
     session.shutdown(minecraftExitCode);
 

@@ -58,6 +58,18 @@ target_compile_features(mcp_tool_registry_test PRIVATE cxx_std_23)
 target_link_libraries(mcp_tool_registry_test PRIVATE mcdk_runtime)
 add_test(NAME mcp-tool-registry COMMAND mcp_tool_registry_test)
 
+# 端到端：真的去 LoadLibrary 示例插件，走完整的 C ABI 握手。
+if(TARGET hello_plugin)
+    add_executable(plugin_host_test plugin_host_test.cpp)
+    target_compile_features(plugin_host_test PRIVATE cxx_std_23)
+    target_link_libraries(plugin_host_test PRIVATE mcdk_runtime)
+    add_dependencies(plugin_host_test hello_plugin)
+    target_compile_definitions(plugin_host_test PRIVATE
+        MCDEV_TEST_HELLO_PLUGIN="$<TARGET_FILE:hello_plugin>"
+    )
+    add_test(NAME plugin-host COMMAND plugin_host_test)
+endif()
+
 add_executable(profiler_foundation_test profiler_foundation_test.cpp)
 target_compile_features(profiler_foundation_test PRIVATE cxx_std_23)
 target_link_libraries(profiler_foundation_test PRIVATE mcdk_core)

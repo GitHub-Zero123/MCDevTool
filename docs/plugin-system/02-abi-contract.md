@@ -124,7 +124,7 @@ static mcdk_event_result MCDK_CALL trampoline(const mcdk_event* ev, void* user) 
 宿主侧对称处理。每个接口函数都是 `noexcept` shim：
 
 ```cpp
-// components/plugin-host/src/interfaces/game.cpp
+// tools/mcdk/src/plugin_host/interfaces/game.cpp
 static mcdk_status MCDK_CALL game_execute_python(
     mcdk_handle self, mcdk_str code, uint32_t side, mcdk_str* out_json) noexcept
 {
@@ -141,7 +141,7 @@ static mcdk_status MCDK_CALL game_execute_python(
 
 `host::guard` 与 SDK 侧的 `detail::guard` 结构一致，把 `std::runtime_error`、`std::filesystem::filesystem_error`、`nlohmann::json::exception` 等映射到稳定的 `mcdk_status`，并把 `what()` 存入该插件的错误槽。
 
-**规范：`components/plugin-host/src/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 该规则由 CI 静态检查，见 [09-compatibility.md](09-compatibility.md) §5。
+**规范：`tools/mcdk/src/plugin_host/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 该规则由 CI 静态检查，见 [09-compatibility.md](09-compatibility.md) §5。
 
 ### 4.4 `-fno-exceptions` 插件
 

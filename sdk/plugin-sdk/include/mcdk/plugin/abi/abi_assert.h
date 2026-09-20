@@ -26,6 +26,7 @@
 #include "core.h"
 #include "entry.h"
 #include "iface/console.h"
+#include "iface/core.h"
 
 namespace mcdk::abi_assert {
 
@@ -91,6 +92,12 @@ namespace mcdk::abi_assert {
     /* -------------------------------------------------------------- */
     /* 接口表                                                          */
     /* -------------------------------------------------------------- */
+    MCDK_ABI_CHECK_GROWABLE(mcdk_iface_core);
+    static_assert(
+        offsetof(mcdk_iface_core, get_last_error) == 8,
+        "mcdk_iface_core::get_last_error must sit right after struct_size and its padding"
+    );
+
     MCDK_ABI_CHECK_GROWABLE(mcdk_iface_console);
     static_assert(
         offsetof(mcdk_iface_console, log) == 8,

@@ -161,6 +161,56 @@ namespace mcdk {
             }
         }
 
+        // plugins 数组。条目本身写错属于用户配置错误，直接报错而不是静默跳过——
+        // 静默跳过会让「我明明写了插件却没生效」变成无从排查的问题。
+        // 真正的运行期失败（路径不存在、ABI 不符）才走「报错并跳过、不终止 mcdk」，
+        // 那部分由加载器负责，见 docs/plugin-system/06-loading.md §4。
+        std::vector<PluginDeclaration> parsePluginDeclarations(const Json& root) {
+            std::vector<PluginDeclaration> declarations;
+            const auto                     plugins = root.find("plugins");
+            if (plugins == root.end()) {
+                return declarations;
+            }
+            if (!plugins->is_array()) {
+                throw std::runtime_error("配置文件的 plugins 字段必须是数组。");
+            }
+
+            declarations.reserve(plugins->size());
+            std::size_t index = 0;
+            for (const auto& item : *plugins) {
+                const auto where = "plugins[" + std::to_string(index) + "]";
+                ++index;
+                if (!item.is_object()) {
+                    throw std::runtime_error(where + " 必须是对象。");
+                }
+
+                PluginDeclaration declaration;
+                declaration.enabled  = item.value("enable", false);
+                declaration.path     = item.value("path", "");
+                declaration.id       = item.value("id", "");
+                declaration.priority = item.value("priority", 0);
+                if (declaration.path.empty()) {
+                    throw std::runtime_error(where + " 缺少 path 字段。");
+                }
+                // config 允许是任意 JSON 值（对象、数组、标量都行），原样序列化后
+                // 透传给插件。这是「同一个插件二进制按不同参数声明多次」的基础。
+                if (const auto pluginConfig = item.find("config"); pluginConfig != item.end()) {
+                    declaration.configJson = pluginConfig->dump();
+                }
+                declarations.push_back(std::move(declaration));
+            }
+
+            // 稳定排序：priority 相同者保持声明顺序，使加载顺序完全可预测。
+            std::stable_sort(
+                declarations.begin(),
+                declarations.end(),
+                [](const PluginDeclaration& left, const PluginDeclaration& right) {
+                    return left.priority < right.priority;
+                }
+            );
+            return declarations;
+        }
+
         UserConfig parseUserConfigJson(const Json& root) {
             if (!root.is_object()) {
                 throw std::runtime_error("配置文件根节点必须是 JSON 对象。");
@@ -214,6 +264,7 @@ namespace mcdk {
                 config.mcpServer.serverIp   = mcp->value("server_ip", "localhost");
                 config.mcpServer.serverPort = mcp->value("server_port", 19133);
             }
+            config.plugins = parsePluginDeclarations(root);
             return config;
         }
 

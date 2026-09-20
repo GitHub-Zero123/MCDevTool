@@ -22,7 +22,7 @@
 所有发射点**必须**使用统一宏，**禁止**手写 `if` 加 `dispatch`——手写会逐渐分化，几年后没人知道哪些发射点是安全的。
 
 ```cpp
-// components/plugin-host/include/mcdk/plugin_host/emit.hpp
+// tools/mcdk/include/mcdk/plugin_host/emit.hpp
 namespace mcdk::plugin_host {
 
     inline constexpr std::size_t kEventCount = static_cast<std::size_t>(EventId::Count);

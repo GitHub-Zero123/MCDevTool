@@ -262,9 +262,16 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/game_process/platform.cpp",
             "tools/mcdk/src/host_bridge.cpp",
             "tools/mcdk/src/mcp_server.cpp",
+            "tools/mcdk/src/plugin_host/abi_layout_check.cpp",
+            "tools/mcdk/src/plugin_host/guard.cpp",
+            "tools/mcdk/src/plugin_host/host.cpp",
+            "tools/mcdk/src/plugin_host/registry.cpp",
+            "tools/mcdk/src/plugin_host/interfaces/console.cpp",
+            "tools/mcdk/src/plugin_host/interfaces/core.cpp",
             "tools/mcdk/src/runtime/mcp_tool_registry.cpp",
             "tools/mcdk/src/runtime/session.cpp"
         )
+        add_includedirs("sdk/plugin-sdk/include", {public = true})
         add_deps("mcdk_core", "mcp", "MCDevLink")
         if is_plat("windows") then
             add_syslinks("ws2_32")

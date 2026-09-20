@@ -5,6 +5,7 @@
 #include <mcdk/env.hpp>
 #include <mcdk/level.hpp>
 #include <mcdk/mod_register.hpp>
+#include <mcdk/plugin_host/host.hpp>
 #include <mcdk/world_project.hpp>
 
 #include <filesystem>
@@ -34,6 +35,9 @@ void mcdk::startGame(const UserConfig& config) {
             throw std::runtime_error("未能找到有效的游戏exe文件。");
         }
     }
+
+    // 配置已完成解析与校验，插件可在此阶段读取它。
+    mcdk::plugin_host::instance().advance(MCDK_STAGE_CONFIG);
 
     auto _isSubprocessMode = mcdk::getEnvIsSubprocessMode();
 
@@ -124,6 +128,9 @@ void mcdk::startGame(const UserConfig& config) {
         worldSourcePath
             ? mcdk::loadWorldPackManifest(*worldSourcePath, MCDevTool::Addon::PackType::RESOURCE, targetResJson)
             : mcdk::WorldPackManifest{};
+    // 世界目录与 pack 清单已就绪，落盘前的最后一个干预点。
+    mcdk::plugin_host::instance().advance(MCDK_STAGE_WORLD);
+
     mcdk::mergeLinkedPacksIntoManifest(behPacksManifest, resPacksManifest, linkedPacks);
     mcdk::writeWorldPackManifest(worldsPath / targetBehJson, behPacksManifest);
     mcdk::writeWorldPackManifest(worldsPath / targetResJson, resPacksManifest);

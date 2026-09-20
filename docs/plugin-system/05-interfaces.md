@@ -47,7 +47,16 @@ typedef struct mcdk_iface_core {
     void MCDK_CALL (*get_host_version)(mcdk_handle self, mcdk_str* out_version);
 
     /* 当前生命周期阶段，取值见 mcdk_stage */
-    uint32_t MCDK_CALL (*get_stage)(mcdk_handle self);
+    mcdk_stage MCDK_CALL (*get_stage)(mcdk_handle self);
+
+    /*
+     * 取回 .mcdev.json 中该条插件声明的 config 字段，UTF-8 JSON 文本。借用。
+     * 这是「可传参式插件」的入口：同一个二进制可以声明多次、各带不同 config，
+     * 据此表现出不同行为。
+     * 未设置时回填字面量 "null" 而非 len == 0，使插件永远可以直接 parse。
+     * 这是本 ABI 中唯一不用 len == 0 表示「未设置」的地方。
+     */
+    void MCDK_CALL (*get_config)(mcdk_handle self, mcdk_str* out_config_json);
 } mcdk_iface_core;
 ```
 
@@ -133,7 +142,7 @@ typedef struct mcdk_iface_info {
 
 `game_pid` 与 `game_debug_ready` 会随时间变化，插件**禁止**缓存后长期使用，需要跟踪状态变化请订阅 `mcdk.game.launch.finish` 与 `mcdk.ipc.client.connected`。
 
-v1 **不提供**读取插件私有 `config` 的接口。`.mcdev.json` 声明中的 `config` 字段（见 [06-loading.md](06-loading.md) §2.1）会被解析和校验，但透传接口留到后续版本，见 §10。
+插件私有 `config` 的读取接口在 `mcdk.core` 上（§3 的 `get_config`），不在这里。
 
 ## 6. `mcdk.game/1`
 

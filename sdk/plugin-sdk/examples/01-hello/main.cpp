@@ -14,15 +14,23 @@ namespace {
     public:
         void onRegister(mcdk::Context& context) override {
             // std::string 在这里完全自由；Console 收 string_view，内部转 mcdk_str。
-            const std::string greeting = "hello from 01-hello, host " + std::string(context.hostVersion());
-            context.console().info(greeting);
-            context.console().print(mcdk::Color::Cyan, "注册阶段：可以在此挂事件与 MCP 工具");
+            context.console().info("hello, host " + std::string(context.hostVersion()));
+
+            // .mcdev.json 里这条声明的 config，原样 JSON 文本。
+            // 同一个二进制声明多次、各带不同 config，就能有不同行为。
+            context.console().info("config=" + std::string(context.configJson()));
+
+            context.console().print(mcdk::Color::Cyan, "stage:register");
         }
 
-        void onRuntime(mcdk::Context& context) override { context.console().info("运行阶段：游戏已启动"); }
+        void onConfig(mcdk::Context& context) override { context.console().print(mcdk::Color::Cyan, "stage:config"); }
+
+        void onWorld(mcdk::Context& context) override { context.console().print(mcdk::Color::Cyan, "stage:world"); }
+
+        void onRuntime(mcdk::Context& context) override { context.console().print(mcdk::Color::Cyan, "stage:runtime"); }
 
         void onShutdown(mcdk::Context& context) override {
-            context.console().print(mcdk::Color::DarkGray, "01-hello 退出");
+            context.console().print(mcdk::Color::DarkGray, "stage:shutdown");
         }
     };
 

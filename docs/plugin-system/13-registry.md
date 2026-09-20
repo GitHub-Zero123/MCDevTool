@@ -61,6 +61,7 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `get_last_error` | 1.0 | 计划 | 取当前线程错误槽 |
 | `get_host_version` | 1.0 | 计划 | 宿主版本串 |
 | `get_stage` | 1.0 | 计划 | 当前生命周期阶段 |
+| `get_config` | 1.0 | 计划 | 该条声明的 config JSON 文本；未设置时为 `"null"` |
 
 ### 3.2 `mcdk.console/1`
 
@@ -109,7 +110,7 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `emit` | 1.0 | 计划 | 插件自定义事件 |
 | `post_main` | 1.0 | 计划 | 投递到主线程 |
 
-v1 合计 **20 个 ABI 函数**。
+v1 合计 **21 个 ABI 函数**。
 
 ## 4. 事件登记
 
@@ -168,4 +169,4 @@ v1 合计 **9 个事件、6 个 payload 结构体**。
 
 | ABI 版本 | 日期 | 变更 |
 | --- | --- | --- |
-| 1.0 | 未发布 | 初版：20 个 ABI 函数、9 个事件、6 张接口表 |
+| 1.0 | 未发布 | 初版：21 个 ABI 函数、9 个事件、6 张接口表 |

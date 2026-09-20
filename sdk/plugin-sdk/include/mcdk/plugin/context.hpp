@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "abi/entry.h"
+#include "abi/iface/core.h"
 #include "console.hpp"
 #include "detail/abi_bridge.hpp"
 
@@ -23,6 +24,13 @@ namespace mcdk {
 
         [[nodiscard]] const Console& console() const noexcept { return mConsole; }
 
+        // .mcdev.json 中本条插件声明的 config 字段，UTF-8 JSON 文本。
+        // 同一个插件二进制可以声明多次、各带不同 config，据此表现出不同行为。
+        // 未设置时是字面量 "null"，可以直接丢给任意 JSON 解析器，无需特判。
+        //
+        // 这里同样是深拷贝：ABI 给的 mcdk_str 是借用的。
+        [[nodiscard]] std::string_view configJson() const noexcept { return mConfigJson; }
+
         // 由 SDK 的入口胶水调用，插件不应直接使用。
         void bindHost(const mcdk_host_info& host) {
             mSelf        = host.self;
@@ -31,12 +39,24 @@ namespace mcdk {
                 mSelf,
                 detail::getInterface<mcdk_iface_console>(host, MCDK_IFACE_CONSOLE_NAME, MCDK_IFACE_CONSOLE_VERSION)
             );
+
+            mCore = detail::getInterface<mcdk_iface_core>(host, MCDK_IFACE_CORE_NAME, MCDK_IFACE_CORE_VERSION);
+            if (detail::ifaceHas(mCore, &mcdk_iface_core::get_config)) {
+                mcdk_str raw{};
+                mCore->get_config(mSelf, &raw);
+                mConfigJson = detail::toString(raw);
+            }
+            if (mConfigJson.empty()) {
+                mConfigJson = "null";
+            }
         }
 
     private:
-        mcdk_handle mSelf = 0;
-        std::string mHostVersion;
-        Console     mConsole;
+        mcdk_handle            mSelf = 0;
+        std::string            mHostVersion;
+        std::string            mConfigJson = "null";
+        Console                mConsole;
+        const mcdk_iface_core* mCore = nullptr;
     };
 
 } // namespace mcdk

@@ -84,7 +84,7 @@ MCDevTool/
 │  │  └─ 03-hotreload/
 │  ├─ templates/plugin-template/       # 供用户复制的起步工程
 │  └─ docs/
-├─ components/plugin-host/             # 宿主侧实现，与 MCDevLink 同级
+├─ tools/mcdk/{include/mcdk,src}/plugin_host/   # 宿主侧实现（落地时从 components/ 移到这里：
 │  ├─ include/mcdk/plugin_host/
 │  │  ├─ manifest.hpp   loader.hpp   registry.hpp
 │  │  ├─ event_bus.hpp  host.hpp      guard.hpp

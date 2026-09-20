@@ -49,12 +49,15 @@ namespace mcdk {
             static inline Context                  context;
             static inline std::unique_ptr<PluginT> instance;
 
-            static void MCDK_CALL onStage(void* /*user*/, mcdk_stage stage) noexcept {
-                guardVoid([stage] {
-                    if (!instance) {
-                        return;
-                    }
-                    switch (stage) {
+            static mcdk_status MCDK_CALL onStage(void* /*user*/, mcdk_stage stage) noexcept {
+                // 出错时返回 MCDK_ERR_PLUGIN_EXCEPTION，宿主据此判定该插件在本阶段
+                // 失败。异常本身在 guard 内被吃掉，绝不穿越边界。
+                return guard(
+                    [stage]() -> mcdk_status {
+                        if (!instance) {
+                            return MCDK_ERR_INVALID_HANDLE;
+                        }
+                        switch (stage) {
                     case MCDK_STAGE_REGISTER:
                         instance->onRegister(context);
                         break;
@@ -73,8 +76,11 @@ namespace mcdk {
                     default:
                         // 新宿主可能推进旧插件不认识的阶段，忽略即可，不是错误。
                         break;
-                    }
-                });
+                        }
+                        return MCDK_OK;
+                    },
+                    MCDK_ERR_PLUGIN_EXCEPTION
+                );
             }
 
             static void MCDK_CALL onUnload(void* /*user*/) noexcept {

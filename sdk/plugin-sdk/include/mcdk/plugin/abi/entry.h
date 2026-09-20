@@ -60,7 +60,20 @@ typedef struct mcdk_plugin_desc {
     mcdk_str version; /* 插件自身版本 */
 
     void* user; /* 原样回传给下面两个回调 */
-    void(MCDK_CALL* on_stage)(void* user, mcdk_stage stage);
+
+    /*
+     * 返回 MCDK_OK 表示该阶段处理成功。
+     *
+     * 返回值不可省略：插件侧的异常被 SDK 屏障就地吃掉后，宿主没有别的途径知道
+     * 该阶段是否失败。REGISTER 阶段失败意味着插件加载失败、已注册项需回滚，
+     * 其余阶段失败意味着该插件降级，两者都要求宿主拿得到结果。
+     */
+    mcdk_status(MCDK_CALL* on_stage)(void* user, mcdk_stage stage);
+
+    /*
+     * 无返回值：卸载失败没有宿主可采取的补救动作，按约定记录后继续
+     * （02-abi-contract.md §4.2）。
+     */
     void(MCDK_CALL* on_unload)(void* user);
 } mcdk_plugin_desc;
 

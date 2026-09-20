@@ -100,14 +100,14 @@ namespace mcdk {
 
 ## 6. 宿主 shim 层
 
-`components/plugin-host/src/interfaces/` 同时触碰两层，规约：
+`tools/mcdk/src/plugin_host/interfaces/` 同时触碰两层，规约：
 
 - 文件内的 C 函数实现命名为 `<模块>_<动作>`，与 ABI 表的字段名一致：`console_log_colored`、`game_execute_python`；
 - 这些函数一律 `static` + `noexcept`，只在文件末尾组装成接口表；
 - 函数体内立刻转成 C++ 形态，此后全部 `src/` 风格。
 
 ```cpp
-// components/plugin-host/src/interfaces/console.cpp
+// tools/mcdk/src/plugin_host/interfaces/console.cpp
 static void MCDK_CALL console_log_colored(
     mcdk_handle self, mcdk_color color, mcdk_str message) noexcept
 {
