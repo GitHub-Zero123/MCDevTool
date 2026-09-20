@@ -150,6 +150,11 @@ namespace mcdk::plugin_host {
                     ++loaded;
                 }
             }
+            if (loaded > 0) {
+                // 有插件了，主线程才需要一个能被唤醒的口子。必须在游戏等待循环
+                // 开始前建好：那条循环只在进入时取一次句柄。
+                enableMainThreadSignal();
+            }
             report(
                 "已加载 " + std::to_string(loaded) + " 个插件，" + std::to_string(disabled) + " 个已禁用",
                 loaded > 0 ? ConsoleColor::Green : ConsoleColor::DarkGray

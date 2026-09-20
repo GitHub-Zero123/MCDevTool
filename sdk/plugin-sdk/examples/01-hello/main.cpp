@@ -27,7 +27,9 @@ namespace {
                 context.console().info("event:mcp-register-finish:" + std::to_string(e.toolCount));
             });
             context.events().on<mcdk::ev::GameLaunchFinish>([&context](const auto& e) {
-                context.console().info("event:game-launch-finish:" + std::to_string(e.pid));
+                context.console().info(
+                    "event:game-launch-finish:" + std::to_string(e.pid) + ":" + std::string(e.exePath)
+                );
             });
         }
 

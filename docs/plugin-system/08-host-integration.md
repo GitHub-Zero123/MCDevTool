@@ -101,6 +101,16 @@ main.cpp
 | `mcdk.mcp.tool_call.*` | `McpToolRegistry` 分发入口 |
 | `mcdk.host_bridge.connected` | `HostBridgeTask` 连接建立回调 |
 
+### 5.1 主线程抽干点
+
+`MCDK_DISPATCH_MAIN` 的回调与 `post_main` 投递的工作只会在 `pumpMainThreadWork()` 里执行。
+它必须被放在**主线程唯一的长时间阻塞点**上，目前是 `launchGameExe()` 等待游戏进程退出
+的 20Hz 轮询循环。无待办时它是一次原子读加一次分支。
+
+**该循环只能有一条。** 日志走 Safaia 接收器还是走 stdout/stderr 管道，只影响 tick 里额外
+做什么，不得为此分成两条等待循环——一旦分叉，将来新增的日志通道就会多出一条忘了 pump
+的分支，表现为“某些配置下插件的主线程回调永远不触发”这种极难定位的问题。
+
 ## 6. shim 层规约
 
 **规范：`tools/mcdk/src/plugin_host/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 见 [02-abi-contract.md](02-abi-contract.md) §4.3，该规则由 CI 静态检查（见 [09-compatibility.md](09-compatibility.md) §5）。

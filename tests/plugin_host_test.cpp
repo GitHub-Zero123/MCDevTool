@@ -7,6 +7,7 @@
 #include <mcdk/plugin_host/events.hpp>
 #include <mcdk/plugin_host/host.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -111,20 +112,30 @@ int main() {
             payload.tool_count  = 9;
             return payload;
         });
-        MCDK_EMIT(EventId::GameLaunchFinish, [] {
-            mcdk_ev_game_launch_finish payload{};
-            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
-            payload.pid         = 4242;
-            return payload;
-        });
+        {
+            // 字符串字段的存储故意在发射后立即析构：
+            // QUEUED 的派发线程晚得多，总线必须真的拷贝一份字节。
+            std::string exePathUtf8 = "D:/games/Minecraft.exe";
+            MCDK_EMIT(EventId::GameLaunchFinish, [&] {
+                mcdk_ev_game_launch_finish payload{};
+                payload.struct_size  = static_cast<std::uint32_t>(sizeof(payload));
+                payload.pid          = 4242;
+                payload.exe_path.ptr = exePathUtf8.data();
+                payload.exe_path.len = exePathUtf8.size();
+                return payload;
+            });
+            // 立即原地抹掉：总线若只 memcpy 了 mcdk_str 里的指针，
+            // 派发线程读到的就是这一行写进去的字节。
+            std::fill(exePathUtf8.begin(), exePathUtf8.end(), 'X');
+        }
         // QUEUED 是异步的，等派发线程把队列吃完。
-        for (int attempt = 0; attempt < 200 && !contains(output, "event:game-launch-finish:4242"); ++attempt) {
+        for (int attempt = 0; attempt < 200 && !contains(output, "event:game-launch-finish:4242:"); ++attempt) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         passed &= expect(contains(output, "event:mcp-register-finish:9"), "a queued event reaches the plugin");
         passed &= expect(
-            contains(output, "event:game-launch-finish:4242"),
-            "the typed payload fields survive the round trip through the C ABI"
+            contains(output, "event:game-launch-finish:4242:D:/games/Minecraft.exe"),
+            "the typed payload fields, strings included, survive the round trip through the C ABI"
         );
     }
 

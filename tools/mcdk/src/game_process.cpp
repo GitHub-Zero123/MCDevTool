@@ -963,32 +963,54 @@ void mcdk::launchGameExe(
 
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
     // ERROR_BROKEN_PIPE）
-    if (safaiaReceiver) {
-        constexpr DWORD safaiaTicksPerSecond   = 20;
-        constexpr DWORD safaiaTickMilliseconds = 1000 / safaiaTicksPerSecond;
+    //
+    // 只保留一条等待循环。日志走 Safaia 还是走管道、有没有插件，只影响它等什么、
+    // 多久醒一次，不得为此分叉——一旦分叉，将来新增的通道就会多出一条忘了 pump 的分支。
+    //
+    // 唤醒源有三个，都是按需的：
+    //   游戏进程句柄  —— 总是等；退出即结束循环。
+    //   主线程信号    —— 仅在真的加载了插件时存在；有人 post_main 才置位。
+    //   超时            —— 仅 Safaia 需要（poll 必须被周期驱动），否则 INFINITE。
+    //
+    // 所以零插件 + 管道日志时，这里是一次无期限阻塞，周期性唤醒为零，跟插件系统
+    // 引入之前完全一致（docs/plugin-system/12-performance.md §1）。而一旦有插件，唤醒是
+    // 事件驱动的，post_main 的延迟反而比定时轮询更低。
+    {
+        HANDLE waitHandles[2] = {processHandle.get(), nullptr};
+        DWORD  waitCount      = 1;
+        if (void* const mainWorkSignal = mcdk::plugin_host::mainThreadWorkWaitHandle(); mainWorkSignal != nullptr) {
+            waitHandles[1] = static_cast<HANDLE>(mainWorkSignal);
+            waitCount      = 2;
+        }
+        // Safaia 的 poll() 内部是 {256 条, 1ms} 的预算，必须被周期驱动。
+        // 这个 20Hz 是 Safaia 自己的节拍，与插件无关。
+        constexpr DWORD safaiaTicksPerSecond = 20;
+        const DWORD     timeout = safaiaReceiver ? (1000 / safaiaTicksPerSecond) : INFINITE;
+
         while (true) {
-            const auto waitResult = WaitForSingleObject(processHandle.get(), safaiaTickMilliseconds);
-            safaiaReceiver->poll();
+            const DWORD waitResult = WaitForMultipleObjects(waitCount, waitHandles, FALSE, timeout);
+            if (safaiaReceiver) {
+                safaiaReceiver->poll();
+            }
+            // 无待办时是一次原子读 + 分支，不必先判断 waitResult。
             mcdk::plugin_host::pumpMainThreadWork();
             if (waitResult == WAIT_OBJECT_0) {
                 break;
             }
             if (waitResult == WAIT_FAILED) {
-                throw std::system_error(
-                    static_cast<int>(GetLastError()),
-                    std::system_category(),
-                    "WaitForSingleObject failed while polling Safaia"
+                // 不抛：launchGameExe 没有外层 catch，抛出去会跳过 SHUTDOWN 阶段与
+                // session.shutdown()。继续往下走，GetExitCodeProcess 会把退出码置为 -1。
+                printColoredAtomic(
+                    "[MCDK] WaitForMultipleObjects failed while waiting for the game process, GetLastError=" +
+                        std::to_string(GetLastError()),
+                    ConsoleColor::Yellow
                 );
+                break;
             }
         }
+    }
+    if (safaiaReceiver) {
         safaiaReceiver->stop();
-    } else {
-        // 定时轮询而非 INFINITE：主线程得有机会抽干插件投递过来的工作
-        // （mcdk.events 的 post_main）。20 次/秒的唤醒可以忽略不计。
-        constexpr DWORD tickMilliseconds = 50;
-        while (WaitForSingleObject(processHandle.get(), tickMilliseconds) == WAIT_TIMEOUT) {
-            mcdk::plugin_host::pumpMainThreadWork();
-        }
     }
 
     DWORD minecraftExitCode = 0;

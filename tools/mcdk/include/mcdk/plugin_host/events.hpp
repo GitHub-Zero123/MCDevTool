@@ -89,6 +89,16 @@ namespace mcdk::plugin_host {
     // 无待办时是一次原子读 + 分支。
     void pumpMainThreadWork();
 
+    // 创建主线程唤醒信号。只在确实加载了插件时调用一次。
+    //
+    // 零插件时不创建是刻意的：没有信号句柄，等待循环就退回无期限阻塞，
+    // 主线程一次都不会被插件系统唤醒（docs/plugin-system/12-performance.md §1）。
+    void enableMainThreadSignal();
+
+    // 有主线程待办时被置位的等待句柄（Windows 上是 HANDLE）。
+    // 从未加载过插件则返回 nullptr，调用方据此退回无超时等待。
+    [[nodiscard]] void* mainThreadWorkWaitHandle() noexcept;
+
     // 断开某插件的全部订阅并等待其 in-flight 回调返回。
     // 必须在 on_unload 之前调用，见 docs/plugin-system/03-abi-reference.md §5.1 第 1~3 步。
     void detachSubscriber(mcdk_handle owner);
