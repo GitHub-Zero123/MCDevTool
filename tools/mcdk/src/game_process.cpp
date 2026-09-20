@@ -278,6 +278,12 @@ void mcdk::launchGameExe(
             }
             return MCDevTool::Style::triggerMinecraftUiReloadShortcut(pid);
         });
+        // 内置工具先进注册表，各自占住名字，重名的插件工具才能被检出。
+        mcpServer.registerBuiltinTools();
+        // 插件注册窗口开在这里：发射 mcdk.mcp.register.before 让插件补充工具，
+        // 再封存注册表并发射 mcdk.mcp.register.finish。插件宿主落地前，
+        // 封存由 start() 内部兜底。时序见 docs/plugin-system/08-host-integration.md §2。
+
         // Publish the MCP server only after every buffer and callback has been configured.
         mcpServer.start();
     }

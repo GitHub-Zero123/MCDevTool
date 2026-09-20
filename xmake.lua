@@ -262,6 +262,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/game_process/platform.cpp",
             "tools/mcdk/src/host_bridge.cpp",
             "tools/mcdk/src/mcp_server.cpp",
+            "tools/mcdk/src/runtime/mcp_tool_registry.cpp",
             "tools/mcdk/src/runtime/session.cpp"
         )
         add_deps("mcdk_core", "mcp", "MCDevLink")

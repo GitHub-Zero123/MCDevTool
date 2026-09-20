@@ -53,7 +53,12 @@ namespace mcdk::runtime {
             return mProfilerRuntime;
         }
 
-        [[nodiscard]] MCPServer&                 mcpServer() noexcept { return mMcpServer; }
+        [[nodiscard]] MCPServer& mcpServer() noexcept { return mMcpServer; }
+
+        // MCP 工具注册表。内置工具与插件工具共用，MCPServer::start() 时按表发布。
+        [[nodiscard]] const std::shared_ptr<McpToolRegistry>& mcpToolRegistry() const noexcept {
+            return mMcpServer.toolRegistry();
+        }
         [[nodiscard]] PyReloadWatcherTask&       pyReloadTask() noexcept { return mPyReloadTask; }
         [[nodiscard]] UiReloadWatcherTask&       uiReloadTask() noexcept { return mUiReloadTask; }
         [[nodiscard]] ShaderReloadWatcherTask&   shaderReloadTask() noexcept { return mShaderReloadTask; }

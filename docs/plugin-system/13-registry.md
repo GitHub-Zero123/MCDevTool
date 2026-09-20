@@ -96,7 +96,7 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §4）：
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `add_tool` | 1.0 | 计划 | 仅 REGISTER 阶段可用 |
+| `add_tool` | 1.0 | 计划 | 仅 REGISTER 阶段可用；参数是带 `struct_size` 的 `mcdk_mcp_tool_desc`，不是位置参数 |
 | `list_tools` | 1.0 | 计划 | 已注册工具清单 |
 
 ### 3.7 `mcdk.events/1`
@@ -160,6 +160,7 @@ v1 合计 **9 个事件、6 个 payload 结构体**。
 | `mcdk_log_channel` | 1.0 | 0..1 | 2 |
 | `mcdk_log_order` | 1.0 | 0..1 | 2 |
 | `mcdk_image_format` | 1.0 | 0 | 1 |
+| `mcdk_mcp_annotation` | 1.0 | 位 0..3 | 位 4 |
 
 "下一个可用值"一列存在的意义是：新增常量时直接取用并更新该列，避免两个并行分支各自选了同一个数值、合并后静默冲突。
 

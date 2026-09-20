@@ -1,0 +1,85 @@
+#pragma once
+
+#include <atomic>
+#include <cstddef>
+#include <deque>
+#include <expected>
+#include <functional>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+
+#include <mcp_tool.h>
+
+namespace mcdk::runtime {
+
+    enum class McpToolBindError {
+        InvalidName,
+        DuplicateName,
+        EmptyHandler,
+        RegistrySealed,
+    };
+
+    [[nodiscard]] std::string_view describeMcpToolBindError(McpToolBindError error) noexcept;
+
+    // 与 mcp::tool_handler 逐字相同（mcp::json 是 ordered_json，不是 nlohmann::json）。
+    // 在此重新写出而非 include <mcp_server.h>，是为了不把整个服务器头拖进公开头文件；
+    // 类型一致保证发布时可直接透传，不产生额外的一层转换。
+    using McpToolHandler = std::function<mcp::json(const mcp::json& params, const std::string& sessionId)>;
+
+    struct McpToolEntry {
+        mcp::tool      descriptor;
+        McpToolHandler handler;
+        // 注册来源，"builtin" 或插件 id。重名时用它给出可定位的报错。
+        std::string owner;
+    };
+
+    // MCP 工具注册表。形态对齐 RpcRegistry：注册窗口关闭后封存，运行期只读。
+    //
+    // 它把"有哪些工具"与"MCP 服务器"解耦：内置工具与插件工具注册进同一张表，
+    // MCPServer 只负责在启动时按表发布。
+    // 设计见 docs/plugin-system/08-host-integration.md §2。
+    class McpToolRegistry {
+    public:
+        McpToolRegistry()                                  = default;
+        McpToolRegistry(const McpToolRegistry&)            = delete;
+        McpToolRegistry& operator=(const McpToolRegistry&) = delete;
+
+        // 重名一律失败，禁止后注册者覆盖先注册者——否则插件加载顺序会悄悄改变
+        // AI 看到的工具语义，这类问题排查时几乎无迹可循。
+        [[nodiscard]] std::expected<void, McpToolBindError>
+        bind(mcp::tool descriptor, McpToolHandler handler, std::string owner);
+
+        void               seal();
+        [[nodiscard]] bool sealed() const noexcept;
+
+        [[nodiscard]] const McpToolEntry* find(std::string_view name) const;
+        [[nodiscard]] std::size_t         size() const;
+
+        // 按注册顺序遍历，保证发布过程与诊断输出可复现。
+        // 注意客户端实际看到的工具顺序由 mcp::server 内部的 std::map 按名字排序决定，与此无关。
+        void forEach(const std::function<void(const McpToolEntry&)>& visitor) const;
+
+    private:
+        struct TransparentStringHash {
+            using is_transparent = void;
+
+            [[nodiscard]] std::size_t operator()(std::string_view value) const noexcept {
+                return std::hash<std::string_view>{}(value);
+            }
+
+            [[nodiscard]] std::size_t operator()(const std::string& value) const noexcept {
+                return operator()(std::string_view(value));
+            }
+        };
+
+        // deque 而非 vector：find 返回条目指针，追加时不能让已发出的指针失效。
+        std::deque<McpToolEntry>                                                             mEntries;
+        std::unordered_map<std::string, std::size_t, TransparentStringHash, std::equal_to<>> mIndex;
+
+        mutable std::mutex mMutex;
+        std::atomic<bool>  mSealed = false;
+    };
+
+} // namespace mcdk::runtime

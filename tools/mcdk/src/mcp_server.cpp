@@ -10,7 +10,9 @@
 #include <memory>
 #include <cstdint>
 #include <functional>
+#include <stdexcept>
 #include <mcdk/log_buffer.hpp>
+#include <mcdk/runtime/mcp_tool_registry.hpp>
 #include <mcdk/mcp_tool_definitions.hpp>
 #include <mcdk/mc_input_mcp.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
@@ -84,9 +86,28 @@ namespace mcdk {
         // The process id is published after server startup and read by HTTP worker threads.
         std::atomic<int>             mcPid = 0;
 
+        // 工具先进注册表，start() 时才发布给 mcp::server。内置工具与插件工具共用这张表。
+        std::shared_ptr<runtime::McpToolRegistry> toolRegistry =
+            std::make_shared<runtime::McpToolRegistry>();
+        bool builtinToolsRegistered = false;
+
+        // 内置工具重名属于编码错误，必须当场暴露，而不是静默少掉一个工具。
+        void bindBuiltinTool(mcp::tool descriptor, runtime::McpToolHandler handler) {
+            auto name   = descriptor.name;
+            auto result = toolRegistry->bind(std::move(descriptor), std::move(handler), "builtin");
+            if (!result) {
+                throw std::runtime_error(
+                    "Failed to register builtin MCP tool '" + name
+                    + "': " + std::string(runtime::describeMcpToolBindError(result.error()))
+                );
+            }
+        }
+
     public:
         explicit Impl(const McpServerConfig& cfg) : config(cfg) {}
         explicit Impl(McpServerConfig&& cfg) : config(std::move(cfg)) {}
+
+        [[nodiscard]] const std::shared_ptr<runtime::McpToolRegistry>& registry() const { return toolRegistry; }
 
         void setLogBuffer(std::shared_ptr<LogBuffer> buffer) { logBuffer = std::move(buffer); }
         void setErrBuffer(std::shared_ptr<LogBuffer> buffer) { errBuffer = std::move(buffer); }
@@ -109,7 +130,7 @@ namespace mcdk {
         void initLogTool() {
             mcp::tool logTool = mcp_tool_definitions::buildGetLatestLogsTool();
 
-            server->register_tool(
+            bindBuiltinTool(
                 logTool,
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     size_t      maxCount = params.value("max_count", 100);
@@ -129,7 +150,7 @@ namespace mcdk {
 
             mcp::tool rangeLogTool = mcp_tool_definitions::buildGetLogRangeTool();
 
-            server->register_tool(
+            bindBuiltinTool(
                 rangeLogTool,
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     size_t      startIndex = params.value("start_index", 0);
@@ -152,7 +173,7 @@ namespace mcdk {
             // 与普通日志不同，错误日志仅包含stderr的输出，甚至不一定包含非py的错误信息，例如游戏JSON错误等，完整日志需要另外查询普通日志
             mcp::tool errLogTool = mcp_tool_definitions::buildGetLatestErrorLogsTool();
 
-            server->register_tool(
+            bindBuiltinTool(
                 errLogTool,
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     size_t      maxCount = params.value("max_count", 100);
@@ -176,7 +197,7 @@ namespace mcdk {
         void initCodeExecutionTool() {
             mcp::tool codeExecTool = mcp_tool_definitions::buildExecuteCodeTool();
 
-            server->register_tool(
+            bindBuiltinTool(
                 codeExecTool,
                 [this](const nlohmann::json& params, const std::string& session_id) -> nlohmann::json {
                     if (!codeExecuteHandler) {
@@ -197,7 +218,7 @@ namespace mcdk {
         }
 
         void initProfilerTool() {
-            server->register_tool(
+            bindBuiltinTool(
                 mcp_tool_definitions::buildMcProfilerTool(),
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     if (!profilerHandler) {
@@ -255,7 +276,7 @@ namespace mcdk {
         void initJsonUiDebuggerTool() {
             mcp::tool jsonUiTool = mcp_tool_definitions::buildJsonUiDebuggerTool();
 
-            server->register_tool(
+            bindBuiltinTool(
                 jsonUiTool,
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     const std::string cmd = params.value("cmd", "/help");
@@ -483,7 +504,7 @@ namespace mcdk {
         void initGameTools() {
             // 提供重新加载游戏的工具
             mcp::tool reloadGameTool = mcp_tool_definitions::buildReloadGameTool();
-            server->register_tool(
+            bindBuiltinTool(
                 reloadGameTool,
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     const bool reloadAddons = params.value("reload_addons", false);
@@ -520,7 +541,7 @@ namespace mcdk {
             // 截图工具：捕获游戏窗口画面，返回 480p JPEG base64 图片
             mcp::tool captureTool = mcp_tool_definitions::buildCaptureGameWindowTool();
 
-            server->register_tool(
+            bindBuiltinTool(
                 captureTool,
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     const int pid = mcPid.load(std::memory_order_relaxed);
@@ -577,7 +598,7 @@ namespace mcdk {
             );
 
             // 输入工具：一次调用完成一整串键鼠操作
-            server->register_tool(
+            bindBuiltinTool(
                 mcp_tool_definitions::buildMcInputTool(),
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
                     return mc_input_mcp::handleRequest(mcPid.load(std::memory_order_relaxed), params, logBuffer.get());
@@ -585,8 +606,13 @@ namespace mcdk {
             );
         }
 
-        // 初始化所有工具
-        void initTools() {
+        // 把全部内置工具注册进注册表。幂等，重复调用是空操作。
+        // 调用方应在插件注册之前调用它，使内置工具先占位、重名能被检出。
+        void registerBuiltinTools() {
+            if (builtinToolsRegistered) {
+                return;
+            }
+            builtinToolsRegistered = true;
             initLogTool();
             initCodeExecutionTool();
             initProfilerTool();
@@ -600,13 +626,20 @@ namespace mcdk {
             if (!config.enabled || server.get() != nullptr) {
                 return;
             }
+            // 兜底：调用方未显式注册内置工具时在此补上。
+            registerBuiltinTools();
+            // 注册窗口到此关闭，其后注册表只读。
+            toolRegistry->seal();
+
             mcp::server::configuration srv_conf;
             srv_conf.host = config.serverIp;
             srv_conf.port = config.serverPort;
             server        = std::make_shared<mcp::server>(srv_conf);
             server->set_server_info("Minecraft(BE) MCP Server(MCDK)", "0.1.0");
-            // 注册API
-            initTools();
+            // 按注册表发布，发布顺序即注册顺序
+            toolRegistry->forEach([this](const runtime::McpToolEntry& entry) {
+                server->register_tool(entry.descriptor, entry.handler);
+            });
             server->start(false); // 非阻塞启动
         }
 
@@ -667,6 +700,10 @@ namespace mcdk {
     void MCPServer::setMinecraftProcessId(int processId) { mImpl->setMinecraftProcessId(processId); }
 
     int MCPServer::getMinecraftProcessId() const { return mImpl->getMinecraftProcessId(); }
+
+    const std::shared_ptr<runtime::McpToolRegistry>& MCPServer::toolRegistry() const { return mImpl->registry(); }
+
+    void MCPServer::registerBuiltinTools() { mImpl->registerBuiltinTools(); }
 
     void MCPServer::start() { mImpl->start(); }
 

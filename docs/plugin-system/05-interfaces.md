@@ -274,38 +274,84 @@ typedef struct mcdk_iface_log {
 
 ## 8. `mcdk.mcp/1`
 
+MCP 工具的描述是这套 ABI 上最复杂的一个数据结构——`mcp::tool` 含两棵 JSON 树和五个 `std::optional`，它是**复杂类型降级规则的样板**，见 §8.1。
+
 ```c
+/* 注解位掩码。禁止用位域（见 02 §5.4），用显式掩码常量 */
+typedef uint32_t mcdk_mcp_annotation;
+enum {
+    MCDK_MCP_ANNOTATION_READ_ONLY   = 1u << 0,
+    MCDK_MCP_ANNOTATION_DESTRUCTIVE = 1u << 1,
+    MCDK_MCP_ANNOTATION_IDEMPOTENT  = 1u << 2,
+    MCDK_MCP_ANNOTATION_OPEN_WORLD  = 1u << 3,
+};
+
+typedef struct mcdk_mcp_tool_desc {
+    uint32_t struct_size;
+    /* 哪些注解被显式设置（对应 C++ 侧 std::optional 的 has_value） */
+    uint32_t annotation_present;
+    /* 被设置的那些注解各自的值；未在 present 中置位的位无意义 */
+    uint32_t annotation_value;
+    uint32_t _reserved;
+    mcdk_str name;
+    mcdk_str description;
+    mcdk_str title;               /* annotations.title；len == 0 表示未设置 */
+    mcdk_str input_schema_json;   /* JSON 文本，必填 */
+    mcdk_str output_schema_json;  /* JSON 文本；len == 0 表示未设置 */
+} mcdk_mcp_tool_desc;
+
 /* 返回非 MCDK_OK 时，宿主从插件错误槽取消息转成 MCP 错误响应 */
 typedef mcdk_status (MCDK_CALL *mcdk_mcp_tool_handler)(
-    void* user, mcdk_str arguments_json, mcdk_str* out_result_json);
+    void*    user,
+    mcdk_str arguments_json,   /* 借用 */
+    mcdk_str session_id,       /* 借用，MCP 会话标识 */
+    mcdk_str* out_result_json  /* 指向插件侧 TLS，宿主立即拷贝，见 §8.4 */
+);
 
 typedef struct mcdk_iface_mcp {
     uint32_t struct_size;
-    mcdk_status MCDK_CALL (*add_tool)(mcdk_handle self,
-                                      mcdk_str name, mcdk_str description,
-                                      mcdk_str schema_json,
-                                      mcdk_mcp_tool_handler handler, void* user);
+    mcdk_status MCDK_CALL (*add_tool)(mcdk_handle                 self,
+                                      const mcdk_mcp_tool_desc*   desc,
+                                      mcdk_mcp_tool_handler       handler,
+                                      void*                       user);
     /* 当前已注册的全部工具，JSON 数组文本。借用 */
     mcdk_status MCDK_CALL (*list_tools)(mcdk_handle self, mcdk_str* out_json);
 } mcdk_iface_mcp;
 ```
 
-### 8.1 注册窗口
+### 8.1 复杂类型的降级规则（规范）
+
+`mcp::tool` 里的每一类 C++ 构造在边界上都有固定的降级形式。**这张表适用于所有接口，不止 MCP**：
+
+| C++ 侧 | 边界形态 | 本例 |
+| --- | --- | --- |
+| `nlohmann::json`（任意嵌套） | `mcdk_str`，UTF-8 JSON 文本 | `input_schema_json`、`output_schema_json`、`arguments_json` |
+| `std::string` | `mcdk_str` | `name`、`description` |
+| `std::optional<std::string>` | `mcdk_str`，`len == 0` 即未设置 | `title` |
+| `std::optional<bool>` × N | 两个 `uint32_t` 位掩码：present + value | 四个 hint |
+| `std::function` | 函数指针 + `void* user` | `handler` |
+| 可增长的参数组 | 带 `struct_size` 的描述结构体，**不用位置参数** | `mcdk_mcp_tool_desc` |
+
+最后一行是这次修正的由来：`add_tool` 原本写成位置参数 `(name, description, schema_json, ...)`，无法表达 `output_schema` 与 `annotations`，将来补就只能新开 `add_tool2`。**凡是参数会随上游结构增长的接口，一律用带 `struct_size` 的描述结构体**，这样加字段是追加而非换函数。
+
+**禁止**把 JSON 以任何二进制/句柄形式过界。文本形态虽有序列化开销，但工具注册是一次性的、参数调用是低频的（相对日志而言），换来的是零 ABI 耦合——插件用什么 JSON 库、什么版本，宿主完全不需要知道。
+
+### 8.2 注册窗口
 
 `add_tool` 只能在 `MCDK_STAGE_REGISTER` 阶段调用，通常写在 `mcdk.mcp.register.before` 事件处理器里。注册表封存后调用返回 `MCDK_ERR_WRONG_STAGE`。
 
 **工具名冲突返回 `MCDK_ERR_DUPLICATE`，禁止后注册者覆盖先注册者。** 否则插件的加载顺序会悄悄改变 AI 看到的工具语义，这类问题在排查时几乎无迹可循。插件**应该**给自己的工具名加可辨识的前缀。
 
-`schema_json` 必须是合法的 JSON Schema 对象文本；宿主在注册时校验，非法则返回 `MCDK_ERR_INVALID_ARGUMENT` 并在错误槽给出解析位置。
+`input_schema_json` 必须是合法的 JSON Schema 对象文本；宿主在注册时校验，非法则返回 `MCDK_ERR_INVALID_ARGUMENT` 并在错误槽给出解析位置。`output_schema_json` 非空时同样校验。
 
-### 8.2 handler 的线程与并发（规范）
+### 8.3 handler 的线程与并发（规范）
 
 - handler 运行在 **MCP 工作线程**，不是主线程；
 - **可能被并发调用**——现有 `RpcMethodOptions` 的默认 `maxConcurrency` 是 8，handler **必须**自行保证线程安全；
 - **允许阻塞**，这正是 `execute_python` 的主要调用场景（见 §6.1，该处禁止的是 SYNC 事件处理器，不是这里）；
 - v1 **不提供**取消令牌，handler 需自行限制耗时。超时由 MCP 层判定，但超时后 handler 仍会跑完。
 
-### 8.3 结果的所有权（规范）
+### 8.4 结果的所有权（规范）
 
 `out_result_json` 指向**插件侧**线程局部缓冲，宿主**必须**在 handler 返回后立即拷贝。这与错误槽（§3）是同一套机制，只是方向相反：谁产生数据谁用自己的 TLS 暂存，对方立即拷走，两边都不分配跨界内存。
 

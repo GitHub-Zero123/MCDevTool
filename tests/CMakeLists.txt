@@ -51,6 +51,12 @@ add_test(NAME mc-input COMMAND mc_input_test)
 add_executable(rpc_registry_test rpc_registry_test.cpp)
 target_compile_features(rpc_registry_test PRIVATE cxx_std_23)
 target_link_libraries(rpc_registry_test PRIVATE mcdk_core)
+add_test(NAME rpc-registry COMMAND rpc_registry_test)
+
+add_executable(mcp_tool_registry_test mcp_tool_registry_test.cpp)
+target_compile_features(mcp_tool_registry_test PRIVATE cxx_std_23)
+target_link_libraries(mcp_tool_registry_test PRIVATE mcdk_runtime)
+add_test(NAME mcp-tool-registry COMMAND mcp_tool_registry_test)
 
 add_executable(profiler_foundation_test profiler_foundation_test.cpp)
 target_compile_features(profiler_foundation_test PRIVATE cxx_std_23)

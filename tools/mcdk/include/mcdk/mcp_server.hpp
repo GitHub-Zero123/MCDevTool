@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <mcdk/runtime/mcp_tool_registry.hpp>
 #include <mcdk/settings.hpp>
 
 namespace mcdk {
@@ -39,6 +40,17 @@ namespace mcdk {
 
         [[nodiscard]] int getMinecraftProcessId() const;
 
+        // 工具注册表。内置工具与插件工具共用这张表，start() 时按表发布。
+        [[nodiscard]] const std::shared_ptr<runtime::McpToolRegistry>& toolRegistry() const;
+
+        // 把全部内置工具注册进注册表。幂等。
+        //
+        // 调用方应在给插件放行注册之前调用它，让内置工具先占位；之后封存注册表，
+        // 再调用 start()。不显式调用也可以，start() 会兜底补上，但那样插件就没有
+        // 插入的时机了。时序见 docs/plugin-system/08-host-integration.md §2。
+        void registerBuiltinTools();
+
+        // 封存注册表并把表中全部工具发布给 MCP 服务器，随后非阻塞启动。
         void start();
         void stop();
 

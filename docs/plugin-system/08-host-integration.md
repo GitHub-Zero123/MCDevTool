@@ -30,9 +30,16 @@
 
 ## 2. 前置 B：MCP 工具动态注册表
 
+> 已完成。实现位于 `tools/mcdk/include/mcdk/runtime/mcp_tool_registry.hpp` 与
+> `tools/mcdk/src/runtime/mcp_tool_registry.cpp`，单元测试 `tests/mcp_tool_registry_test.cpp`。
+> `MCPServer::registerBuiltinTools()` 负责内置工具入表，`MCPServer::start()` 封存并按表发布。
+> 插件注册窗口的插入点已在 `launchGameExe` 中以注释标出，待 M4 事件总线落地后接上。
+
 当前 MCP 工具在 `mcp_tool_definitions.cpp` 中静态定义，通过 `MCPServer::setXxxHandler()` 逐个绑定，插件无法插入。
 
 **必须**按 `RpcRegistry` 的形态（含 `seal()`）新建 `McpToolRegistry`，把现有内置工具改为注册进该表。`mcdk.mcp` 接口即是对该表的薄封装。
+
+注册表的 handler 类型**必须**与 `mcp::tool_handler` 逐字一致。注意 `mcp::json` 是 `nlohmann::ordered_json` 而非 `nlohmann::json`，类型写错不会编译失败，只会在每次调用时多一层隐式转换。
 
 注册时序：
 

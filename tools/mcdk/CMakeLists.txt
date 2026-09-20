@@ -64,6 +64,7 @@ add_library(mcdk_runtime STATIC
     src/game_process/platform.cpp
     src/host_bridge.cpp
     src/mcp_server.cpp
+    src/runtime/mcp_tool_registry.cpp
     src/runtime/session.cpp
 )
 target_compile_features(mcdk_runtime PUBLIC cxx_std_23)
