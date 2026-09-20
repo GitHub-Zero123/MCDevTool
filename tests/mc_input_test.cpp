@@ -107,6 +107,46 @@ int main() {
     );
     passed &= expect(mentions(badKey, "doesnotexist"), "unknown key names are named in the rejection");
 
+    // --- 截图选项 ---
+    // 坏区域必须在字段校验阶段就被拒，并说清哪里不对；留到截图阶段只会得到一句泛泛的
+    // "区域非法"，调用方看不出是形状错了还是左右反了。
+    const Json steps = Json::array({Json{{"do", "wait"}, {"ms", 1}}});
+    const auto captureArgs = [&](const Json& extra) {
+        Json args = {{"steps", steps}, {"capture", "end"}};
+        args.update(extra);
+        return call(Json{{"op", "/run"}, {"args", args}});
+    };
+
+    const auto shortRegion = captureArgs(Json{{"capture_region", Json::array({0.0, 0.0, 1.0})}});
+    passed &= expect(
+        errorCode(shortRegion) == "INVALID_ARGUMENT" && mentions(shortRegion, "four-number array"),
+        "capture_region must be a four-number array"
+    );
+
+    const auto invertedRegion = captureArgs(Json{{"capture_region", Json::array({0.8, 0.0, 0.2, 1.0})}});
+    passed &= expect(
+        mentions(invertedRegion, "left < right"),
+        "an inverted capture_region is rejected by naming the ordering rule"
+    );
+
+    const auto outOfRangeRegion = captureArgs(Json{{"capture_region", Json::array({0.0, 0.0, 1.5, 1.0})}});
+    passed &= expect(
+        mentions(outOfRangeRegion, "0.0-1.0"),
+        "an out-of-range capture_region is rejected by naming the accepted range"
+    );
+
+    const auto badHeight = captureArgs(Json{{"capture_max_height", 4000}});
+    passed &= expect(errorCode(badHeight) == "INVALID_ARGUMENT", "capture_max_height is range checked");
+
+    // 合法的截图选项必须通过字段校验，之后才会因为没有游戏窗口而失败。
+    const auto goodCapture = captureArgs(
+        Json{{"capture_region", Json::array({0.25, 0.25, 0.75, 0.75})}, {"capture_max_height", 720}}
+    );
+    passed &= expect(
+        errorCode(goodCapture) != "INVALID_ARGUMENT",
+        "a well-formed capture_region and capture_max_height pass validation"
+    );
+
     Json many = Json::array();
     for (int index = 0; index < 65; ++index) {
         many.push_back(Json{{"do", "wait"}, {"ms", 1}});

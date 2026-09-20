@@ -45,7 +45,7 @@
 * `dry_run`：只校验并换算坐标、不投递任何输入，可零风险自检。
 * 结构化错误：失败时返回明确错误码（`FOCUS_DENIED` / `FOCUS_LOST` / `POINTER_MODE_MISMATCH` / `PRIVILEGE_BLOCKED` / `DESKTOP_UNAVAILABLE` 等）与恢复建议，并说明执行到第几步、哪些输入已被释放。
 
-单批次上限 64 步，默认时间预算 30 秒。`capture: "end"` 可在同一次调用中附带一张执行后的截图。
+单批次上限 64 步，默认时间预算 30 秒。`capture: "end"` 可在同一次调用中附带一张执行后的截图，`capture_region`（`[left, top, right, bottom]`，与步骤坐标同一套客户区百分比）和 `capture_max_height`（默认 480）控制截取范围与尺寸。小字在默认 480p 下读不出来时，截刚操作过的那一块比整张放大更清楚、数据量也更小。截图不等待游戏处理完输入，需要画面反映操作结果时在步骤末尾加 `wait`。
 
 `logs: "end"` 可同时附带返回时最近的游戏日志，`logs_max_count` 默认 20，范围 1–200，按时间从旧到新排列。日志来自与 `get_latest_logs` 相同的缓冲区，包含历史日志，不保证每条都由本次操作触发。需要等待游戏异步输出时，可在步骤末尾增加 `wait`。
 

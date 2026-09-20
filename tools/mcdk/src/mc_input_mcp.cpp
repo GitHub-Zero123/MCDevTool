@@ -75,6 +75,7 @@ namespace {
         Enum,     // 取值限定于 options
         PointAbs, // [x, y]，客户区百分比 0.0-1.0
         PointRel, // [dx, dy]，相对位移
+        Rect,     // [left, top, right, bottom]，客户区百分比 0.0-1.0
         Keys,     // "ctrl+r" 或 ["ctrl", "r"]
         Steps,    // 步骤数组，递归校验
     };
@@ -131,6 +132,28 @@ namespace {
                  : Outcome<void>{invalid(std::string{where} + ": expected a two-number array such as [0.5, 0.5].")};
     }
 
+    // 左右/上下颠倒在这里就拦下来，比留到截图阶段返回一个泛泛的"区域非法"清楚得多。
+    Outcome<void> validateRect(const Json& value, std::string_view where) {
+        const bool shaped = value.is_array() && value.size() == 4
+                         && std::ranges::all_of(value, [](const Json& item) { return item.is_number(); });
+        if (!shaped) {
+            return invalid(
+                std::string{where} + ": expected a four-number array such as [0.0, 0.0, 1.0, 1.0]."
+            );
+        }
+        const double left   = value[0].get<double>();
+        const double top    = value[1].get<double>();
+        const double right  = value[2].get<double>();
+        const double bottom = value[3].get<double>();
+        if (left < 0.0 || top < 0.0 || right > 1.0 || bottom > 1.0) {
+            return invalid(std::string{where} + ": every value must be within 0.0-1.0.");
+        }
+        if (left >= right || top >= bottom) {
+            return invalid(std::string{where} + ": expected left < right and top < bottom.");
+        }
+        return {};
+    }
+
     Outcome<void> validateField(const Json& value, const FieldSpec& spec, std::string_view where) {
         const std::string label = std::string{where} + "." + std::string{spec.name};
 
@@ -155,6 +178,8 @@ namespace {
         case FieldType::PointAbs:
         case FieldType::PointRel:
             return validatePair(value, label);
+        case FieldType::Rect:
+            return validateRect(value, label);
         case FieldType::Keys:
             return validateKeys(value, label);
         case FieldType::Steps:
@@ -410,6 +435,22 @@ namespace {
          0,
          CaptureNames,
          "end=结束后附带一张截图，默认 none。截图不等待游戏处理完输入，需要画面反映操作结果时在步骤末尾加 wait"},
+        {"capture_region",
+         FieldType::Rect,
+         false,
+         0,
+         0,
+         {},
+         "只截客户区里的一块，[left, top, right, bottom] 客户区百分比，与步骤坐标同一套；"
+         "默认整块。物品数量、tooltip 这类小字在默认 480p 下读不出来，截刚点过的那一块比"
+         "整张放大更清楚、数据量也更小"},
+        {"capture_max_height",
+         FieldType::Int,
+         false,
+         120,
+         1080,
+         {},
+         "截图高度上限，默认 480；保持宽高比，小窗口不放大。图越大返回体积越大"},
         {"logs",
          FieldType::Enum,
          false,
@@ -440,6 +481,23 @@ namespace {
     bool wantsCapture(const Json& args) {
         const auto found = args.find("capture");
         return found != args.end() && found->get<std::string>() == "end";
+    }
+
+    // 字段校验已经保证了形状和取值范围，这里只做换算。
+    MCDevTool::Style::CaptureOptions readCaptureOptions(const Json& args) {
+        MCDevTool::Style::CaptureOptions options;
+        if (const auto found = args.find("capture_max_height"); found != args.end()) {
+            options.maxHeight = static_cast<unsigned>(found->get<double>());
+        }
+        if (const auto found = args.find("capture_region"); found != args.end()) {
+            options.region = {
+                (*found)[0].get<double>(),
+                (*found)[1].get<double>(),
+                (*found)[2].get<double>(),
+                (*found)[3].get<double>(),
+            };
+        }
+        return options;
     }
 
     // --- 步骤数组的校验与解析 ---
@@ -874,9 +932,9 @@ namespace {
         std::string                failure; // image 为空时说明原因，供警告使用。
     };
 
-    Capture captureIfRequested(const Context& context, bool requested) {
+    Capture captureIfRequested(const Context& context, bool requested, const Json& args) {
         if (!requested) return {};
-        auto frame = MCDevTool::Style::captureMinecraftWindowJpeg(context.pid);
+        auto frame = MCDevTool::Style::captureMinecraftWindowJpeg(context.pid, readCaptureOptions(args));
         if (frame.has_value() && !frame->empty()) {
             return {base64::encode(reinterpret_cast<const char*>(frame->data()), frame->size()), {}};
         }
@@ -915,7 +973,7 @@ namespace {
                 return Engine::run(context.pid, steps, options)
                     .transform([&](const Engine::Report& report) {
                         const bool wanted  = wantsCapture(args) && !report.dryRun;
-                        auto       capture = captureIfRequested(context, wanted);
+                        auto       capture = captureIfRequested(context, wanted, args);
 
                         const std::string summary =
                             report.dryRun

@@ -54,8 +54,13 @@ option_end()
 if is_plat("windows") then
     add_cxflags("/utf-8", "/EHsc")
     add_defines("_CRT_SECURE_NO_WARNINGS")
-    add_defines("_HAS_CXX23=1")
     add_defines("UNICODE", "_UNICODE")
+    -- CMake 在 MSVC 下会默认链接这组系统库（CMAKE_CXX_STANDARD_LIBRARIES），xmake 不会。
+    -- 不补齐的话，同一份代码在两套构建下的链接结果就不一样，而且是逐个目标随机踩雷。
+    add_syslinks(
+        "kernel32", "user32", "gdi32", "winspool", "shell32",
+        "ole32", "oleaut32", "uuid", "comdlg32", "advapi32"
+    )
 end
 
 if is_plat("linux") then
@@ -65,13 +70,23 @@ end
 
 includes("libs/nbt")
 
+-- 目标划分与各 CMakeLists 一一对应，方便两套构建互相对照。
+--
+-- 唯一的缺口：xmake 不构建可选的原生性能分析组件
+-- （components/profiler/tracy-bridge，需要抓取 Tracy 与 Capstone）。
+-- mcdev_profiler_core 只是运行时按需加载那个 DLL 的加载器，缺少 DLL 时性能分析
+-- 会在运行时报告不可用，其余功能不受影响。需要该组件请使用 CMake 构建。
+
 target("mcp")
     set_kind("static")
     set_languages("c++17")
     add_files("libs/cpp-mcp/src/*.cpp")
+    -- cpp-mcp 的公开头直接 include <nlohmann/json.hpp>。CMake 那边由根目录的
+    -- include_directories 全局提供，xmake 没有等价物，必须在这里显式给出。
     add_includedirs(
         "libs/cpp-mcp/include",
         "libs/cpp-mcp/common",
+        "libs/nlohmann",
         {public = true}
     )
     if is_plat("windows") then
@@ -79,38 +94,57 @@ target("mcp")
     end
 target_end()
 
+target("mcdevtool_utils")
+    set_kind("static")
+    set_languages("c++23")
+    add_files("src/utils.cpp")
+    add_includedirs("include", {public = true})
+target_end()
+
+target("mcdevtool_game_discovery")
+    set_kind("static")
+    set_languages("c++23")
+    add_files("src/game_discovery.cpp")
+    add_includedirs("include", {public = true})
+    add_deps("mcdevtool_utils")
+target_end()
+
 target("mcdevtool")
     set_kind("object")
+    -- include/mcdevtool/style.h 使用 std::expected，必须是 C++23。
+    set_languages("c++23")
     add_files(
         "src/env.cpp",
         "src/level.cpp",
         "src/addon.cpp",
-        "src/utils.cpp",
         "src/reload.cpp",
         "src/debug.cpp",
         "src/style.cpp",
         "src/window_capture.cpp",
-        "src/game_discovery.cpp"
+        "src/window_input.cpp"
     )
     add_includedirs("include", {public = true})
     add_includedirs("libs/nlohmann", {public = true})
     add_includedirs("libs/nbt/include", {public = true})
     add_packages("binarystream", "zlib", {public = true})
-    add_deps("NBT")
-    
+    add_deps("NBT", "mcdevtool_game_discovery")
+
     if is_plat("windows") then
-        add_syslinks("user32", "shell32", "d3d11", "dwmapi", "windowsapp", "windowscodecs", "ole32", {public = true})
+        add_syslinks(
+            "user32", "shell32", "d3d11", "dwmapi", "windowsapp", "windowscodecs", "ole32", "uuid",
+            {public = true}
+        )
     end
 target_end()
 
 target("mcdev_mod_resource")
     set_kind("object")
     add_includedirs("mods/Resource", {public = true})
-    
+
     on_load(function (target)
         local resfile = path.join(os.projectdir(), "mods/Resource/INCLUDE_MOD.cpp")
         local script = path.join(os.projectdir(), "mods/generate.py")
-        
+
         local need_generate = not os.isfile(resfile)
         if not need_generate then
             local srcdir = path.join(os.projectdir(), "mods/INCLUDE_TEST_MOD")
@@ -126,14 +160,14 @@ target("mcdev_mod_resource")
                 end
             end
         end
-        
+
         if need_generate then
             cprint("${green}generating embedded resources...${clear}")
             local oldir = os.cd(path.join(os.projectdir(), "mods"))
             os.exec("python generate.py")
             os.cd(oldir)
         end
-        
+
         if os.isfile(resfile) then
             target:add("files", resfile)
         end
@@ -163,6 +197,32 @@ target("MCDevLink")
 target_end()
 
 if has_config("build_mcdk") then
+    target("mcdev_profiler_core")
+        set_kind("static")
+        set_languages("c++23")
+        add_files(
+            "tools/mcdk/src/performance/native_bridge_loader.cpp",
+            "tools/mcdk/src/performance/profiler_runtime_owner.cpp",
+            "tools/mcdk/src/performance/profiler_service.cpp",
+            "tools/mcdk/src/performance/profiler_types.cpp"
+        )
+        add_includedirs("tools/mcdk/include", {public = true})
+        add_includedirs("libs/nlohmann")
+        if is_plat("windows") then
+            add_syslinks("bcrypt", "iphlpapi", "ws2_32", {public = true})
+        end
+    target_end()
+
+    -- 工具描述由 mcdk 和只做转发的 stdio bridge 共用，因此单独成库。
+    target("mcdk_mcp_tools")
+        set_kind("static")
+        set_languages("c++20")
+        add_files("tools/mcdk/src/mcp_tool_definitions.cpp")
+        add_includedirs("tools/mcdk/include", {public = true})
+        add_includedirs("libs/nlohmann", {public = true})
+        add_deps("mcp")
+    target_end()
+
     target("mcdk_core")
         set_kind("static")
         set_languages("c++23")
@@ -177,7 +237,8 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/jsonui_reload_support.cpp",
             "tools/mcdk/src/level.cpp",
             "tools/mcdk/src/log_buffer.cpp",
-            "tools/mcdk/src/mcp_tool_definitions.cpp",
+            "tools/mcdk/src/mc_input_mcp.cpp",
+            "tools/mcdk/src/mc_profiler_mcp.cpp",
             "tools/mcdk/src/mod_dir_config.cpp",
             "tools/mcdk/src/mod_register.cpp",
             "tools/mcdk/src/reload_code.cpp",
@@ -187,7 +248,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/world_project.cpp"
         )
         add_includedirs("tools/mcdk/include", {public = true})
-        add_deps("mcdevtool", "mcp", "mcdev_mod_resource")
+        add_deps("mcdevtool", "mcdev_profiler_core", "mcdk_mcp_tools", "mcp", "mcdev_mod_resource")
     target_end()
 
     target("mcdk_runtime")
@@ -228,16 +289,46 @@ if has_config("build_mcdk") then
             end)
         end
     target_end()
+
+    -- 只做转发的 stdio MCP 桥：离线也要能回答 tools/list，因此只依赖共享的工具描述库。
+    target("mcdk_stdio_bridge")
+        set_kind("binary")
+        set_languages("c++20")
+        add_files("tools/mcdk_stdio_bridge/main.cpp")
+        add_includedirs("tools/mcdk/include")
+        add_deps("mcdk_mcp_tools", "mcp")
+        if is_plat("windows") then
+            add_syslinks("ws2_32")
+        end
+    target_end()
+
+    target("mcdk-api")
+        set_kind("shared")
+        set_languages("c++23")
+        add_files("tools/mcdk_api/src/mcdk_api.cpp")
+        add_defines("MCDK_API_BUILD")
+        add_includedirs("tools/mcdk_api/include", {public = true})
+        add_deps("mcdevtool_game_discovery")
+    target_end()
 end
 
 if has_config("build_test") then
     if is_plat("windows") then
+        -- 需要交互式桌面及可用的 WGC / OpenGL 环境，按需运行。
         target("window_capture_test")
             set_kind("binary")
             set_languages("c++23")
             add_files("tests/window_capture_test.cpp")
             add_deps("mcdevtool")
             add_syslinks("opengl32", "gdi32")
+        target_end()
+
+        -- 会抢占前台并移动鼠标，同样按需手动运行。
+        target("window_input_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/window_input_test.cpp")
+            add_deps("mcdevtool")
         target_end()
     end
 
@@ -249,13 +340,29 @@ if has_config("build_test") then
 
     target("test2")
         set_kind("binary")
+        set_languages("c++23")
         add_files("tests/test2.cpp")
         add_deps("mcdevtool")
     target_end()
 
     target("test3")
         set_kind("binary")
+        set_languages("c++23")
         add_files("tests/test3.cpp")
+    target_end()
+
+    target("captureTest")
+        set_kind("binary")
+        set_languages("c++23")
+        add_files("tests/captureTest.cpp")
+        add_deps("mcdevtool")
+    target_end()
+
+    target("mcp_server_test")
+        set_kind("binary")
+        set_languages("c++23")
+        add_files("tests/mcp_server_test.cpp")
+        add_deps("mcdevtool", "mcp")
     target_end()
 
     if has_config("build_mcdk") then
@@ -263,6 +370,34 @@ if has_config("build_test") then
             set_kind("binary")
             set_languages("c++23")
             add_files("tests/rpc_registry_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("hot_reload_filter_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/hot_reload_filter_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("game_environment_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/game_environment_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("mc_input_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/mc_input_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("profiler_foundation_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/profiler_foundation_test.cpp")
             add_deps("mcdk_core")
         target_end()
 
