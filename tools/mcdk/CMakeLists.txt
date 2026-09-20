@@ -65,11 +65,13 @@ add_library(mcdk_runtime STATIC
     src/host_bridge.cpp
     src/mcp_server.cpp
     src/plugin_host/abi_layout_check.cpp
+    src/plugin_host/event_bus.cpp
     src/plugin_host/guard.cpp
     src/plugin_host/host.cpp
     src/plugin_host/registry.cpp
     src/plugin_host/interfaces/console.cpp
     src/plugin_host/interfaces/core.cpp
+    src/plugin_host/interfaces/events.cpp
     src/runtime/mcp_tool_registry.cpp
     src/runtime/session.cpp
 )

@@ -1,6 +1,7 @@
 #include <mcdk/plugin_host/host.hpp>
 
 #include <mcdk/console_output.hpp>
+#include <mcdk/plugin_host/events.hpp>
 #include <mcdk/plugin_host/guard.hpp>
 
 #include "registry.hpp"
@@ -157,6 +158,8 @@ namespace mcdk::plugin_host {
 
         void advance(mcdk_stage stage) {
             detail::setCurrentStage(stage);
+            // 阶段推进是主线程上的天然抽水点。
+            pumpMainThreadWork();
             // 零插件时这是一次空遍历，没有其他开销。
             detail::registry().forEach([&](mcdk_handle handle, detail::PluginRecord& record) {
                 if (record.degraded || record.desc.on_stage == nullptr) {
@@ -188,6 +191,8 @@ namespace mcdk::plugin_host {
             detail::registry().forEachReversed([&](mcdk_handle handle, detail::PluginRecord& record) {
                 terminate(handle, record);
             });
+            // 全部插件终结之后才停派发线程：终结过程本身可能还要抽主线程队列。
+            shutdownEventBus();
         }
 
         [[nodiscard]] bool empty() const noexcept { return detail::registry().aliveCount() == 0; }
@@ -213,10 +218,9 @@ namespace mcdk::plugin_host {
     private:
         // 终结单个插件。顺序是强规范，见 docs/plugin-system/03-abi-reference.md §5.1。
         static void terminate(mcdk_handle handle, detail::PluginRecord& record) {
-            // 1. 停止向该插件派发新事件         —— 事件总线尚未落地（M4）
-            // 2. 等待 in-flight 回调返回、丢弃队列中属于它的事件 —— 同上
-            // 3. 注销其全部事件订阅             —— 同上
-            //    这三步必须在 on_unload 之前完成，顺序反了会把事件打进正在析构的插件对象。
+            // 1~3. 停止派发、等待 in-flight 回调返回、注销全部订阅。
+            //      必须在 on_unload 之前完成，顺序反了会把事件打进正在析构的插件对象。
+            detachSubscriber(handle);
             // 4. 调用 on_unload
             if (record.desc.on_unload != nullptr) {
                 record.desc.on_unload(record.desc.user);

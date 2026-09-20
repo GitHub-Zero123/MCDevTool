@@ -58,17 +58,17 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `get_last_error` | 1.0 | 计划 | 取当前线程错误槽 |
-| `get_host_version` | 1.0 | 计划 | 宿主版本串 |
-| `get_stage` | 1.0 | 计划 | 当前生命周期阶段 |
-| `get_config` | 1.0 | 计划 | 该条声明的 config JSON 文本；未设置时为 `"null"` |
+| `get_last_error` | 1.0 | 可用 | 取当前线程错误槽 |
+| `get_host_version` | 1.0 | 可用 | 宿主版本串 |
+| `get_stage` | 1.0 | 可用 | 当前生命周期阶段 |
+| `get_config` | 1.0 | 可用 | 该条声明的 config JSON 文本；未设置时为 `"null"` |
 
 ### 3.2 `mcdk.console/1`
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `log` | 1.0 | 计划 | 按级别输出，线程安全 |
-| `log_colored` | 1.0 | 计划 | 按颜色输出，线程安全 |
+| `log` | 1.0 | 可用 | 按级别输出，线程安全 |
+| `log_colored` | 1.0 | 可用 | 按颜色输出，线程安全 |
 
 ### 3.3 `mcdk.info/1`
 
@@ -104,11 +104,11 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `resolve` | 1.0 | 计划 | 事件名 → 运行期 id，未知返回 0 |
-| `subscribe` | 1.0 | 计划 | 返回退订 token |
-| `unsubscribe` | 1.0 | 计划 | — |
-| `emit` | 1.0 | 计划 | 插件自定义事件 |
-| `post_main` | 1.0 | 计划 | 投递到主线程 |
+| `resolve` | 1.0 | 可用 | 事件名 → 运行期 id，未知返回 0 |
+| `subscribe` | 1.0 | 可用 | 返回退订 token |
+| `unsubscribe` | 1.0 | 可用 | — |
+| `emit` | 1.0 | 计划 | 插件自定义事件。当前对内置 `mcdk.*` 事件返回 `MCDK_ERR_NOT_SUPPORTED`，待自定义事件命名空间开放 |
+| `post_main` | 1.0 | 可用 | 投递到主线程 |
 
 v1 合计 **21 个 ABI 函数**。
 
@@ -118,17 +118,19 @@ v1 合计 **21 个 ABI 函数**。
 
 | 事件名 | @since | 状态 | payload | 可否决 |
 | --- | --- | --- | --- | :-: |
-| `mcdk.mcp.register.before` | 1.0 | 计划 | `mcdk_ev_mcp_register` | 否 |
-| `mcdk.mcp.register.finish` | 1.0 | 计划 | `mcdk_ev_mcp_register` | 否 |
-| `mcdk.game.launch.before` | 1.0 | 计划 | `mcdk_ev_game_launch_before` | 是 |
-| `mcdk.game.launch.finish` | 1.0 | 计划 | `mcdk_ev_game_launch_finish` | 否 |
-| `mcdk.game.exit` | 1.0 | 计划 | `mcdk_ev_game_exit` | 否 |
+| `mcdk.mcp.register.before` | 1.0 | 可用 | `mcdk_ev_mcp_register` | 否 |
+| `mcdk.mcp.register.finish` | 1.0 | 可用 | `mcdk_ev_mcp_register` | 否 |
+| `mcdk.game.launch.before` | 1.0 | 可用 | `mcdk_ev_game_launch_before` | 是 |
+| `mcdk.game.launch.finish` | 1.0 | 可用 | `mcdk_ev_game_launch_finish` | 否 |
+| `mcdk.game.exit` | 1.0 | 可用 | `mcdk_ev_game_exit` | 否 |
 | `mcdk.log.line` | 1.0 | 计划 | `mcdk_ev_log_line` | 是 |
 | `mcdk.log.error` | 1.0 | 计划 | `mcdk_ev_log_line` | 是 |
 | `mcdk.ipc.client.connected` | 1.0 | 计划 | `mcdk_ev_ipc_client` | 否 |
 | `mcdk.ipc.client.disconnected` | 1.0 | 计划 | `mcdk_ev_ipc_client` | 否 |
 
-v1 合计 **9 个事件、6 个 payload 结构体**。
+v1 合计 **9 个事件、6 个 payload 结构体**。其中 5 个已有发射点；`log.line` / `log.error` /
+`ipc.client.*` 四个的 payload 与 id 已定义、订阅可用，但**宿主尚未接上发射点**——
+它们分别要接进 `LogBuffer` 写入路径与 `DebugIPCServer` 的连接回调。
 
 ### 4.2 已设计未实现
 

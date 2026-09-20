@@ -6,6 +6,7 @@
 
 #include <mcdk/plugin/abi/iface/console.h>
 #include <mcdk/plugin/abi/iface/core.h>
+#include <mcdk/plugin/abi/iface/events.h>
 
 namespace mcdk::plugin_host::detail {
 
@@ -137,6 +138,7 @@ namespace mcdk::plugin_host::detail {
 
     const mcdk_iface_console* consoleTable() noexcept;
     const mcdk_iface_core*    coreTable() noexcept;
+    const mcdk_iface_events*  eventsTable() noexcept;
 
     const void* findInterfaceTable(const char* name, std::uint32_t version) noexcept {
         if (name == nullptr) {
@@ -148,6 +150,9 @@ namespace mcdk::plugin_host::detail {
         }
         if (std::strcmp(name, MCDK_IFACE_CONSOLE_NAME) == 0 && version == MCDK_IFACE_CONSOLE_VERSION) {
             return consoleTable();
+        }
+        if (std::strcmp(name, MCDK_IFACE_EVENTS_NAME) == 0 && version == MCDK_IFACE_EVENTS_VERSION) {
+            return eventsTable();
         }
         return nullptr;
     }

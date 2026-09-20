@@ -11,6 +11,7 @@
 #include "abi/entry.h"
 #include "console.hpp"
 #include "context.hpp"
+#include "events.hpp"
 #include "detail/abi_bridge.hpp"
 #include "detail/barrier.hpp"
 #include "error.hpp"

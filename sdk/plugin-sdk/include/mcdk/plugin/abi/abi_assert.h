@@ -26,7 +26,9 @@
 #include "core.h"
 #include "entry.h"
 #include "iface/console.h"
+#include "events.h"
 #include "iface/core.h"
+#include "iface/events.h"
 
 namespace mcdk::abi_assert {
 
@@ -104,6 +106,17 @@ namespace mcdk::abi_assert {
         "mcdk_iface_console::log must sit right after struct_size and its padding"
     );
 
+    MCDK_ABI_CHECK_GROWABLE(mcdk_iface_events);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_event);
+
+    /* 事件 payload：每新增一个都必须在此登记，否则它不受任何保护。 */
+    MCDK_ABI_CHECK_GROWABLE(mcdk_ev_mcp_register);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_launch_before);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_launch_finish);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_exit);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_ev_log_line);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_ev_ipc_client);
+
     /* -------------------------------------------------------------- */
     /* 枚举底层类型                                                     */
     /* -------------------------------------------------------------- */
@@ -111,6 +124,8 @@ namespace mcdk::abi_assert {
     static_assert(std::is_same_v<mcdk_stage, uint32_t>, "mcdk_stage must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_log_level, uint32_t>, "mcdk_log_level must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_color, uint32_t>, "mcdk_color must be a fixed-width alias");
+    static_assert(std::is_same_v<mcdk_dispatch_mode, uint32_t>, "mcdk_dispatch_mode must be a fixed-width alias");
+    static_assert(std::is_same_v<mcdk_event_result, uint32_t>, "mcdk_event_result must be a fixed-width alias");
 
 #undef MCDK_ABI_CHECK_GROWABLE
 #undef MCDK_ABI_CHECK_LAYOUT

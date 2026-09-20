@@ -42,6 +42,12 @@ STAGE_RUNTIME
 STAGE_SHUTDOWN
 ```
 
+> 实现状态：总线位于 `tools/mcdk/src/plugin_host/event_bus.cpp`，热路径入口
+> `tools/mcdk/include/mcdk/plugin_host/events.hpp`，ABI 在
+> `sdk/plugin-sdk/include/mcdk/plugin/abi/events.h` 与 `abi/iface/events.h`，
+> 插件侧的类型化封装在 `sdk/plugin-sdk/include/mcdk/plugin/events.hpp`。
+> 各事件的接入进度见 [13-registry.md](13-registry.md) §4.1。
+
 ## 3. 线程与派发模式
 
 宿主当前存在主线程、5 个热更新 watcher 线程、MCP server 线程、IPC 线程、Host Bridge 线程。**规范：事件回调所在线程必须是 ABI 的一部分，由订阅方在订阅时声明。**

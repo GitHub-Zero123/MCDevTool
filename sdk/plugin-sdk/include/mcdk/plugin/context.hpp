@@ -6,6 +6,7 @@
 #include "abi/entry.h"
 #include "abi/iface/core.h"
 #include "console.hpp"
+#include "events.hpp"
 #include "detail/abi_bridge.hpp"
 
 namespace mcdk {
@@ -24,6 +25,9 @@ namespace mcdk {
 
         [[nodiscard]] const Console& console() const noexcept { return mConsole; }
 
+        // 事件订阅。非 const：订阅要把闭包存进来。
+        [[nodiscard]] Events& events() noexcept { return mEvents; }
+
         // .mcdev.json 中本条插件声明的 config 字段，UTF-8 JSON 文本。
         // 同一个插件二进制可以声明多次、各带不同 config，据此表现出不同行为。
         // 未设置时是字面量 "null"，可以直接丢给任意 JSON 解析器，无需特判。
@@ -38,6 +42,11 @@ namespace mcdk {
             mConsole     = Console(
                 mSelf,
                 detail::getInterface<mcdk_iface_console>(host, MCDK_IFACE_CONSOLE_NAME, MCDK_IFACE_CONSOLE_VERSION)
+            );
+
+            mEvents = Events(
+                mSelf,
+                detail::getInterface<mcdk_iface_events>(host, MCDK_IFACE_EVENTS_NAME, MCDK_IFACE_EVENTS_VERSION)
             );
 
             mCore = detail::getInterface<mcdk_iface_core>(host, MCDK_IFACE_CORE_NAME, MCDK_IFACE_CORE_VERSION);
@@ -56,6 +65,7 @@ namespace mcdk {
         std::string            mHostVersion;
         std::string            mConfigJson = "null";
         Console                mConsole;
+        Events                 mEvents;
         const mcdk_iface_core* mCore = nullptr;
     };
 

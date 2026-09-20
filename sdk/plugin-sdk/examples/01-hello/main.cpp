@@ -21,6 +21,14 @@ namespace {
             context.console().info("config=" + std::string(context.configJson()));
 
             context.console().print(mcdk::Color::Cyan, "stage:register");
+
+            // 事件订阅必须在 REGISTER 内完成：事件不重放，错过就收不到了。
+            context.events().on<mcdk::ev::McpRegisterFinish>([&context](const auto& e) {
+                context.console().info("event:mcp-register-finish:" + std::to_string(e.toolCount));
+            });
+            context.events().on<mcdk::ev::GameLaunchFinish>([&context](const auto& e) {
+                context.console().info("event:game-launch-finish:" + std::to_string(e.pid));
+            });
         }
 
         void onConfig(mcdk::Context& context) override { context.console().print(mcdk::Color::Cyan, "stage:config"); }

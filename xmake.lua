@@ -263,11 +263,13 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/host_bridge.cpp",
             "tools/mcdk/src/mcp_server.cpp",
             "tools/mcdk/src/plugin_host/abi_layout_check.cpp",
+            "tools/mcdk/src/plugin_host/event_bus.cpp",
             "tools/mcdk/src/plugin_host/guard.cpp",
             "tools/mcdk/src/plugin_host/host.cpp",
             "tools/mcdk/src/plugin_host/registry.cpp",
             "tools/mcdk/src/plugin_host/interfaces/console.cpp",
             "tools/mcdk/src/plugin_host/interfaces/core.cpp",
+            "tools/mcdk/src/plugin_host/interfaces/events.cpp",
             "tools/mcdk/src/runtime/mcp_tool_registry.cpp",
             "tools/mcdk/src/runtime/session.cpp"
         )

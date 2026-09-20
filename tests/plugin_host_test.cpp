@@ -4,10 +4,13 @@
 // 覆盖 M2 的验收路径：读声明 → 校验 → 调入口 → 推进各阶段 → 终结。
 // 这不是 mock —— 走的是 LoadLibrary、GetProcAddress、真实的 C ABI 握手。
 //
+#include <mcdk/plugin_host/events.hpp>
 #include <mcdk/plugin_host/host.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -96,6 +99,45 @@ int main() {
         contains(output, R"(config={"mode":"test","level":3})"),
         "the declaration's config JSON reaches the plugin verbatim"
     );
+
+    // --- 事件 --------------------------------------------------------
+    // 01-hello 在 onRegister 里订阅了两个事件（默认 QUEUED）。这里手动发射，
+    // 验证订阅 → 深拷贝入队 → 派发线程回调 → 插件侧 SDK 还原成具名字段整条链。
+    {
+        using namespace mcdk::plugin_host;
+        MCDK_EMIT(EventId::McpRegisterFinish, [] {
+            mcdk_ev_mcp_register payload{};
+            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+            payload.tool_count  = 9;
+            return payload;
+        });
+        MCDK_EMIT(EventId::GameLaunchFinish, [] {
+            mcdk_ev_game_launch_finish payload{};
+            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+            payload.pid         = 4242;
+            return payload;
+        });
+        // QUEUED 是异步的，等派发线程把队列吃完。
+        for (int attempt = 0; attempt < 200 && !contains(output, "event:game-launch-finish:4242"); ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        passed &= expect(contains(output, "event:mcp-register-finish:9"), "a queued event reaches the plugin");
+        passed &= expect(
+            contains(output, "event:game-launch-finish:4242"),
+            "the typed payload fields survive the round trip through the C ABI"
+        );
+    }
+
+    // 没有订阅者的事件必须走零开销路径，且不能崩。
+    {
+        using namespace mcdk::plugin_host;
+        passed &= expect(!hasSubscribers(EventId::LogError), "nobody subscribed to log.error");
+        MCDK_EMIT(EventId::LogError, [] {
+            mcdk_ev_log_line payload{};
+            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+            return payload;
+        });
+    }
 
     // --- 终结 --------------------------------------------------------
     host.shutdown();
