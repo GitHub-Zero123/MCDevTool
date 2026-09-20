@@ -61,9 +61,13 @@ namespace MCDevTool::Debug {
 
         // 获取链接的客户端数量
         size_t getClientCount() const;
+
+        // 已连接客户端的对端端口。取不到的（socket 已失效）以 0 计入。
+        std::vector<unsigned short> getClientPorts() const;
 // 客户端连上 / 断开时的回调，参数是变化后的客户端数与本次变化的方向。
 // 本层不认识插件系统（mcdevtool 是 mcdk_runtime 的上游），所以只提供钩子，
-        void setClientCountChangedCallback(std::function<void(std::size_t, bool)> callback);
+        // 第三个参数是本次变化的那个客户端的对端端口，取不到时为 0。
+        void setClientCountChangedCallback(std::function<void(std::size_t, bool, unsigned short)> callback);
 
         std::atomic<bool>* getStopFlag();
 
@@ -91,8 +95,8 @@ namespace MCDevTool::Debug {
         std::map<uint64_t, std::shared_ptr<PendingJsonRequest>> mPendingJsonRequests;
         std::atomic<uint64_t>                               mNextJsonRequestId = 1;
         std::atomic<bool>                                   mStopFlag = false;
-        std::function<void(std::size_t, bool)>              mClientCountChanged;
-        void notifyClientCountChanged(std::size_t count, bool connected) const;
+        std::function<void(std::size_t, bool, unsigned short)> mClientCountChanged;
+        void notifyClientCountChanged(std::size_t count, bool connected, unsigned short port) const;
         bool sendMessageToOneClient(uint16_t messageType, const uint8_t* data, size_t length);
         bool sendBufferToSocket(void* socketPtr, const uint8_t* data, size_t length);
         IPCJsonResult requestJsonRawWithId(

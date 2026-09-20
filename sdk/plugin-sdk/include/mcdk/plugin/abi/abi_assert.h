@@ -94,6 +94,7 @@ MCDK_ABI_CHECK_GROWABLE(mcdk_iface_core);
     MCDK_ABI_CHECK_GROWABLE(mcdk_session_info);
     /* mcdk_bool 是 uint8_t，到 game_debug_ready 为止只有 18 字节，而 mcdk_str 要 8 字节对齐。
        显式的 _reserved[6] 把这段填满；这条断言就是盯着有人把它删掉。 */
+    static_assert(offsetof(mcdk_session_info, game_state) == 20, "mcdk_session_info field order changed");
     static_assert(offsetof(mcdk_session_info, mcp_ip) == 24, "mcdk_session_info padding changed");
 
     MCDK_ABI_CHECK_GROWABLE(mcdk_iface_game);
@@ -116,6 +117,7 @@ MCDK_ABI_CHECK_GROWABLE(mcdk_iface_core);
     MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_exit);
     MCDK_ABI_CHECK_GROWABLE(mcdk_ev_log_line);
     MCDK_ABI_CHECK_GROWABLE(mcdk_ev_ipc_client);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_state);
 /* 枚举底层类型                                                     */
 /* 必须是定宽整数别名而非 typedef enum——后者的底层类型由编译器自行决定。 */
     static_assert(std::is_same_v<mcdk_stage, uint32_t>, "mcdk_stage must be a fixed-width alias");
@@ -124,6 +126,7 @@ MCDK_ABI_CHECK_GROWABLE(mcdk_iface_core);
     static_assert(std::is_same_v<mcdk_dispatch_mode, uint32_t>, "mcdk_dispatch_mode must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_event_result, uint32_t>, "mcdk_event_result must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_log_channel, uint32_t>, "mcdk_log_channel must be a fixed-width alias");
+    static_assert(std::is_same_v<mcdk_game_state, uint32_t>, "mcdk_game_state must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_log_order, uint32_t>, "mcdk_log_order must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_side, uint32_t>, "mcdk_side must be a fixed-width alias");
     static_assert(std::is_same_v<mcdk_image_format, uint32_t>, "mcdk_image_format must be a fixed-width alias");

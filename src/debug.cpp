@@ -15,6 +15,25 @@
 #endif
 
 namespace MCDevTool::Debug {
+
+    namespace {
+        // 取对端端口。失败返回 0。
+        unsigned short peerPort(void* socketPtr) {
+            if (!socketPtr) {
+                return 0;
+            }
+            sockaddr_in6 address{};
+            int          length = static_cast<int>(sizeof(address));
+            if (getpeername(reinterpret_cast<SOCKET>(socketPtr), reinterpret_cast<sockaddr*>(&address), &length) != 0) {
+                return 0;
+            }
+            if (address.sin6_family == AF_INET) {
+                return ntohs(reinterpret_cast<const sockaddr_in*>(&address)->sin_port);
+            }
+            return ntohs(address.sin6_port);
+        }
+    } // namespace
+
 #ifdef _WIN32
     namespace {
         constexpr size_t IPC_HEADER_SIZE       = 6;
@@ -110,7 +129,7 @@ namespace MCDevTool::Debug {
                     mClients.push_back(clientPtr);
                     clientCount = mClients.size();
                 }
-                notifyClientCountChanged(clientCount, true);
+                notifyClientCountChanged(clientCount, true, peerPort(clientPtr));
                 {
                     std::lock_guard<std::mutex> lockGuard(mClientThreadsMutex);
                     mClientThreads.emplace_back([this, clientPtr]() { clientReadLoop(clientPtr); });
@@ -528,6 +547,8 @@ namespace MCDevTool::Debug {
         if (!socketPtr) return;
         bool        existed     = false;
         std::size_t clientCount = 0;
+        // 必须在 closesocket 之前取，socket 关掉之后 getpeername 就没了。
+        const unsigned short port = peerPort(socketPtr);
         {
             std::lock_guard<std::mutex> lockGuard(mClientsMutex);
             auto it = std::find(mClients.begin(), mClients.end(), socketPtr);
@@ -541,18 +562,30 @@ namespace MCDevTool::Debug {
             closesocket(reinterpret_cast<SOCKET>(socketPtr));
         }
         if (existed) {
-            notifyClientCountChanged(clientCount, false);
+            notifyClientCountChanged(clientCount, false, port);
         }
     }
 
-    void DebugIPCServer::setClientCountChangedCallback(std::function<void(std::size_t, bool)> callback) {
+    void DebugIPCServer::setClientCountChangedCallback(
+        std::function<void(std::size_t, bool, unsigned short)> callback
+    ) {
         mClientCountChanged = std::move(callback);
     }
 
-    void DebugIPCServer::notifyClientCountChanged(std::size_t count, bool connected) const {
+    void DebugIPCServer::notifyClientCountChanged(std::size_t count, bool connected, unsigned short port) const {
         if (mClientCountChanged) {
-            mClientCountChanged(count, connected);
+            mClientCountChanged(count, connected, port);
         }
+    }
+
+    std::vector<unsigned short> DebugIPCServer::getClientPorts() const {
+        std::lock_guard<std::mutex> lockGuard(mClientsMutex);
+        std::vector<unsigned short> ports;
+        ports.reserve(mClients.size());
+        for (void* c : mClients) {
+            ports.push_back(peerPort(c));
+        }
+        return ports;
     }
 
     unsigned short DebugIPCServer::getPort() const { return mPort; }

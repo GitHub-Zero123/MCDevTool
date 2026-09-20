@@ -38,6 +38,7 @@ STAGE_RUNTIME
   ├─ mcdk.ipc.client.connected  *  ← execute_python 自此可用
   ├─ mcdk.log.line / .error     *  ← 高频，默认 QUEUED
   ├─ （非 v1：hotreload / mcp.tool_call / host_bridge）
+  ├─ mcdk.game.state_changed    *
   └─ mcdk.game.exit             *
 STAGE_SHUTDOWN
 ```
@@ -113,6 +114,7 @@ v1 列标注该事件是否在首版实现。事件的取舍与 [05-interfaces.m
 | `mcdk.game.launch.before` | ✓ | 主线程 | 是 | SYNC | **游戏启动前。** 否决则不启动。见 §4.1 |
 | `mcdk.game.launch.finish` | ✓ | 主线程 | 否 | SYNC | **游戏进程已创建。** payload 携带 pid |
 | `mcdk.game.exit` | ✓ | 进程监视线程 | 否 | QUEUED | 携带退出码 |
+| `mcdk.game.state_changed` | ✓ | 启动线程 / IPC 线程 | 否 | QUEUED | **生命周期状态迁移**：加载中 / 主菜单 / 在世界里 / 已退出。判定只基于 IPC 连接，**不保证准确**，见 [05](05-interfaces.md) §5.1 |
 | `mcdk.log.line` | ✓ | 日志读取线程（Safaia 模式下是启动线程） | 是 | QUEUED | `VETO` 抑制该行的控制台输出，见 §4.2 |
 | `mcdk.log.error` | ✓ | 日志读取线程 | 是 | QUEUED | 同上，stderr 通道 |
 | `mcdk.ipc.client.connected` | ✓ | IPC 线程 | 否 | QUEUED | 实际的"已进入世界"信号，`execute_python` 自此可用 |

@@ -22,6 +22,7 @@ namespace mcdk::plugin_host {
         GameLaunchBefore,
         GameLaunchFinish,
         GameExit,
+        GameStateChanged,
         LogLine,
         LogError,
         IpcClientConnected,
@@ -119,25 +120,26 @@ namespace mcdk::plugin_host {
 
 #if MCDK_ENABLE_PLUGINS
 
-// 发射点的唯一写法。禁止手写 if + dispatch —— 手写会逐渐分化，几年后没人
+// 发射点的唯一写法。可变参：工厂 lambda 的捕获列表里带逗号时，预处理器
+// 会把它切成两个参数。禁止手写 if + dispatch —— 手写会逐渐分化，几年后没人
 // 知道哪些发射点还是安全的（12-performance.md §2）。
-#define MCDK_EMIT(eventId, makePayload)                                                                                \
+#define MCDK_EMIT(eventId, ...)                                                                                \
     do {                                                                                                               \
         if (::mcdk::plugin_host::hasSubscribers(eventId)) [[unlikely]] {                                               \
-            ::mcdk::plugin_host::dispatch((eventId), (makePayload));                                                   \
+            ::mcdk::plugin_host::dispatch((eventId), __VA_ARGS__);                                                   \
         }                                                                                                              \
     } while (0)
 
 // 可否决事件。展开为一个表达式，值为 true 表示被否决。
-#define MCDK_EMIT_VETOABLE(eventId, makePayload)                                                                       \
-    (::mcdk::plugin_host::hasSubscribers(eventId) ? ::mcdk::plugin_host::dispatchVetoable((eventId), (makePayload))    \
+#define MCDK_EMIT_VETOABLE(eventId, ...)                                                                       \
+    (::mcdk::plugin_host::hasSubscribers(eventId) ? ::mcdk::plugin_host::dispatchVetoable((eventId), __VA_ARGS__)    \
                                                   : false)
 
 #else
 
 // 插件系统在本次构建中被关闭。发射点必须在预处理阶段就完全消失，
 // 连订阅计数的那一次原子读也不留——这组宏就是 12-performance.md §6 里 A 组的定义。
-#define MCDK_EMIT(eventId, makePayload) ((void)0)
-#define MCDK_EMIT_VETOABLE(eventId, makePayload) (false)
+#define MCDK_EMIT(eventId, ...) ((void)0)
+#define MCDK_EMIT_VETOABLE(eventId, ...) (false)
 
 #endif

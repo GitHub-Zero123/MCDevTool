@@ -286,6 +286,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/plugin_host/interfaces/info.cpp",
             "tools/mcdk/src/plugin_host/interfaces/log.cpp",
             "tools/mcdk/src/plugin_host/interfaces/mcp.cpp",
+            "tools/mcdk/src/runtime/game_lifecycle.cpp",
             "tools/mcdk/src/runtime/mcp_tool_registry.cpp",
             "tools/mcdk/src/runtime/session.cpp"
         )

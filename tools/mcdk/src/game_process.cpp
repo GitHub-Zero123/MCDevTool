@@ -43,11 +43,13 @@
 #include <mcdk/mod_register.hpp>
 #include <mcdk/particle_reload_support.hpp>
 #include <mcdk/performance/profiler_runtime_owner.hpp>
+#include <mcdk/plugin/abi/iface/info.h>
 #include <mcdk/plugin_host/events.hpp>
 #include <mcdk/plugin_host/session_binding.hpp>
 #include <mcdk/plugin_host/host.hpp>
 #include <mcdk/performance/profiler_service_factory.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
+#include <mcdk/runtime/game_lifecycle.hpp>
 #include <mcdk/runtime/session.hpp>
 #include <mcdk/shader_reload_support.hpp>
 #include <mcdk/style_processor.hpp>
@@ -81,6 +83,37 @@ using ConsoleColor = mcdk::ConsoleColor;
 
 #ifdef _WIN32
 // 启动游戏可执行文件
+namespace mcdk {
+
+    // runtime 枚举 → ABI 取值。与 interfaces/info.cpp 里那份必须一致。
+    [[nodiscard]] static std::uint32_t toAbiGameState(runtime::GameLifecycleState state) noexcept {
+        switch (state) {
+        case runtime::GameLifecycleState::Loading:
+            return MCDK_GAME_LOADING;
+        case runtime::GameLifecycleState::Menu:
+            return MCDK_GAME_MENU;
+        case runtime::GameLifecycleState::InWorld:
+            return MCDK_GAME_IN_WORLD;
+        case runtime::GameLifecycleState::Exited:
+            return MCDK_GAME_EXITED;
+        case runtime::GameLifecycleState::Unavailable:
+        default:
+            return MCDK_GAME_UNAVAILABLE;
+        }
+    }
+
+    static void emitGameStateChanged(const runtime::GameLifecycleTransition& transition) {
+        MCDK_EMIT(plugin_host::EventId::GameStateChanged, [&transition] {
+            mcdk_ev_game_state payload{};
+            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+            payload.from        = toAbiGameState(transition.from);
+            payload.to          = toAbiGameState(transition.to);
+            return payload;
+        });
+    }
+
+} // namespace mcdk
+
 void mcdk::launchGameExe(
     const std::filesystem::path&                   exePath,
     std::string_view                               config,
@@ -203,6 +236,7 @@ void mcdk::launchGameExe(
         binding.logBuffer       = logBuffer;
         binding.errBuffer       = errBuffer;
         binding.mcpToolRegistry = session.mcpToolRegistry();
+        binding.gameLifecycle   = session.gameLifecycle();
         mcdk::plugin_host::bindSession(std::move(binding));
     }
 
@@ -350,6 +384,7 @@ void mcdk::launchGameExe(
         });
     }
     const bool debugCapabilityEnabled = userConfig.includeDebugMod && enableIPC;
+    session.gameLifecycle()->setDebugCapabilityEnabled(debugCapabilityEnabled);
 
     auto mustBindHostMethod = [](std::expected<void, mcdk::RpcBindError> result) {
         if (!result) {
@@ -724,16 +759,23 @@ void mcdk::launchGameExe(
     if (enableIPC) {
         // 插件侧的 mcdk.ipc.client.*。DebugIPCServer 在 mcdevtool 层，不认识插件系统，
         // 所以由它提供钩子、这里负责发事件。回调跑在 accept / 客户端读线程上。
-        ipcServer->setClientCountChangedCallback([](std::size_t clientCount, bool connected) {
-            const auto eventId = connected ? mcdk::plugin_host::EventId::IpcClientConnected
-                                           : mcdk::plugin_host::EventId::IpcClientDisconnected;
-            MCDK_EMIT(eventId, [clientCount] {
-                mcdk_ev_ipc_client payload{};
-                payload.struct_size  = static_cast<std::uint32_t>(sizeof(payload));
-                payload.client_count = static_cast<std::uint32_t>(clientCount);
-                return payload;
-            });
-        });
+        ipcServer->setClientCountChangedCallback(
+            [tracker = session.gameLifecycle()](std::size_t clientCount, bool connected, unsigned short peerPort) {
+                const auto eventId = connected ? mcdk::plugin_host::EventId::IpcClientConnected
+                                               : mcdk::plugin_host::EventId::IpcClientDisconnected;
+                MCDK_EMIT(eventId, [clientCount, peerPort] {
+                    mcdk_ev_ipc_client payload{};
+                    payload.struct_size  = static_cast<std::uint32_t>(sizeof(payload));
+                    payload.client_count = static_cast<std::uint32_t>(clientCount);
+                    payload.port         = peerPort;
+                    return payload;
+                });
+                // 首次握手 / 最后一个客户端断开，都可能改变游戏生命周期状态。
+                if (const auto transition = tracker->onIpcClientCountChanged(clientCount)) {
+                    mcdk::emitGameStateChanged(*transition);
+                }
+            }
+        );
         ipcServer->start();
         const int port = ipcServer->getPort();
         printColoredAtomic("[MCDK] IPC Bridge listening on port " + std::to_string(port), ConsoleColor::Green);
@@ -1023,6 +1065,9 @@ void mcdk::launchGameExe(
     DWORD minecraftExitCode = 0;
     if (!GetExitCodeProcess(processHandle.get(), &minecraftExitCode)) {
         minecraftExitCode = static_cast<DWORD>(-1);
+    }
+    if (const auto transition = session.gameLifecycle()->onMinecraftExited()) {
+        mcdk::emitGameStateChanged(*transition);
     }
     MCDK_EMIT(mcdk::plugin_host::EventId::GameExit, [&] {
         mcdk_ev_game_exit payload{};

@@ -144,6 +144,27 @@ typedef struct mcdk_iface_info {
 
 插件私有 `config` 的读取接口在 `mcdk.core` 上（§3 的 `get_config`），不在这里。
 
+### 5.1 游戏生命周期状态（规范）
+
+```c
+typedef uint32_t mcdk_game_state;
+enum {
+    MCDK_GAME_UNAVAILABLE = 0,  /* 调试 IPC 未启用，无从判断 */
+    MCDK_GAME_LOADING     = 1,  /* 进程已创建，从未握过手 */
+    MCDK_GAME_MENU        = 2,  /* 曾握过手，现在没有客户端 */
+    MCDK_GAME_IN_WORLD    = 3,  /* 调试 IPC 有客户端 */
+    MCDK_GAME_EXITED      = 4
+};
+```
+
+`LOADING` 与 `MENU` 当下都是零客户端，区别全在**「曾经握过手没有」这一个锁存位**上：一个是还没加载完，一个是玩家退回了主菜单。只看 `game_debug_ready`（等价于客户端数大于零）分不出这两者，而它们对插件的含义完全不同——前者该等，后者该收手。
+
+**规范：判定依据只有调试 IPC 的连接状态，不保证与游戏真实状态严格一致，但覆盖绝大多数场景。**
+
+状态变化通过 `mcdk.game.state_changed` 事件推送，插件**不应**轮询 `get_session`。
+
+判定逻辑在宿主内只有一份（`mcdk::runtime::classifyGameLifecycle`），Host Bridge 报给 IDE 的 `state` 字符串与插件拿到的枚举出自同一处——两份实现必然分叉。
+
 ## 6. `mcdk.game/1`
 
 ```c

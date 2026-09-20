@@ -117,7 +117,8 @@ int main() {
 
     // --- mcdk.info / mcdk.log ---------------------------------------
     // 插件在 onRuntime 里读了两张表，输出应当反映上面绑进去的数据。
-    passed &= expect(contains(output, "info:1234:TestWorld:0"), "mcdk.info 的会话快照跨过了 ABI");
+    // 未绑定追踪器时状态是 Unavailable(0)。
+    passed &= expect(contains(output, "info:1234:TestWorld:0:0"), "mcdk.info 的会话快照跨过了 ABI");
     // latest(2) 默认最新在前，共 3 条。
     passed &= expect(
         contains(output, "log:3:log-newest|log-middle|"),

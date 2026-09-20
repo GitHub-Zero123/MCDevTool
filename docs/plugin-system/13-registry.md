@@ -74,7 +74,8 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `get_session` | 1.0 | 可用 | 会话信息快照：路径、端口、pid |
+| `get_session` | 1.0 | 可用 | 会话信息快照：路径、端口、pid、游戏生命周期状态 |
+| `get_ipc_clients` | 1.0 | 可用 | 已连接调试 IPC 客户端的对端端口，调用方缓冲 |
 
 ### 3.4 `mcdk.game/1`
 
@@ -110,7 +111,7 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `emit` | 1.0 | 计划 | 插件自定义事件。当前对内置 `mcdk.*` 事件返回 `MCDK_ERR_NOT_SUPPORTED`，待自定义事件命名空间开放 |
 | ~~`post_main`~~ | 1.0 | 已移除 | v1 发布前移除，见 [04-events.md](04-events.md) §4.0。表尾空位不占号，将来可重新追加 |
 
-v1 合计 **20 个 ABI 函数，六张接口表，全部可用**（原 21 个，`post_main` 已移除）。
+v1 合计 **21 个 ABI 函数，六张接口表，全部可用**（`post_main` 移除、`get_ipc_clients` 新增）。
 
 阶段窗口（[05-interfaces.md](05-interfaces.md) §9）由宿主 shim 实际强制执行，
 不在窗口内调用返回 `MCDK_ERR_WRONG_STAGE`——这一条不能只写在文档里：
@@ -127,12 +128,13 @@ v1 合计 **20 个 ABI 函数，六张接口表，全部可用**（原 21 个，
 | `mcdk.game.launch.before` | 1.0 | 可用 | `mcdk_ev_game_launch_before` | 是 |
 | `mcdk.game.launch.finish` | 1.0 | 可用 | `mcdk_ev_game_launch_finish` | 否 |
 | `mcdk.game.exit` | 1.0 | 可用 | `mcdk_ev_game_exit` | 否 |
+| `mcdk.game.state_changed` | 1.0 | 可用 | `mcdk_ev_game_state` | 否 |
 | `mcdk.log.line` | 1.0 | 可用 | `mcdk_ev_log_line` | 是 |
 | `mcdk.log.error` | 1.0 | 可用 | `mcdk_ev_log_line` | 是 |
 | `mcdk.ipc.client.connected` | 1.0 | 可用 | `mcdk_ev_ipc_client` | 否 |
 | `mcdk.ipc.client.disconnected` | 1.0 | 可用 | `mcdk_ev_ipc_client` | 否 |
 
-v1 合计 **9 个事件、6 个 payload 结构体**，全部已接上发射点（位置见
+v1 合计 **10 个事件、7 个 payload 结构体**，全部已接上发射点（位置见
 [08-host-integration.md](08-host-integration.md) §5）。
 
 含 `mcdk_str` 字段的 payload（`game_launch_before` / `game_launch_finish` / `log_line`）在
@@ -168,6 +170,7 @@ v1 合计 **9 个事件、6 个 payload 结构体**，全部已接上发射点�
 | `mcdk_dispatch_mode` | 1.0 | 0..1，**2 已移除且永久保留** | 3 |
 | `mcdk_event_result` | 1.0 | 0..2 | 3 |
 | `mcdk_side` | 1.0 | 0..1 | 2 |
+| `mcdk_game_state` | 1.0 | 0..4 | 5 |
 | `mcdk_log_channel` | 1.0 | 0..1 | 2 |
 | `mcdk_log_order` | 1.0 | 0..1 | 2 |
 | `mcdk_image_format` | 1.0 | 0 | 1 |

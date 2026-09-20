@@ -95,7 +95,17 @@ typedef struct mcdk_ev_log_line {
 typedef struct mcdk_ev_ipc_client {
     uint32_t struct_size;
     uint32_t client_count; /* 本次变化后的调试 IPC 客户端数 */
+    uint16_t port;         /* 本次连上 / 断开的那个客户端的对端端口；0 = 取不到 */
+    uint16_t _reserved[3];
 } mcdk_ev_ipc_client;
+
+/* mcdk.game.state_changed —— 取值见 iface/info.h 的 mcdk_game_state */
+typedef struct mcdk_ev_game_state {
+    uint32_t struct_size;
+    uint32_t from;
+    uint32_t to;
+    uint32_t _reserved;
+} mcdk_ev_game_state;
 /* 事件名（resolve 的输入）                                             */
 /*
  * 数值 id 只在本进程本次运行内稳定，禁止序列化或硬编码；名字才是稳定契约。
@@ -108,6 +118,7 @@ typedef struct mcdk_ev_ipc_client {
 #define MCDK_EVENT_GAME_EXIT "mcdk.game.exit"
 #define MCDK_EVENT_LOG_LINE "mcdk.log.line"
 #define MCDK_EVENT_LOG_ERROR "mcdk.log.error"
+#define MCDK_EVENT_GAME_STATE_CHANGED "mcdk.game.state_changed"
 #define MCDK_EVENT_IPC_CLIENT_CONNECTED "mcdk.ipc.client.connected"
 #define MCDK_EVENT_IPC_CLIENT_DISCONNECTED "mcdk.ipc.client.disconnected"
 

@@ -146,3 +146,9 @@ if(TARGET script_host_plugin AND MCDK_ENABLE_PLUGINS)
     )
     add_test(NAME plugin-manifest COMMAND plugin_manifest_test)
 endif()
+
+# 游戏生命周期状态机。纯逻辑，不需要游戏也不需要插件。
+add_executable(game_lifecycle_test game_lifecycle_test.cpp)
+target_compile_features(game_lifecycle_test PRIVATE cxx_std_23)
+target_link_libraries(game_lifecycle_test PRIVATE mcdk_runtime)
+add_test(NAME game-lifecycle COMMAND game_lifecycle_test)

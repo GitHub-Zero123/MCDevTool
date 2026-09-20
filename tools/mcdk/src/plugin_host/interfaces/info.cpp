@@ -7,6 +7,7 @@
 #include <mcdk/plugin/abi/iface/info.h>
 #include <mcdk/plugin_host/guard.hpp>
 #include <mcdevtool/utils.h>
+#include <mcdk/runtime/game_lifecycle.hpp>
 
 #include "../registry.hpp"
 
@@ -35,6 +36,53 @@ namespace mcdk::plugin_host::detail {
         [[nodiscard]] InfoStrings& infoStrings() noexcept {
             thread_local InfoStrings storage;
             return storage;
+        }
+
+        [[nodiscard]] mcdk_game_state toAbiGameState(runtime::GameLifecycleState state) noexcept {
+            // 显式映射：ABI 取值永久冻结，宿主枚举可以随便改。
+            switch (state) {
+            case runtime::GameLifecycleState::Loading:
+                return MCDK_GAME_LOADING;
+            case runtime::GameLifecycleState::Menu:
+                return MCDK_GAME_MENU;
+            case runtime::GameLifecycleState::InWorld:
+                return MCDK_GAME_IN_WORLD;
+            case runtime::GameLifecycleState::Exited:
+                return MCDK_GAME_EXITED;
+            case runtime::GameLifecycleState::Unavailable:
+            default:
+                return MCDK_GAME_UNAVAILABLE;
+            }
+        }
+
+        mcdk_status MCDK_CALL infoGetIpcClients(
+            mcdk_handle self,
+            uint16_t*   out_ports,
+            size_t      capacity,
+            size_t*     out_count
+        ) noexcept {
+            return guard([&]() -> mcdk_status {
+                if (out_count == nullptr) {
+                    return MCDK_ERR_INVALID_ARGUMENT;
+                }
+                *out_count = 0;
+                if (registry().find(self) == nullptr) {
+                    return MCDK_ERR_INVALID_HANDLE;
+                }
+                const auto binding = sessionBinding();
+                if (!binding->ipcServer) {
+                    return MCDK_OK;
+                }
+                const auto ports = binding->ipcServer->getClientPorts();
+                *out_count       = ports.size();
+                if (out_ports == nullptr || capacity < ports.size()) {
+                    return ports.empty() ? MCDK_OK : MCDK_ERR_BUFFER_TOO_SMALL;
+                }
+                for (std::size_t index = 0; index < ports.size(); ++index) {
+                    out_ports[index] = ports[index];
+                }
+                return MCDK_OK;
+            });
         }
 
         mcdk_status MCDK_CALL infoGetSession(mcdk_handle self, mcdk_session_info* out_info) noexcept {
@@ -76,6 +124,10 @@ namespace mcdk::plugin_host::detail {
                 // 「游戏已进入世界」的判据就是调试 IPC 上已经有客户端连上来。
                 info.game_debug_ready =
                     (binding->ipcServer && binding->ipcServer->getClientCount() > 0) ? MCDK_TRUE : MCDK_FALSE;
+                info.game_state = toAbiGameState(
+                    binding->gameLifecycle ? binding->gameLifecycle->state()
+                                           : runtime::GameLifecycleState::Unavailable
+                );
 
                 info.mcp_ip             = toAbi(strings.mcpIp);
                 info.game_exe_path      = toAbi(strings.gameExePath);
@@ -93,7 +145,8 @@ namespace mcdk::plugin_host::detail {
         constexpr mcdk_iface_info kTable = {
             /* struct_size */ static_cast<uint32_t>(sizeof(mcdk_iface_info)),
             /* _reserved   */ 0u,
-            /* get_session */ &infoGetSession,
+            /* get_session     */ &infoGetSession,
+            /* get_ipc_clients */ &infoGetIpcClients,
         };
 
     } // namespace

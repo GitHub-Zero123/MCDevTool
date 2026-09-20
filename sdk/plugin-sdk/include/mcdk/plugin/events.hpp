@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "abi/events.h"
+#include "info.hpp"
 #include "abi/iface/events.h"
 #include "detail/abi_bridge.hpp"
 #include "detail/barrier.hpp"
@@ -74,6 +75,36 @@ namespace mcdk {
             static GameLaunchFinish from(const Payload& raw) { return {raw.pid, detail::toView(raw.exe_path)}; }
         };
 
+        // 发射线程：游戏退出时是 mcdk 启动线程；IPC 客户端增减引起的迁移则在
+        // accept / 客户端读线程上。
+        //
+        // 判定只基于调试 IPC 连接状态，见 GameState。
+        struct GameStateChanged {
+            using Payload                 = mcdk_ev_game_state;
+            static constexpr auto abiName = MCDK_EVENT_GAME_STATE_CHANGED;
+            // 不叫 from/to：from 会跟下面那个静态工厂重名。
+            GameState previous = GameState::Unavailable;
+            GameState current  = GameState::Unavailable;
+
+            static GameStateChanged from(const Payload& raw) { return {toState(raw.from), toState(raw.to)}; }
+
+        private:
+            [[nodiscard]] static GameState toState(std::uint32_t raw) noexcept {
+                switch (raw) {
+                case MCDK_GAME_LOADING:
+                    return GameState::Loading;
+                case MCDK_GAME_MENU:
+                    return GameState::Menu;
+                case MCDK_GAME_IN_WORLD:
+                    return GameState::InWorld;
+                case MCDK_GAME_EXITED:
+                    return GameState::Exited;
+                default:
+                    return GameState::Unavailable;
+                }
+            }
+        };
+
         // 发射线程：mcdk 启动线程。
         struct GameExit {
             using Payload                  = mcdk_ev_game_exit;
@@ -110,7 +141,8 @@ namespace mcdk {
             using Payload                         = mcdk_ev_ipc_client;
             static constexpr auto     abiName     = MCDK_EVENT_IPC_CLIENT_CONNECTED;
             std::uint32_t             clientCount = 0;
-            static IpcClientConnected from(const Payload& raw) { return {raw.client_count}; }
+            std::uint16_t             port        = 0;
+            static IpcClientConnected from(const Payload& raw) { return {raw.client_count, raw.port}; }
         };
 
         // 发射线程：该客户端的读线程。阻塞它会挡住这条连接的后续读取。
@@ -120,7 +152,8 @@ namespace mcdk {
             using Payload                            = mcdk_ev_ipc_client;
             static constexpr auto        abiName     = MCDK_EVENT_IPC_CLIENT_DISCONNECTED;
             std::uint32_t                clientCount = 0;
-            static IpcClientDisconnected from(const Payload& raw) { return {raw.client_count}; }
+            std::uint16_t                port        = 0;
+            static IpcClientDisconnected from(const Payload& raw) { return {raw.client_count, raw.port}; }
         };
 
     } // namespace ev

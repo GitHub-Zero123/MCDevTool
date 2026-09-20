@@ -13,6 +13,7 @@
 #include <mcdk/log_buffer.hpp>
 #include <mcdk/mcp_server.hpp>
 #include <mcdk/performance/profiler_runtime_owner.hpp>
+#include <mcdk/runtime/game_lifecycle.hpp>
 #include <mcdk/settings.hpp>
 #include <mcdk/style_processor.hpp>
 
@@ -49,6 +50,11 @@ namespace mcdk::runtime {
 
         [[nodiscard]] MCPServer& mcpServer() noexcept { return mMcpServer; }
 
+        // 宿主内唯一的一份游戏生命周期状态，Host Bridge 与插件宿主共用。
+        [[nodiscard]] const std::shared_ptr<GameLifecycleTracker>& gameLifecycle() const noexcept {
+            return mGameLifecycle;
+        }
+
         // MCP 工具注册表。内置工具与插件工具共用，MCPServer::start() 时按表发布。
         [[nodiscard]] const std::shared_ptr<McpToolRegistry>& mcpToolRegistry() const noexcept {
             return mMcpServer.toolRegistry();
@@ -75,6 +81,7 @@ namespace mcdk::runtime {
         std::shared_ptr<std::atomic<std::uint32_t>>        mProfilerGamePid;
         std::shared_ptr<MCDevTool::Debug::DebugIPCServer>  mIpcServer;
         std::shared_ptr<performance::ProfilerRuntimeOwner> mProfilerRuntime;
+        std::shared_ptr<GameLifecycleTracker>              mGameLifecycle = std::make_shared<GameLifecycleTracker>();
 
         MCPServer                 mMcpServer;
         PyReloadWatcherTask       mPyReloadTask;

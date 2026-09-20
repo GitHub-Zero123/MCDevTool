@@ -1,5 +1,7 @@
 #include <mcdk/host_bridge.hpp>
 
+#include <mcdk/runtime/game_lifecycle.hpp>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -123,17 +125,17 @@ namespace mcdk {
             return id.is_number_integer();
         }
 
-        [[nodiscard]] const char* stateName(const HostBridgeGameState& state, bool minecraftExited, bool wasInWorld) {
-            if (minecraftExited) {
-                return "exited";
-            }
-            if (!state.debugCapabilityEnabled) {
-                return "game_unavailable";
-            }
-            if (state.gameIpcClientCount > 0) {
-                return "game_ready";
-            }
-            return wasInWorld ? "game_unavailable" : "process_started";
+        // 判定已移至 runtime::classifyGameLifecycle，插件宿主读的是同一份。
+        [[nodiscard]] std::string_view
+        stateName(const HostBridgeGameState& state, bool minecraftExited, bool wasInWorld) {
+            return runtime::gameLifecycleStateName(
+                runtime::classifyGameLifecycle(
+                    state.debugCapabilityEnabled,
+                    state.gameIpcClientCount,
+                    minecraftExited,
+                    wasInWorld
+                )
+            );
         }
     } // namespace
 

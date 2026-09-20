@@ -80,6 +80,7 @@ add_library(mcdk_runtime STATIC
     src/plugin_host/interfaces/info.cpp
     src/plugin_host/interfaces/log.cpp
     src/plugin_host/interfaces/mcp.cpp
+    src/runtime/game_lifecycle.cpp
     src/runtime/mcp_tool_registry.cpp
     src/runtime/session.cpp
 )

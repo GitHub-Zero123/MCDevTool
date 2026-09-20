@@ -69,7 +69,7 @@ namespace {
             const auto session = context.info().session();
             context.console().info(
                 "info:" + std::to_string(session.mcpPort) + ":" + session.worldName + ":"
-                + std::to_string(session.gamePid)
+                + std::to_string(session.gamePid) + ":" + std::to_string(static_cast<int>(session.state))
             );
 
             // mcdk.log：游戏日志缓冲区。索引 0 是最新一条。

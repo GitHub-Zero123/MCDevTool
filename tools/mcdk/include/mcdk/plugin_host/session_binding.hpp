@@ -11,6 +11,7 @@
 #include <mcdk/log_buffer.hpp>
 
 namespace mcdk::runtime {
+    class GameLifecycleTracker;
     class McpToolRegistry;
 }
 
@@ -39,6 +40,7 @@ namespace mcdk::plugin_host {
         std::shared_ptr<LogBuffer>                        logBuffer;
         std::shared_ptr<LogBuffer>                        errBuffer;
         std::shared_ptr<runtime::McpToolRegistry>         mcpToolRegistry;
+        std::shared_ptr<runtime::GameLifecycleTracker>    gameLifecycle;
     };
 
     // 运行期子系统就绪后调用。多次调用以最后一次为准。
