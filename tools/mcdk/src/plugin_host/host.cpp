@@ -228,11 +228,7 @@ namespace mcdk::plugin_host {
 
         void shutdown() {
             // 兜底推进 SHUTDOWN 阶段。
-            //
             // 正常路径上 launchGameExe 会先 advance(SHUTDOWN) 再调这里，此时这一段
-            // 是空操作。但游戏启动被插件否决、或 startGame 在到达 launchGameExe 之前
-            // 抛异常时，那一步走不到——插件已经 REGISTER 过、可能起了线程占了资源，
-            // 不能让它连一声招呼都收不到就随进程消失。
             if (!mShutdownStageDone) {
                 advance(MCDK_STAGE_SHUTDOWN);
             }
@@ -291,10 +287,8 @@ namespace mcdk::plugin_host {
             }
             // 6. 作废句柄。此后该插件的任何调用都返回 MCDK_ERR_INVALID_HANDLE 而非崩溃。
             detail::registry().retire(handle);
-
-            // 刻意不 FreeLibrary / dlclose：v1 不做热卸载，进程退出时交给操作系统。
-            // 插件静态对象析构、残留线程、两侧 CRT 卸载顺序叠加，主动卸载的崩溃
-            // 概率远高于它回收的那点资源。见 03-abi-reference.md §5.4。
+// 刻意不 FreeLibrary / dlclose：v1 不做热卸载，进程退出时交给操作系统。
+// 插件静态对象析构、残留线程、两侧 CRT 卸载顺序叠加，主动卸载的崩溃
             record.module = nullptr;
         }
 

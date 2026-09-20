@@ -1,13 +1,5 @@
-//
 // mcdk.mcp/1 的宿主实现。
-//
 // 本文件里的每个导出函数都必须经过 guard / guardVoid，没有例外
-// （docs/plugin-system/02-abi-contract.md §4.3）。
-//
-// 这是六张表里唯一一张要把 C++ 复杂类型（mcp::tool 的两棵 JSON 树 + 五个
-// std::optional）在边界两侧各自消化掉的。降级规则见 05-interfaces.md §8.1。
-//
-
 #include <optional>
 #include <string>
 #include <string_view>

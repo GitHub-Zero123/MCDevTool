@@ -1,12 +1,5 @@
-//
 // ABI 一致性套件（docs/plugin-system/09-compatibility.md §2）。
-//
-// 加载 examples/00-abi-conformance 构建出的真实 DLL，逐条验证异常屏障的行为
-// 与 02-abi-contract.md §4.2 的失败语义表一致。
-//
-// 同一个 DLL 被声明多次、各带不同 config，因此本文件同时也是「可传参式插件
-// 必须是多实例」的回归测试。
-//
+// 加载 examples/00-abi-conformance 构建出的 DLL，验证异常屏障行为。
 #include <mcdk/plugin_host/guard.hpp>
 #include <mcdk/plugin_host/host.hpp>
 
@@ -64,13 +57,8 @@ int main() {
     const std::filesystem::path pluginPath = MCDEV_TEST_CONFORMANCE_PLUGIN;
     const auto                  path       = pluginPath.generic_string();
     bool                        passed     = true;
-
-    // ------------------------------------------------------------------
-    // 一、宿主侧屏障（方向：宿主 → 插件）
-    //
-    // 宿主现有代码大量使用异常，这些异常绝不能穿过 C 边界。这里直接测
-    // host::guard 本身，不经过 ABI —— 它是宿主侧代码，可以直接调。
-    // ------------------------------------------------------------------
+// 一、宿主侧屏障（方向：宿主 → 插件）
+// 宿主现有代码大量使用异常，这些异常绝不能穿过 C 边界。这里直接测
     {
         const auto status = plugin_host::guard([]() -> mcdk_status { throw std::runtime_error("boom"); });
         passed &= expect(status == MCDK_ERR_HOST_EXCEPTION, "host::guard converts std::exception to a status");

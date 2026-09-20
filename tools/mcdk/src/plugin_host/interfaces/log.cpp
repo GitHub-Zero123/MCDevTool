@@ -1,10 +1,5 @@
-//
 // mcdk.log/1 的宿主实现。
-//
 // 本文件里的每个导出函数都必须经过 guard / guardVoid，没有例外
-// （docs/plugin-system/02-abi-contract.md §4.3）。
-//
-
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -74,19 +69,12 @@ namespace mcdk::plugin_host::detail {
                 end = std::min(end, total);
 
                 const bool newestFirst = query->order != MCDK_LOG_ORDER_ASC;
-
-                // 先在锁内取一份快照，再在锁外回调。
-                //
-                // 一开始是持锁逐条回调的，理由是「零分配」。那是把 02 §6 的
-                // 「分配器不得穿越边界」错当成了「宿主侧也不许分配」——宿主自己
-                // 拷贝跟 ABI 没有关系。而持锁回调的代价很实在：sink 慢一点，
-                // LogBuffer::add 就卡住，日志读取线程随之停下，游戏的 stdout
-                // 管道填满之后**游戏进程会阻塞在 write 上**。一个插件的处理器
-                // 慢，不该演变成游戏卡住。顺带也消掉了 sink 里重入 query 的死锁。
+// 先在锁内取一份快照，再在锁外回调。
+    // 回调在锁外执行，避免慢处理器阻塞日志写入。
                 const auto lines = newestFirst ? buffer->getRangeReversed(start, end) : buffer->getRange(start, end);
 
                 for (std::size_t offset = 0; offset < lines.size(); ++offset) {
-                    // getRange 按由旧到新返回，其第 j 项距最新 end-1-j 条；
+                    // getRange 按由旧到新返回，getRangeReversed 按由新到旧返回。
                     // getRangeReversed 反过来，第 j 项就是 start+j。
                     const std::size_t index = newestFirst ? start + offset : end - 1 - offset;
 

@@ -1,6 +1,5 @@
 /*
  * MCDK 插件 ABI —— mcdk.log/1
- *
  * 纯 C99。约束见 ../core.h 顶部说明。
  */
 #ifndef MCDK_PLUGIN_ABI_IFACE_LOG_H
@@ -28,8 +27,7 @@ enum {
 };
 
 /*
- * 索引语义与现有 MCP 工具 get_latest_logs / get_log_range 完全一致：
- * 索引 0 是最新一条，1 是次新，以此类推。
+ * 索引 0 是最新日志，随后依次递增。
  */
 typedef struct mcdk_log_query {
     uint32_t         struct_size;
@@ -50,10 +48,6 @@ typedef struct mcdk_log_entry {
 /*
  * 宿主先在 LogBuffer 锁内取快照，放锁，再逐条调用 sink——**sink 跑在锁外**。
  * 因此约束只有一条：entry->text 是借用的，sink 返回后即失效，要留必须拷走。
- * 在 sink 里调 mcdk.console、再调一次 query、甚至阻塞一会儿都是允许的。
- *
- * 早期版本曾持锁回调（为了省掉拷贝），但那会让一个慢 sink 卡住日志摄入，
- * 进而填满游戏的 stdout 管道、把游戏进程阻塞在 write 上。不值得。
  */
 typedef void(MCDK_CALL* mcdk_log_sink)(void* user, const mcdk_log_entry* entry);
 

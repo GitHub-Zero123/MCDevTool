@@ -1,10 +1,5 @@
-//
 // SDK 的唯一一个 .cpp：错误槽与状态码描述。
-//
 // 其余部分都是 header-only，随插件一起编译，因此 SDK 与插件必然使用同一套
-// 编译器、标准库与 CRT——这正是 SDK 内部可以自由使用 std::string 的前提。
-//
-
 #include <mcdk/plugin/detail/barrier.hpp>
 #include <mcdk/plugin/error.hpp>
 

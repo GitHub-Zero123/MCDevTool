@@ -1,12 +1,5 @@
-//
 // mcdk.console/1 的宿主实现。
-//
 // 本文件里的每个导出函数都必须经过 guardVoid / guard，没有例外
-// （docs/plugin-system/02-abi-contract.md §4.3）。
-//
-// shim 层禁止包含业务逻辑：只做参数转换、调用现有实现、结果转换。
-//
-
 #include <string>
 
 #include <mcdk/plugin/abi/iface/console.h>
@@ -24,10 +17,8 @@ namespace mcdk::plugin_host::detail {
             }
             return std::string(text.ptr, text.len);
         }
-
-        // 显式 switch 而非 static_cast：ABI 枚举值永久冻结，ConsoleColor 是宿主
-        // 内部枚举、可以自由调整。写成强制转换的话，哪天有人往 ConsoleColor
-        // 中间插一个值，所有已编译插件的颜色都会静默错位。
+// 显式 switch 而非 static_cast：ABI 枚举值永久冻结，ConsoleColor 是宿主
+// 内部枚举、可以自由调整。写成强制转换的话，哪天有人往 ConsoleColor
         [[nodiscard]] ConsoleColor toConsoleColor(mcdk_color color) noexcept {
             switch (color) {
             case MCDK_COLOR_GREEN:

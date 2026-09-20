@@ -1,14 +1,6 @@
 #pragma once
-
-//
 // plugin.json 清单的解析。格式见 docs/plugin-system/06-loading.md §3。
-//
 // 清单存在的理由不是「把元数据写两遍」，而是让宿主在 **LoadLibrary 之前** 就知道
-// 这个插件是谁、要哪个 ABI、依赖谁。直接指向动态库的形态（§2.2 第 5 条）拿不到
-// 这些——必须先把代码映射进进程、调用入口才知道，那时已经晚了：依赖排序需要在
-// 任何一个插件被载入之前就完成。
-//
-
 #include <cstdint>
 #include <filesystem>
 #include <optional>

@@ -1,6 +1,5 @@
 /*
  * MCDK 插件 ABI —— 事件与 payload
- *
  * 纯 C99。约束见 core.h 顶部说明。
  */
 #ifndef MCDK_PLUGIN_ABI_EVENTS_H
@@ -11,14 +10,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* ------------------------------------------------------------------ */
 /* 派发模式                                                            */
-/* ------------------------------------------------------------------ */
 /*
- * 回调跑在哪个线程是 ABI 的一部分，由订阅方在订阅时声明。宿主内部存在主线程、
+ * 回调线程是 ABI 的一部分，由订阅方在订阅时声明。
  * 5 个热更新 watcher 线程、MCP 线程、IPC 线程、Host Bridge 线程，不写死语义
- * 迟早出事。
  */
 typedef uint32_t mcdk_dispatch_mode;
 enum {
@@ -35,34 +30,24 @@ typedef uint32_t mcdk_event_result;
 enum {
     MCDK_EVENT_CONTINUE = 0,
     MCDK_EVENT_STOP     = 1, /* 停止后续处理器 */
-    /* 仅对可否决事件有效，其余事件忽略。
-       注意：处理器抛异常时 SDK 屏障记为 CONTINUE 而非 VETO —— 否则插件里的
-       一个 bug 就能让游戏起不来（02-abi-contract.md §4.2）。 */
+    /* 仅对可否决事件有效；异常按 CONTINUE 处理。 */
     MCDK_EVENT_VETO = 2
 };
-
-/* ------------------------------------------------------------------ */
 /* 事件封包                                                            */
-/* ------------------------------------------------------------------ */
 typedef struct mcdk_event {
     uint32_t struct_size;
     uint32_t event_id;
     uint32_t payload_version;
     uint32_t payload_size;
-    /* 指向下面某个 mcdk_ev_* 结构体。借用：QUEUED 模式下宿主深拷贝后入队、
-       回调返回即失效；SYNC 模式下是发射方栈上对象。两种模式都禁止保存该指针。 */
+    /* 指向某个 mcdk_ev_* 结构体；QUEUED 模式会深拷贝，回调返回后指针失效。 */
     const void* payload;
 } mcdk_event;
 
 typedef mcdk_event_result(MCDK_CALL* mcdk_event_handler)(const mcdk_event* event, void* user);
-
-/* ------------------------------------------------------------------ */
 /* v1 事件的 payload                                                   */
-/* ------------------------------------------------------------------ */
 /*
  * 一律是版本化 POD，不用 JSON：日志事件每秒数百条，序列化开销不可接受。
  * 只在实现时才定义——按 02 §5.9，一旦定义就只能追加不能改，过早固化没有
- * 实现依据的布局是最典型的历史包袱。
  */
 
 /* mcdk.mcp.register.before / .finish 共用 */
@@ -108,10 +93,7 @@ typedef struct mcdk_ev_ipc_client {
     uint32_t struct_size;
     uint32_t client_count; /* 本次变化后的调试 IPC 客户端数 */
 } mcdk_ev_ipc_client;
-
-/* ------------------------------------------------------------------ */
 /* 事件名（resolve 的输入）                                             */
-/* ------------------------------------------------------------------ */
 /*
  * 数值 id 只在本进程本次运行内稳定，禁止序列化或硬编码；名字才是稳定契约。
  * resolve 返回 0 表示该宿主不认识这个名字，插件应据此优雅降级。

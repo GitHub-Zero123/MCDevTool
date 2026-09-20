@@ -1,10 +1,5 @@
-//
 // mcdk.events/1 的宿主实现。
-//
 // 本文件里的每个导出函数都必须经过 guard / guardVoid，没有例外
-// （docs/plugin-system/02-abi-contract.md §4.3）。
-//
-
 #include <string_view>
 
 #include <mcdk/plugin/abi/iface/events.h>
@@ -87,7 +82,6 @@ namespace mcdk::plugin_host::detail {
                 }
                 // 插件发射内置的 mcdk.* 事件会让宿主状态与事件流不一致，不允许。
                 // 插件自定义事件的命名空间待 mcdk.core::register_interface 一并开放，
-                // 届时 resolve 才会为它们返回 id，这条分支也就自然只剩内置事件。
                 return setError(MCDK_ERR_NOT_SUPPORTED, "plugins cannot emit built-in mcdk.* events");
             });
         }

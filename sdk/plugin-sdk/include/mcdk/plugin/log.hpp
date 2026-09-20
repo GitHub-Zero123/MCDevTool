@@ -1,15 +1,6 @@
 #pragma once
-
-//
 // mcdk.log 的 C++ 封装。
-//
 // ABI 上是回调式枚举，文本是借用的：这样边界上就不会出现分配。宿主侧已经
-// 改成「锁内取快照、锁外回调」，所以 visit() 的 visitor 并不跑在 LogBuffer 的锁里，
-// 里面调其他接口也不会死锁。唯一的约束是 entry.text 返回后即失效。
-//
-// 默认的 query() 把它拷成 std::vector<LogEntry>，绝大多数场景用这个就行。
-//
-
 #include <cstdint>
 #include <string>
 #include <vector>

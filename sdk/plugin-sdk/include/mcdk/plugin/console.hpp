@@ -10,13 +10,8 @@ namespace mcdk {
     enum class LogLevel { Trace, Debug, Info, Warn, Error };
 
     enum class Color { Default, Green, Red, Blue, Yellow, Cyan, Magenta, White, Black, Gray, DarkGray };
-
-    // 线程安全：底下的 ABI 函数可从任意线程调用，宿主负责串行化并保证单次调用
-    // 的消息整体原子写出。因此这里不需要任何加锁。
-    //
-    // 全部接口收 std::string_view：用户传 std::string、字面量、std::format 的结果
-    // 都行，转成 mcdk_str 是本类的事。这正是 C++ 层「消化」ABI 的样子——
-    // std::string 不能出现在 abi/ 下，但在这一层完全自由。
+// 线程安全：底下的 ABI 函数可从任意线程调用，宿主负责串行化并保证单次调用
+// 的消息整体原子写出。因此这里不需要任何加锁。
     class Console {
     public:
         Console() = default;
@@ -46,9 +41,8 @@ namespace mcdk {
         void error(std::string_view message) const noexcept { log(LogLevel::Error, message); }
 
     private:
-        // 显式 switch 而非 static_cast：ABI 枚举值永久冻结，本地 enum class 的
+        // 显式 switch 映射，避免 ABI 枚举值与本地 enum class
         // 次序将来可以调整，二者是两个独立的枚举。写成强制转换的话，哪天有人
-        // 往 Color 中间插一个值，颜色就会静默错位而不报错。
         [[nodiscard]] static constexpr mcdk_log_level toAbi(LogLevel level) noexcept {
             switch (level) {
             case LogLevel::Trace:

@@ -1,18 +1,5 @@
-//
 // ABI 一致性插件。
-//
-// 它不是给用户抄的示例，而是 docs/plugin-system/09-compatibility.md §2 要求的
-// 验证载荷：故意在各个回调点抛出不同类型的异常，用来证明 SDK 的屏障确实把它们
-// 拦在了 C ABI 边界内侧，且宿主的行为符合 02-abi-contract.md §4.2 的失败语义表。
-//
-// 行为完全由 .mcdev.json 里这条声明的 config 决定，因此同一个 DLL 可以被声明
-// 多次、各自覆盖一条路径 —— 顺便也验证了「可传参式插件」确实是多实例的。
-//
-//   { "tag": "reg", "throw_at": "register", "throw_kind": "std" }
-//
-// throw_at:   register / config / world / runtime / shutdown，缺省或其他值表示不抛
-// throw_kind: std（std::runtime_error）/ custom（自定义类型）/ int（非 std 派生）
-//
+// 它是 docs/plugin-system/09-compatibility.md §2 要求的 ABI 兼容性验证插件。
 #include <mcdk/plugin/plugin.hpp>
 
 #include <stdexcept>

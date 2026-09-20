@@ -1,14 +1,6 @@
 #pragma once
-
-//
 // mcdk.info 的 C++ 封装。
-//
 // ABI 上 mcdk_session_info 的字符串字段全是借用的，get_session 一返回就失效。
-// 这里在同一次调用内把它们拷成 std::string —— 用户拿到的是一个可以随便存、
-// 随便传的普通结构体。这正是「C ABI 归 C ABI，C++ 归 C++」那条分界的意义：
-// 借用语义的心智负担只存在于 SDK 内部这几行里。
-//
-
 #include <cstdint>
 #include <string>
 
@@ -48,11 +40,8 @@ namespace mcdk {
         Info(mcdk_handle self, const mcdk_iface_info* table) noexcept : mSelf(self), mTable(table) {}
 
         [[nodiscard]] bool available() const noexcept { return mTable != nullptr; }
-
-        // 取一份会话快照。
-        //
-        // gamePid 与 gameDebugReady 会随时间变化，不要缓存后长期使用；需要跟踪
-        // 状态变化请订阅 ev::GameLaunchFinish 与 ev::IpcClientConnected。
+// 取一份会话快照。
+// gamePid 与 gameDebugReady 会随时间变化，不要缓存后长期使用；需要跟踪
         [[nodiscard]] SessionInfo session() const {
             SessionInfo result;
             if (!detail::ifaceHas(mTable, &mcdk_iface_info::get_session)) {

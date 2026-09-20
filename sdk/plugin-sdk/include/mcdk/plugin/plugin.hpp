@@ -24,34 +24,16 @@ namespace mcdk {
         std::string name;
         std::string version;
     };
-
-    // 插件基类。全部回调都有空实现，只重写用得上的那些。
-    //
-    // 这些是正常的 C++ 虚函数；SDK 的 MCDK_PLUGIN 宏会为它们生成 noexcept 的
-    // 静态蹦床并装上异常屏障，填进 mcdk_plugin_desc 这张纯 C 函数指针表。
-    // 边界上只剩 void* 与函数指针——手法与 godot-cpp 的 GDCLASS 宏相同。
+// 插件基类。全部回调都有空实现，只重写用得上的那些。
+// 这些是正常的 C++ 虚函数；SDK 会为它们生成带异常屏障的 noexcept 蹦床。
     class Plugin {
     public:
         Plugin()                         = default;
         virtual ~Plugin()                = default;
         Plugin(const Plugin&)            = delete;
         Plugin& operator=(const Plugin&) = delete;
-
-        // 在任何阶段回调之前调用，此时 Context 的 config 已可读。
-        // 返回的非空字段会覆盖 MCDK_PLUGIN 宏里写死的对应值。
-        //
-        // 这是「一个 DLL 充当其他插件的加载器」的关键。一个 Python / Lua 绑定
-        // 宿主在 .mcdev.json 里被声明多次、每条 config 指向不同脚本，此时每个
-        // 实例必须报出属于那个脚本的身份——否则五个脚本在宿主眼里是同一个
-        // 插件：日志分不清是谁打的，声明里的 id 防替换校验失效，将来的重名
-        // 检测与依赖解析也一并失效。
-        //
-        //   PluginIdentity identity(Context& ctx) override {
-        //       const auto script = parseScriptName(ctx.configJson());
-        //       return {.id = "com.me.py." + script, .name = script, .version = "1.0.0"};
-        //   }
-        //
-        // 普通插件不必重写：身份是编译期固定的。
+// 在任何阶段回调之前调用，此时 Context 的 config 已可读。
+// 返回的非空字段会覆盖 MCDK_PLUGIN 宏里写死的对应值。
         virtual PluginIdentity identity(Context& context) {
             (void)context;
             return {};
@@ -73,19 +55,7 @@ namespace mcdk {
 
     protected:
         // 本插件的 Context。
-        //
         // 与各阶段回调收到的是**同一个对象**：一次加载只有一个 Context，从入口
-        // 返回起一直活到 on_unload。因此它可以在任意线程、任意时刻使用，不局限于
-        // 回调内部——阶段回调仍然把它作为参数传进来只是图方便。
-        //
-        // 需要在自建线程里调宿主接口时直接用它，不必自己存一份指针：
-        //
-        //   void onRegister(mcdk::Context&) override {
-        //       mWorker = std::thread([this] { context().console().info("..."); });
-        //   }
-        //
-        // 受限制的是**接口自身的阶段窗口**（见 05-interfaces.md §9），而不是能不能
-        // 拿到 Context：mcdk.mcp 只能在 REGISTER 注册，mcdk.game 只能在 RUNTIME 用。
         [[nodiscard]] Context& context() noexcept { return *mContext; }
 
     private:
@@ -94,15 +64,8 @@ namespace mcdk {
     };
 
     namespace detail {
-
-        // 一次加载对应的全部插件侧状态。
-        //
-        // 刻意不用静态单例：宿主允许同一个动态库在 .mcdev.json 里被声明多次、
-        // 各带不同的 config（「可传参式插件」）。此时入口会被调用多次，每次都
-        // 必须得到自己的 Context 与插件对象，否则后一次会把前一次覆盖掉。
-        //
-        // 实例指针放进 mcdk_plugin_desc::user，由宿主原样回传给每个回调——
-        // 这正是该字段存在的意义。所有权随之交给宿主，在 on_unload 中释放。
+// 一次加载对应的全部插件侧状态。
+// 刻意不用静态单例：同一动态库可在 .mcdev.json 中声明多次。
         template <class PluginT>
         struct PluginInstance {
             Context context;
@@ -117,8 +80,7 @@ namespace mcdk {
             using Instance = PluginInstance<PluginT>;
 
             static mcdk_status MCDK_CALL onStage(void* user, mcdk_stage stage) noexcept {
-                // 出错时返回 MCDK_ERR_PLUGIN_EXCEPTION，宿主据此判定该插件在本阶段
-                // 失败。异常本身在 guard 内被吃掉，绝不穿越边界。
+                // 出错时返回 MCDK_ERR_PLUGIN_EXCEPTION；异常在 guard 内被吃掉。
                 return guard(
                     [user, stage]() -> mcdk_status {
                         auto* instance = static_cast<Instance*>(user);
@@ -152,7 +114,7 @@ namespace mcdk {
             }
 
             static void MCDK_CALL onUnload(void* user) noexcept {
-                // 实例是在插件自己的堆上 new 出来的，也在这里 delete——
+                // 实例由插件侧分配，也在这里释放。
                 // 跨界的只有这个不透明指针，分配器不穿越边界（02 §6）。
                 guardVoid([user] { delete static_cast<Instance*>(user); });
             }
@@ -178,7 +140,7 @@ namespace mcdk {
                     if (host->abi_major != MCDK_ABI_VERSION_MAJOR) {
                         return;
                     }
-                    // 宿主必须至少和本插件编译时的头一样新，否则本插件用到的
+                    // 宿主头文件必须不早于插件版本，否则所需接口可能不存在。
                     // 字段可能不存在。宿主侧会做对称的检查并给出可读提示。
                     if (host->abi_minor < MCDK_ABI_VERSION_MINOR) {
                         return;
@@ -226,12 +188,8 @@ namespace mcdk {
     } // namespace detail
 
 } // namespace mcdk
-
 // 声明插件。放在插件的某个 .cpp 文件里，一个动态库一次。
-//
-//   class MyPlugin final : public mcdk::Plugin { ... };
-//   MCDK_PLUGIN(MyPlugin, "com.example.my-plugin", "1.0.0")
-//
+// class MyPlugin final : public mcdk::Plugin { ... };
 #define MCDK_PLUGIN(PluginClass, PluginId, PluginVersion)                                                              \
     extern "C" MCDK_PLUGIN_EXPORT mcdk_bool MCDK_CALL                                                                  \
     mcdk_plugin_entry(const mcdk_host_info* host, mcdk_plugin_desc* out_desc) {                                        \

@@ -160,11 +160,8 @@ namespace mcdk {
                 style.lockCorner = static_cast<MCDevTool::Style::WindowCorner>(corner->get<int>());
             }
         }
-
-        // plugins 数组。条目本身写错属于用户配置错误，直接报错而不是静默跳过——
-        // 静默跳过会让「我明明写了插件却没生效」变成无从排查的问题。
-        // 真正的运行期失败（路径不存在、ABI 不符）才走「报错并跳过、不终止 mcdk」，
-        // 那部分由加载器负责，见 docs/plugin-system/06-loading.md §4。
+// plugins 数组。条目格式错误直接报错，不静默跳过。
+// 静默跳过会让「我明明写了插件却没生效」变成无从排查的问题。
         std::vector<PluginDeclaration> parsePluginDeclarations(const Json& root) {
             std::vector<PluginDeclaration> declarations;
             const auto                     plugins = root.find("plugins");

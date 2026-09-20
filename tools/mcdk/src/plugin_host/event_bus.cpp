@@ -27,18 +27,8 @@ namespace mcdk::plugin_host {
     namespace {
 
         constexpr std::size_t kMaxQueuedEvents = 4096;
-
-        // ------------------------------------------------------------------
-        // payload 布局表
-        // ------------------------------------------------------------------
-        //
-        // QUEUED / MAIN 派发必须深拷贝：发射方的字符串存储在 MCDK_EMIT 所在作用域
-        // 结束时就没了，而回调要晚得多才跑。memcpy 整个结构体只复制 mcdk_str 里的
-        // 指针，不复制它指向的字节 —— 那是一次静默的 use-after-free，多数时候还“看着
-        // 能跑”，因为释放掉的内存往往还留着原字节。
-        //
-        // 所以每个事件都要在这里登记它的 mcdk_str 字段偏移。新增事件时漏登记会被
-        // dispatchRaw 里的尺寸校验挡住（payload 尺寸对不上就拒发并告警）。
+// payload 布局表
+// QUEUED / MAIN 派发必须深拷贝：发射方的字符串存储在 MCDK_EMIT 所在作用域
         constexpr std::uint16_t kStrGameLaunchBefore[] = {
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, exe_path)),
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, dev_config_path)),
@@ -55,10 +45,7 @@ namespace mcdk::plugin_host {
             const std::uint16_t* strings;
             std::uint16_t        stringCount;
             // 被否决时这个事件是否就此作废。
-            //
             // `.before` 类事件否决即不会发生，再投给异步订阅者只会让对方
-            // 枯等一个永远不来的 `.finish`。但 log.line 不同：它的否决只抑制
-            // 控制台输出，那一行日志仍然存在，异步订阅者照收（见 04-events.md §4.2）。
             bool vetoCancelsEvent;
         };
 
@@ -74,10 +61,7 @@ namespace mcdk::plugin_host {
             /* IpcClientDisconnected */ {sizeof(mcdk_ev_ipc_client), nullptr, 0, false},
         };
         static_assert(std::size(kTraits) == kEventCount, "每新增一个事件都必须在这里登记 payload 布局与否决语义");
-
-        // 把 payload 连同它引用的字符串字节打成一个自包含的 blob。
-        // mcdk_str::ptr 位上先存「相对 blob 起点的偏移」——blob 还会被搬动（入队、
-        // 出队、移动构造），此刻写真指针必然失效，必须等它落到最终地址再还原。
+// 把 payload 和字符串打包成自包含 blob，先存偏移，最后再还原指针。
         void pack(EventId id, const void* payload, std::uint32_t payloadSize, std::vector<unsigned char>& blob) {
             const auto&          layout = kTraits[static_cast<std::size_t>(id)];
             const auto* const    bytes  = static_cast<const unsigned char*>(payload);
@@ -417,10 +401,8 @@ namespace mcdk::plugin_host {
         if (!payloadSizeMatches(id, payloadSize)) {
             return;
         }
-        // SYNC 的就地跑。这里故意不用 thread_local 复用缓冲：
-        // SYNC 处理器可以在同一线程上再发一个事件，复用会让内层调用
-        // 把外层正在遍历的列表清掉。无 SYNC 订阅者时 vector 不会分配。
-        std::vector<Subscription*> taken;
+        // SYNC 处理器可能嵌套派发，因此不复用 thread_local 缓冲。
+            std::vector<Subscription*> taken;
         acquire(id, Want::Sync, taken);
         if (!taken.empty()) {
             const auto event = makeEvent(id, payload, payloadSize);
@@ -436,7 +418,6 @@ namespace mcdk::plugin_host {
         }
         // 没有异步订阅者就不要付深拷贝和入队的钱——更要紧的是，没有异步订阅者时
         // 派发线程根本不存在，无条件入队会让队列涨满 4096 然后报出一句
-        // 「某个插件的处理器过慢」的假告警。
         if (hasAsyncSubscribers(id)) {
             enqueue(id, payload, payloadSize);
         }
@@ -487,10 +468,8 @@ namespace mcdk::plugin_host {
         }
         const std::lock_guard lock(bus().mutex);
         const auto            token = bus().nextToken++;
-
-        // 槽位复用：退订只置 alive=false，不删元素（派发会把裸指针带出锁外）。
-        // 不复用的话，反复订阅/退订的 loader 型插件会让派发的线性扫描无限变长。
-        // inFlight != 0 的槽位仍被某次派发持有，不能动。
+// 槽位复用：退订只置 alive=false，不删元素（派发会把裸指针带出锁外）。
+// 不复用的话，反复订阅/退订的 loader 型插件会让派发的线性扫描无限变长。
         Subscription* entry = nullptr;
         for (auto& candidate : bus().subscriptions) {
             if (!candidate.alive.load(std::memory_order_relaxed)
@@ -610,10 +589,7 @@ namespace mcdk::plugin_host {
         }
         // 第 2 步：等待 in-flight 回调返回。必须在 on_unload 之前完成，
         // 否则事件会打进正在析构的插件对象（03-abi-reference.md §5.1）。
-        //
-        // 这里必须一边等一边抽主线程的水：MAIN 订阅者的 in-flight 引用要等回调
-        // 在主线程上跑完才归还，而 detach 本身就跑在主线程上——干等会把自己锁死。
-        for (;;) {
+            for (;;) {
             pumpMainThreadWork();
             std::unique_lock lock(bus().mutex);
             const bool       done =

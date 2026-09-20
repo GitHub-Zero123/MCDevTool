@@ -1,9 +1,5 @@
-//
 // 插件宿主的端到端验证：真的去加载 examples/01-hello 构建出的 DLL。
-//
 // 覆盖 M2 的验收路径：读声明 → 校验 → 调入口 → 推进各阶段 → 终结。
-// 这不是 mock —— 走的是 LoadLibrary、GetProcAddress、真实的 C ABI 握手。
-//
 #include <mcdk/log_buffer.hpp>
 #include <mcdk/version.hpp>
 #include <mcdk/runtime/mcp_tool_registry.hpp>
@@ -98,10 +94,8 @@ int main() {
     }
 
     auto toolRegistry = std::make_shared<runtime::McpToolRegistry>();
-
-    // --- 绑定一份假的运行期 -------------------------------------------
-    // mcdk.info / mcdk.log 的数据源。真实运行时由 launchGameExe 绑定，
-    // 这里自己造一份，因为测试不启动游戏。
+// --- 绑定一份假的运行期 -------------------------------------------
+// mcdk.info / mcdk.log 的数据源。真实运行时由 launchGameExe 绑定，
     {
         auto logBuffer = std::make_shared<LogBuffer>();
         logBuffer->add("log-oldest");
@@ -173,10 +167,8 @@ int main() {
         );
         passed &= expect(response.value("session", "") == "session-42", "session id 传给了 handler");
     }
-
-    // --- mcdk.game 的降级行为 ------------------------------------
-    // 本测试不启动游戏，所以两个能力都应当干净地失败。这比「能跑」更重要：
-    // 插件在游戏起来之前调这两个接口是必然会发生的。
+// --- mcdk.game 的降级行为 ------------------------------------
+// 本测试不启动游戏，因此两个能力都应明确返回未就绪。
     passed &= expect(
         contains(output, "game:exec-status:" + std::to_string(MCDK_ERR_GAME_NOT_READY)),
         "execute_python 在游戏未就绪时返回 GAME_NOT_READY 而非阻塞或崩溃"
@@ -192,10 +184,8 @@ int main() {
         contains(output, R"(config={"mode":"test","level":3})"),
         "the declaration's config JSON reaches the plugin verbatim"
     );
-
-    // --- 事件 --------------------------------------------------------
-    // 01-hello 在 onRegister 里订阅了两个事件（默认 QUEUED）。这里手动发射，
-    // 验证订阅 → 深拷贝入队 → 派发线程回调 → 插件侧 SDK 还原成具名字段整条链。
+// --- 事件 --------------------------------------------------------
+// 01-hello 在 onRegister 里订阅事件；这里手动发射验证异步派发。
     {
         using namespace mcdk::plugin_host;
         MCDK_EMIT(EventId::McpRegisterFinish, [] {
@@ -205,8 +195,7 @@ int main() {
             return payload;
         });
         {
-            // 字符串字段的存储故意在发射后立即析构：
-            // QUEUED 的派发线程晚得多，总线必须真的拷贝一份字节。
+            // 发射后立即析构字符串，验证 QUEUED 派发会深拷贝 payload。
             std::string exePathUtf8 = "D:/games/Minecraft.exe";
             MCDK_EMIT(EventId::GameLaunchFinish, [&] {
                 mcdk_ev_game_launch_finish payload{};
@@ -230,10 +219,8 @@ int main() {
             "the typed payload fields, strings included, survive the round trip through the C ABI"
         );
     }
-
-    // --- MAIN 派发 --------------------------------------------------
-    // Dispatch::Main 的回调只能在 pumpMainThreadWork() 里跑。先确认它不会
-    // 自己跑到派发线程上去（那样 Main 就退化成了 Queued）。
+// --- MAIN 派发 --------------------------------------------------
+// Dispatch::Main 的回调只能在 pumpMainThreadWork() 里跑。先确认它不会
     {
         using namespace mcdk::plugin_host;
         MCDK_EMIT(EventId::GameExit, [] {

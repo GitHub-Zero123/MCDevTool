@@ -13,17 +13,8 @@
 #include <mcdk/utils.hpp>
 
 namespace {
-
-    // 发射 mcdk.log.line / mcdk.log.error。
-    //
-    // 这是整套事件里频率最高的两个，直接串在日志读取线程上，所以
-    // 零插件开销契约在这里才真正被检验：无订阅者时 MCDK_EMIT_VETOABLE
-    // 展开成一次 relaxed 原子读加一次分支，时间戳与字符串取址都在 lambda
-    // 里，一次都不会执行。
-    //
-    // 返回 true 表示被插件否决：按 docs/plugin-system/04-events.md §4.2，否决
-    // **只抑制这一行的控制台输出**，不影响 LogBuffer——MCP 的 get_latest_logs
-    // 仍然读得到它。
+// 发射 mcdk.log.line / mcdk.log.error。
+// 这是整套事件里频率最高的两个，直接串在日志读取线程上，所以
     [[nodiscard]] inline bool emitLogLine(
         mcdk::plugin_host::EventId id,
         std::uint32_t              channel,

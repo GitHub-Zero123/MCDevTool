@@ -1,12 +1,5 @@
-//
 // `mcdk plugin ...` 子命令。规范见 docs/plugin-system/06-loading.md §5。
-//
 // 这几条命令是信任模型（§1）里用户做决策的那一刻的载体：插件不会被自动发现，
-// 必须由用户显式写进 .mcdev.json，而 `add` 在写入前把 id、version 与 permissions
-// 打印出来供确认。把这一步做成命令而不是让用户手写 JSON，是为了让「看到权限」
-// 成为流程的一部分，而不是一句文档里的建议。
-//
-
 #include <mcdk/plugin_cli.hpp>
 
 #include <algorithm>
@@ -42,10 +35,7 @@ namespace mcdk {
             }
             return result;
         }
-
-        // 注意：与 tryUpdateUserGamePath 一样，这次写回会丢掉原文件里的注释与
-        // 缩进风格（jsonc 注释在解析时被跳过，dump 不可能还原）。
-        // 这是 10-roadmap.md §4 待定问题 1 的范围，尚未解决；在此显式提示用户。
+// 注意：写回会丢掉原文件的注释和缩进（jsonc 解析不会保留它们）。
         void writeConfig(const Json& config) {
             const auto path = configPath();
             std::ofstream output(path, std::ios::binary | std::ios::trunc);

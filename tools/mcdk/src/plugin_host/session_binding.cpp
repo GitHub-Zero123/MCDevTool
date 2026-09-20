@@ -9,11 +9,7 @@ namespace mcdk::plugin_host {
 
     namespace {
         // 整个会话只写两次（绑定、解绑），却被每一次插件接口调用读到。
-        //
         // 所以存的是 shared_ptr 而不是对象本身：按值返回 SessionBinding 会在每次
-        // 调用上深拷贝十个 std::string 加五次 shared_ptr 引用计数，而 facts 里那些
-        // 字符串绑定之后再也不变，拷它们是纯粹的浪费。改成共享一份不可变快照后，
-        // 一次读只剩一次引用计数递增。
         std::mutex                            gMutex;
         std::shared_ptr<const SessionBinding> gBinding;
     } // namespace

@@ -1,11 +1,5 @@
-//
 // 加载器模式的验证：一个 DLL 充当其他插件的宿主。
-//
 // 这是 config 字段的真正用途（绑定 Python / Lua 等）。要成立需要两件事同时
-// 为真，缺一不可：
-//   1. 同一个 DLL 的多条声明各有独立实例与 config —— 否则后一条覆盖前一条；
-//   2. 每个实例能按 config 报出自己的身份 —— 否则它们在宿主眼里是同一个插件。
-//
 #include <mcdk/plugin_host/host.hpp>
 
 #include <algorithm>

@@ -1,6 +1,5 @@
 /*
  * MCDK 插件 ABI —— mcdk.info/1
- *
  * 纯 C99。约束见 ../core.h 顶部说明。
  */
 #ifndef MCDK_PLUGIN_ABI_IFACE_INFO_H
@@ -17,13 +16,7 @@ extern "C" {
 
 /*
  * 一次会话的信息快照。
- *
  * 标量字段是调用时刻的快照；字符串字段是借用，get_session 返回后即失效，
- * 必须立即拷贝。这里不对 02-abi-contract.md §6 的借用规则开任何例外——
- * SDK 的 ctx.info().session() 返回内含 std::string 的 C++ 结构体，用户不受影响。
- *
- * game_pid 与 game_debug_ready 会随时间变化，禁止缓存后长期使用；需要跟踪
- * 状态变化请订阅 mcdk.game.launch.finish 与 mcdk.ipc.client.connected。
  */
 typedef struct mcdk_session_info {
     uint32_t  struct_size;
@@ -53,7 +46,7 @@ typedef struct mcdk_iface_info {
     /*
      * 回填会话快照。out_info->struct_size 必须由调用方先置为 sizeof，
      * 宿主据此判断对方认识到哪个字段为止，只写它认识的部分。
-     */
+    */
     mcdk_status(MCDK_CALL* get_session)(mcdk_handle self, mcdk_session_info* out_info);
 } mcdk_iface_info;
 

@@ -179,14 +179,8 @@ void mcdk::launchGameExe(
     auto& particleReloadTask = session.particleReloadTask();
     auto& styleProcessor     = session.styleProcessor();
     auto& hostBridgeTask     = session.hostBridgeTask();
-
-    // 把运行期子系统接给插件接口层。尽早做：插件在 mcdk.mcp.register.before
-    // 里就可能要读 mcdk.info，而那个事件就在几十行之后。此刻游戏进程还没创建，
-    // game_pid 为 0——这正是该字段的语义，不需要等到进程起来再绑。
-    //
-    // 零插件时整段跳过：下面有四次路径转 UTF-8，还有一次会摸文件系统的
-    // resolveWorldSourcePath。没有插件就没人会读这份快照，这些活全是白干的。
-    // 零插件开销契约只写了发射点，但「为插件准备数据」同样不该让没装插件的人买单。
+// 把运行期子系统接给插件接口层。尽早做：插件在 mcdk.mcp.register.before
+// 里就可能要读 mcdk.info，而那个事件就在几十行之后。此刻游戏进程还没创建，
     if (!mcdk::plugin_host::instance().empty()) {
         mcdk::plugin_host::SessionBinding binding;
         binding.facts.mcdkPid    = GetCurrentProcessId();
@@ -200,10 +194,7 @@ void mcdk::launchGameExe(
         binding.facts.worldRuntimePath = MCDevTool::Utils::pathToGenericUtf8(
             MCDevTool::getMinecraftWorldsPath() / std::filesystem::u8path(userConfig.world.folderName)
         );
-        // 注意：startGame 早已算过同一个值，只是没往下传。多探一次文件系统在
-        // 这里可以接受（一次启动一次，且已被上面的零插件判断挡掉），但两处一旦
-        // 在工作目录变化下给出不同结果，会是静默的分叉。真要根治得改 launchGameExe
-        // 的签名把它传进来。
+        // startGame 已计算过同一值；此处重复探测仅发生在单次启动流程中。
         if (const auto worldSource = mcdk::resolveWorldSourcePath(userConfig.world.source)) {
             binding.facts.worldSourcePath = MCDevTool::Utils::pathToGenericUtf8(*worldSource);
         }
@@ -1005,21 +996,8 @@ void mcdk::launchGameExe(
         }
     }
     styleProcessor.start();
-
-    // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
-    // ERROR_BROKEN_PIPE）
-    //
-    // 只保留一条等待循环。日志走 Safaia 还是走管道、有没有插件，只影响它等什么、
-    // 多久醒一次，不得为此分叉——一旦分叉，将来新增的通道就会多出一条忘了 pump 的分支。
-    //
-    // 唤醒源有三个，都是按需的：
-    //   游戏进程句柄  —— 总是等；退出即结束循环。
-    //   主线程信号    —— 仅在真的加载了插件时存在；有人 post_main 才置位。
-    //   超时            —— 仅 Safaia 需要（poll 必须被周期驱动），否则 INFINITE。
-    //
-    // 所以零插件 + 管道日志时，这里是一次无期限阻塞，周期性唤醒为零，跟插件系统
-    // 引入之前完全一致（docs/plugin-system/12-performance.md §1）。而一旦有插件，唤醒是
-    // 事件驱动的，post_main 的延迟反而比定时轮询更低。
+// 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
+// ERROR_BROKEN_PIPE）
     {
         HANDLE waitHandles[2] = {processHandle.get(), nullptr};
         DWORD  waitCount      = 1;
@@ -1043,8 +1021,7 @@ void mcdk::launchGameExe(
                 break;
             }
             if (waitResult == WAIT_FAILED) {
-                // 不抛：launchGameExe 没有外层 catch，抛出去会跳过 SHUTDOWN 阶段与
-                // session.shutdown()。继续往下走，GetExitCodeProcess 会把退出码置为 -1。
+                // 不抛：异常会跳过 SHUTDOWN；记录后继续收集进程退出码。
                 printColoredAtomic(
                     "[MCDK] WaitForMultipleObjects failed while waiting for the game process, GetLastError=" +
                         std::to_string(GetLastError()),

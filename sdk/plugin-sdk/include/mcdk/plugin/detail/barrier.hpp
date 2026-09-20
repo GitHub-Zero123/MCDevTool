@@ -1,17 +1,6 @@
 #pragma once
-
-//
 // 异常屏障。
-//
 // 插件作者的代码可以随意抛异常；凡是最终会被宿主直接调用的函数指针，都必须先
-// 经过这里。异常在此被吃掉并转成 mcdk_status 或各回调约定的「不干预」取值，
-// 绝不允许穿越 C ABI 进入宿主栈帧。
-//
-// 失败语义按回调逐个约定，见 docs/plugin-system/02-abi-contract.md §4.2 的表格。
-// 其中最要命的一条：可否决事件的处理器抛异常必须等效为 CONTINUE 而非 VETO，
-// 否则插件里的一个 bug 会让游戏起不来。
-//
-
 #include <string>
 #include <type_traits>
 #include <utility>

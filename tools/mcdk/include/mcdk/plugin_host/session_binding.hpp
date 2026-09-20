@@ -1,19 +1,6 @@
 #pragma once
-
-//
 // 宿主运行期子系统向插件接口层的注入点。
-//
 // 接口 shim 是自由函数，签名里只有 `mcdk_handle self`，拿不到 `runtime::Session`。
-// 所以运行期就绪后由 `launchGameExe` 把需要的东西绑进来，shim 从这里取。
-//
-// 这里**故意不引用 `runtime::Session`**，只持有它的几个成员：
-//   - plugin_host 不必依赖 Session 的完整定义，避免把整棵运行期头文件树拖进来；
-//   - 用 shared_ptr 共享所有权，插件线程在关停竞态中取到的对象不会是野指针。
-//
-// 绑定之前（REGISTER / CONFIG / WORLD 阶段）`mcdk.info` 仍然可用，只是游戏相关
-// 字段全为 0——这正是 `game_pid == 0` 表示「游戏进程尚未创建」的由来。
-//
-
 #include <atomic>
 #include <cstdint>
 #include <memory>

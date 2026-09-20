@@ -1,13 +1,6 @@
 #pragma once
-
-//
 // 事件订阅的 C++ 封装。
-//
 // 用户写 ctx.events().on<ev::GameLaunchFinish>([](const auto& e){ ... })，
-// 拿到的是一个有具名字段的 C++ 结构体；ABI 上的 mcdk_event、payload 指针、
-// struct_size 探测、以及异常屏障，都由这一层消化掉。
-//
-
 #include <cstdint>
 #include <memory>
 #include <string>

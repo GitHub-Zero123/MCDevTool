@@ -1,16 +1,6 @@
 #pragma once
-
-//
 // 宿主侧的异常屏障。
-//
 // 与 SDK 侧的 detail::guard 对称：宿主现有代码大量使用异常（startGame 在游戏
-// 路径无效、皮肤文件缺失时直接 throw std::runtime_error），这些异常绝不能穿过
-// C 边界进入插件的栈帧。
-//
-// 规范：src/plugin_host/interfaces/ 下的每一个导出函数指针都必须经过这里，
-// 没有例外。见 docs/plugin-system/02-abi-contract.md §4.3。
-//
-
 #include <exception>
 #include <new>
 #include <string>
@@ -20,10 +10,8 @@
 #include <mcdk/plugin/abi/core.h>
 
 namespace mcdk::plugin_host {
-
-    // 线程局部错误槽。插件通过 mcdk.core 的 get_last_error 取走，取到的是指向
-    // 本槽的借用 mcdk_str，必须立即拷贝。按线程隔离——在工作线程上失败、到主
-    // 线程上取是取不到的（docs/plugin-system/05-interfaces.md §3）。
+// 线程局部错误槽。插件通过 mcdk.core 的 get_last_error 取走，取到的是指向
+// 本槽的借用 mcdk_str，必须立即拷贝。按线程隔离——在工作线程上失败、到主
     struct ErrorSlot {
         mcdk_status code = MCDK_OK;
         std::string message;
@@ -56,7 +44,7 @@ namespace mcdk::plugin_host {
         }
     }
 
-    // 无返回值的 shim（console 的 log 之类）。失败只记录，不向插件报告——
+     // 无返回值的 shim（如 console log）。失败只记录，不向插件报告。
     // 这类调用往往本身就在错误处理路径上，返回值只会诱导出无意义的嵌套处理。
     template <class Fn>
     void guardVoid(Fn&& fn) noexcept {

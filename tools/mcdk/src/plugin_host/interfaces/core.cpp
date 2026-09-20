@@ -1,10 +1,5 @@
-//
 // mcdk.core/1 的宿主实现。
-//
 // 本文件里的每个导出函数都必须经过 guardVoid / guard，没有例外
-// （docs/plugin-system/02-abi-contract.md §4.3）。
-//
-
 #include <string>
 
 #include <mcdk/plugin/abi/iface/core.h>

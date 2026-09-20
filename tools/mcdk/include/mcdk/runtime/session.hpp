@@ -24,15 +24,8 @@ namespace mcdk::runtime {
         // profiler 采样结果的落盘根目录
         std::filesystem::path profileStorageRoot;
     };
-
-    // 一次游戏运行期内全部子系统的持有者。
-    //
-    // 这些对象过去是 launchGameExe 的局部变量，函数之外无从访问。集中到这里之后，
-    // 插件宿主的接口实现可以统一通过它转发，无需再改动 launchGameExe。
-    // 设计见 docs/plugin-system/08-host-integration.md。
-    //
-    // 本类只负责持有与生命周期，不承载业务逻辑：各子系统的 handler 绑定仍在
-    // launchGameExe 内完成，待后续再逐步迁入。
+// 一次游戏运行期内全部子系统的持有者。
+// 这些对象过去是 launchGameExe 的局部变量，函数之外无从访问。集中到这里之后，
     class Session {
     public:
         Session(const UserConfig& userConfig, HostBridgeConfig hostBridgeConfig, SessionOptions options);

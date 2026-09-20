@@ -81,12 +81,8 @@ namespace mcdk {
         std::string serverIp   = "localhost";
         int         serverPort = 19133;
     };
-
-    // .mcdev.json 的 plugins 数组中的一条。
-    //
-    // 宿主禁止扫描任何目录来发现插件：插件必须由用户在此显式声明，未声明的
-    // 动态库一律不加载。信任决策因此由用户做出且可审计。
-    // 见 docs/plugin-system/06-loading.md §1。
+// .mcdev.json 的 plugins 数组中的一条。
+// 宿主不扫描目录；插件必须由用户显式声明，未声明插件不参与加载。
     struct PluginDeclaration {
         bool enabled = false;
         // 原样保留。相对路径由加载器按 .mcdev.json 所在目录解析，而非进程工作目录。
@@ -95,8 +91,6 @@ namespace mcdk {
         std::string id;
         // 传给该插件的配置，任意 JSON。序列化后原样透传，插件通过
         // mcdk.core 的 get_config 取回文本自行解析。
-        // 这是「同一个插件二进制按不同参数声明多次」的基础。
-        // 字段缺省时为字面量 "null"，使插件永远可以直接 parse，无需特判。
         std::string configJson = "null";
         // 覆盖默认的声明顺序，小者先加载。
         int priority = 0;

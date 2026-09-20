@@ -1,15 +1,6 @@
 #pragma once
-
-//
 // C++ ↔ C ABI 的握手层。
-//
 // 这里是「消化」实际发生的地方：本文件之上（context.hpp / console.hpp / 用户代码）
-// 随便用 std::string、std::vector、nlohmann::json；本文件之下（abi/*.h）只有定宽
-// 标量与指针。两侧的转换全部集中在这一层，用户不接触任何 mcdk_str。
-//
-// 与之对称，宿主侧在 components/plugin-host/src/interfaces/ 里做同样的事。
-//
-
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -17,13 +8,8 @@
 #include "../abi/core.h"
 
 namespace mcdk::detail {
-
-    // ---------------------------------------------------------------
-    // 字符串
-    // ---------------------------------------------------------------
-
-    // std::string_view → mcdk_str。借用语义：被引用的存储必须在本次 ABI 调用
-    // 返回前保持有效。因此只应在实参位置就地使用，禁止先存起来再传。
+// 字符串
+// std::string_view → mcdk_str。借用语义：被引用的存储必须在本次 ABI 调用
     [[nodiscard]] inline mcdk_str toAbi(std::string_view text) noexcept {
         mcdk_str out;
         out.ptr = text.data();

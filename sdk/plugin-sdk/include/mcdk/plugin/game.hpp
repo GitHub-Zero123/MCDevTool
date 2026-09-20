@@ -1,13 +1,6 @@
 #pragma once
-
-//
 // mcdk.game 的 C++ 封装。
-//
 // 截图在 ABI 上是「宿主持句柄 + 四步拷贝 + 必须 release」，很容易漏掉最后一步。
-// 这里用 RAII 把它收掉：capture() 直接返回一个 std::vector<std::uint8_t>，句柄在
-// 函数内部就释放干净了，用户没有机会忘。
-//
-
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -24,7 +17,7 @@ namespace mcdk {
         Client
     };
 
-    // 截图参数。region 归一化到 0.0~1.0，(0,0) 左上、(1,1) 右下；
+    // 截图参数。region 归一化到 0.0~1.0，(0,0) 左上、(1,1) 右下。
     // 四个值全为 0（默认）表示整块客户区。
     struct CaptureOptions {
         std::uint32_t maxHeight    = 0; // 0 = 宿主默认（480）
@@ -49,14 +42,8 @@ namespace mcdk {
         Game(mcdk_handle self, const mcdk_iface_game* table) noexcept : mSelf(self), mTable(table) {}
 
         [[nodiscard]] bool available() const noexcept { return mTable != nullptr; }
-
-        // 在游戏进程里执行 Python 并取回 JSON 文本形式的返回值。
-        //
-        // 阻塞调用。禁止在 Dispatch::Sync 的事件处理器里用——尤其是 ev::LogLine，
-        // 那会卡住游戏日志管道并自锁（05-interfaces.md §6.1）。
-        // timeoutMs 传 0 表示宿主默认（10 秒）。
-        //
-        // 失败时抛 mcdk::Error；调用方若不想要异常，用 tryExecutePython。
+// 在游戏进程里执行 Python 并取回 JSON 文本形式的返回值。
+// 阻塞调用。禁止在 Dispatch::Sync 的事件处理器里用——尤其是 ev::LogLine，
         [[nodiscard]] std::string executePython(
             std::string_view code,
             Side             side      = Side::Server,

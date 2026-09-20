@@ -1,15 +1,6 @@
 #pragma once
-
-//
 // 已加载插件的句柄表（宿主内部）。
-//
 // mcdk_handle 的编码：(generation << 32) | slot。
-// 槽位作废时 generation 自增，因此陈旧句柄只会查不到，而不会命中被复用的槽位。
-// 这是 docs/plugin-system/03-abi-reference.md §5.3 要求的兜底：句柄作废后
-// 宿主必须返回 MCDK_ERR_INVALID_HANDLE 而非崩溃——不能假设插件把自己创建的
-// 线程 join 干净了。
-//
-
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -83,12 +74,8 @@ namespace mcdk::plugin_host::detail {
     [[nodiscard]] const std::string& hostVersion() noexcept;
     void                             setCurrentStage(mcdk_stage stage) noexcept;
     [[nodiscard]] mcdk_stage         currentStage() noexcept;
-
-    // 阶段窗口判定。接口的可调用阶段矩阵见
-    // docs/plugin-system/05-interfaces.md §9；在错误阶段调用必须返回 MCDK_ERR_WRONG_STAGE。
-    //
-    // 这一条值得真的实施而不是「反正返回空结果」：「现在还没到时候」与「确实一条都没有」
-    // 是两回事，分不开的话插件作者会把时机错误当成数据为空去排查。
+// 阶段窗口判定。接口的可调用阶段矩阵见
+// docs/plugin-system/05-interfaces.md §9；在错误阶段调用必须返回 MCDK_ERR_WRONG_STAGE。
     [[nodiscard]] inline bool stageAtLeast(mcdk_stage minimum) noexcept { return currentStage() >= minimum; }
 
     // 当前运行期绑定的不可变快照。永不返回空指针；未绑定时里面各

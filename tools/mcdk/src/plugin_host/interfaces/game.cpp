@@ -1,10 +1,5 @@
-//
 // mcdk.game/1 的宿主实现。
-//
 // 本文件里的每个导出函数都必须经过 guard / guardVoid，没有例外
-// （docs/plugin-system/02-abi-contract.md §4.3）。
-//
-
 #include <algorithm>
 #include <cstring>
 #include <string>
@@ -29,7 +24,7 @@ namespace mcdk::plugin_host::detail {
         constexpr std::uint32_t kDefaultTimeoutMs = 10000;
         constexpr std::uint32_t kMaxTimeoutMs     = 120000;
 
-        // mcdk.game 仅 RUNTIME 可用（05-interfaces.md §9）。SHUTDOWN 也不行：
+        // mcdk.game 仅 RUNTIME 可用（05-interfaces.md §9），SHUTDOWN 阶段同样禁止。
         // 游戏进程此时已经退出，Python 执行与截图都没有对象。
         [[nodiscard]] bool inGameStage() noexcept { return currentStage() == MCDK_STAGE_RUNTIME; }
 
@@ -39,11 +34,8 @@ namespace mcdk::plugin_host::detail {
             thread_local std::string storage;
             return storage;
         }
-
-        // 从 JPEG 的 SOFn 段读出尺寸。
-        //
-        // captureMinecraftWindowJpeg 只给字节流，不给宽高，而 image_get_info 里放一个
-        // 恒为 0 的字段就是个陷阱——用的人迟早会信它。解析 SOF 段是二十行的事。
+// 从 JPEG 的 SOFn 段读出尺寸。
+// captureMinecraftWindowJpeg 只给字节流，不给宽高，而 image_get_info 里放一个
         bool readJpegSize(const std::vector<std::uint8_t>& data, std::uint32_t& width, std::uint32_t& height) {
             if (data.size() < 4 || data[0] != 0xFF || data[1] != 0xD8) {
                 return false;

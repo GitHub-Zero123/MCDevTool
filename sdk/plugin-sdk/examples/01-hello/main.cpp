@@ -1,9 +1,5 @@
-//
 // 最小插件示例。
-//
-// 注意这里从头到尾没有出现任何 mcdk_ 前缀的 C 类型：std::string、
-// std::string_view、字符串拼接随便用，转成 ABI 形态是 SDK 的事。
-//
+// 示例只使用 C++ 类型，SDK 负责转换到 ABI 形式。
 #include <mcdk/plugin/plugin.hpp>
 
 #include <string>
@@ -38,7 +34,7 @@ namespace {
                 context.console().info("event:game-exit-main:" + std::to_string(e.exitCode));
             });
 
-            // MCP 工具只能在 REGISTER 阶段注册。两棵 JSON 树、五个 optional、
+            // MCP 工具只能在 REGISTER 阶段注册，SDK 负责转换其复杂参数。
             // handler 闭包都由 SDK 降级成 C 形态，这里一个 mcdk_ 类型都看不到。
             mcdk::ToolDesc tool;
             tool.name                 = "hello_echo";

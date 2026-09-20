@@ -1,10 +1,5 @@
-//
 // plugin.json 清单解析与依赖拓扑排序（docs/plugin-system/06-loading.md §3、§4）。
-//
 // 为了得到「多个身份不同的插件」，这里复用 02-loader 那个示例：它按 config 报出
-// 动态身份，所以同一个 DLL 被声明多次就能扮演多个插件。这正是 config 字段存在的
-// 理由，顺带也让本测试不必再造两个二进制。
-//
 #include <mcdk/plugin_host/host.hpp>
 
 #include <algorithm>
@@ -163,10 +158,8 @@ int main() {
     passed &= expect(indexOf("com.test.orphan") < 0, "依赖不在已启用集合内的插件被跳过");
     passed &= expect(indexOf("com.test.ring-a") < 0 && indexOf("com.test.ring-b") < 0, "成环的插件整环跳过");
     passed &= expect(ids.size() == 2, "只有两个插件真的加载了");
-
-    // 本测试从头到尾没有 advance(SHUTDOWN)——这正是被否决启动 / startGame 抛异常
-    // 时的形状。shutdown() 必须自己把这一阶段补上，否则插件的 onShutdown 与
-    // on_unload 永远不会被调用。
+// 本测试不推进 SHUTDOWN，模拟启动被否决或 startGame 抛异常。
+// shutdown() 必须自行推进该阶段，否则插件的 onShutdown 不会执行。
     host.shutdown();
     passed &= expect(
         std::any_of(

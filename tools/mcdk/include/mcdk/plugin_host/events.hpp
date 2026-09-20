@@ -1,17 +1,6 @@
 #pragma once
-
-//
 // 事件总线的热路径部分。
-//
 // 零插件开销契约（docs/plugin-system/12-performance.md §1）：未加载任何插件时，
-// 每个发射点的开销必须不超过「一次 relaxed 原子读 + 一次可预测分支」。
-//
-// 为此，发射点一律走下面的宏，payload 用工厂 lambda 惰性构造 —— 时间戳、字符串
-// 转换、路径转 UTF-8 全部只能发生在确认有订阅者之后。写成
-// `emit(EventId::LogLine, buildPayload(line))` 在语法上更自然，但那样零插件时
-// 仍要付全部构造成本，是本文件存在的全部意义所在。
-//
-
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -53,15 +42,8 @@ namespace mcdk::plugin_host {
     // 下面两个只在确有订阅者时才会被调用，因此可以随便做重活。
     void               dispatchRaw(EventId id, const void* payload, std::uint32_t payloadSize);
     [[nodiscard]] bool dispatchRawVetoable(EventId id, const void* payload, std::uint32_t payloadSize);
-
-    // payload 工厂的临时字符串寄存处。
-    //
-    // payload 里的 mcdk_str 是借用的，而工厂是个返回 payload 的 lambda——它内部
-    // 现造的字符串一出 lambda 就没了。以前只能把转换提到宏外面，而那正好违反
-    // 12-performance.md §1 禁令 1（路径转 UTF-8 不得在分支外做）。
-    //
-    // 把串交给它，生命期就能覆盖整个 dispatch，转换也就能写在工厂里、
-    // 只在确有订阅者时执行。arena 本身也只在那时才构造。
+// payload 工厂的临时字符串寄存处。
+// payload 里的 mcdk_str 是借用的，而工厂是个返回 payload 的 lambda——它内部
     class PayloadArena {
     public:
         [[nodiscard]] mcdk_str hold(std::string text) {
@@ -75,8 +57,7 @@ namespace mcdk::plugin_host {
         std::deque<std::string> mStorage;
     };
 
-    // 工厂可以是 `[]{ ... }`，也可以是 `[](auto& arena){ ... }`——后者用于
-    // payload 里带需要现造的字符串的情形。
+     // 工厂可接收无参或 arena 参数，后者用于构造字符串 payload。
     template <class Factory>
     void dispatch(EventId id, Factory&& makePayload) {
         if constexpr (std::is_invocable_v<Factory&, PayloadArena&>) {
@@ -128,11 +109,8 @@ namespace mcdk::plugin_host {
     // 抽干投递到主线程的工作。宿主在阶段推进点与游戏等待循环中调用。
     // 无待办时是一次原子读 + 分支。
     void pumpMainThreadWork();
-
-    // 创建主线程唤醒信号。只在确实加载了插件时调用一次。
-    //
-    // 零插件时不创建是刻意的：没有信号句柄，等待循环就退回无期限阻塞，
-    // 主线程一次都不会被插件系统唤醒（docs/plugin-system/12-performance.md §1）。
+// 创建主线程唤醒信号。只在确实加载了插件时调用一次。
+// 零插件时不创建是刻意的：没有信号句柄，等待循环就退回无期限阻塞，
     void enableMainThreadSignal();
 
     // 有主线程待办时被置位的等待句柄（Windows 上是 HANDLE）。

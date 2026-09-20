@@ -1,18 +1,6 @@
 #pragma once
-
-//
 // mcdk.mcp 的 C++ 封装。
-//
-// 这是六张表里对用户最不友好的一张 C 形态：两棵 JSON 树要序列化成文本、
-// 五个 std::optional 要拆成两个位掩码、handler 要退化成函数指针 + void*、
-// 结果要经由 TLS 回传。全部在这里消化掉，用户看到的是：
-//
-//   ctx.mcp().addTool({.name = "my_tool", .description = "...", .inputSchema = schema},
-//                     [](const Json& args, std::string_view session) -> Json { ... });
-//
-// SDK 不强制依赖 nlohmann：默认走文本接口，包含了 nlohmann 时再启用 Json 重载。
-//
-
+ // MCP 接口在 ABI 层以 JSON 文本传递复杂参数。
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -27,7 +15,7 @@
 
 namespace mcdk {
 
-    // MCP 工具的注解。std::optional 表示「没设」，与「显式设为 false」不同——
+    // MCP 工具的注解。std::optional 区分「未设置」和显式 false。
     // 过界时会被拆成 present / value 两个位掩码，正是为了保住这个区别。
     struct ToolAnnotations {
         std::optional<std::string> title;
@@ -54,15 +42,8 @@ namespace mcdk {
         Mcp(mcdk_handle self, const mcdk_iface_mcp* table) noexcept : mSelf(self), mTable(table) {}
 
         [[nodiscard]] bool available() const noexcept { return mTable != nullptr; }
-
-        // 注册一个 MCP 工具。
-        //
-        // 只能在 REGISTER 阶段调用，通常写在 ev::McpRegisterBefore 的处理器里；
-        // 其他阶段返回 MCDK_ERR_WRONG_STAGE，重名返回 MCDK_ERR_DUPLICATE。
-        //
-        // handler 形如 (std::string_view argumentsJson, std::string_view sessionId)
-        // -> std::string（返回 JSON 文本）。它跑在 MCP 工作线程上，可能被并发调用，
-        // 允许阻塞。抛出的异常由 SDK 屏障吃掉并转成 MCP 错误响应。
+// 注册一个 MCP 工具。
+// 只能在 REGISTER 阶段调用，通常写在 ev::McpRegisterBefore 处理器中。
         template <class Handler>
         mcdk_status addTool(const ToolDesc& desc, Handler&& handler) {
             if (!detail::ifaceHas(mTable, &mcdk_iface_mcp::add_tool)) {
