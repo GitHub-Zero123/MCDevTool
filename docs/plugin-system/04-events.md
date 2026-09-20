@@ -56,8 +56,8 @@ STAGE_SHUTDOWN
 typedef uint32_t mcdk_dispatch_mode;
 enum {
     MCDK_DISPATCH_QUEUED = 0,  /* 默认。payload 深拷贝，插件专用线程串行回调 */
-    MCDK_DISPATCH_SYNC   = 1,  /* 发射线程内同步调用，可改 payload / 否决，必须极快 */
-    MCDK_DISPATCH_MAIN   = 2,  /* 投递到主线程 */
+    MCDK_DISPATCH_SYNC   = 1   /* 发射线程内同步调用，可否决；阻塞它就是阻塞那个子系统 */
+    /* 2 曾是 MCDK_DISPATCH_MAIN，v1 发布前移除，取值永久保留不复用 */
 };
 
 typedef uint32_t mcdk_event_result;
@@ -86,8 +86,6 @@ typedef struct mcdk_iface_events {
     void        MCDK_CALL (*unsubscribe)(mcdk_handle self, mcdk_handle token);
     mcdk_status MCDK_CALL (*emit)(mcdk_handle self, uint32_t event_id,
                                   const void* payload, uint32_t payload_size);
-    void        MCDK_CALL (*post_main)(mcdk_handle self,
-                                       void (MCDK_CALL *fn)(void*), void* user);
 } mcdk_iface_events;
 ```
 
@@ -115,7 +113,7 @@ v1 列标注该事件是否在首版实现。事件的取舍与 [05-interfaces.m
 | `mcdk.game.launch.before` | ✓ | 主线程 | 是 | SYNC | **游戏启动前。** 否决则不启动。见 §4.1 |
 | `mcdk.game.launch.finish` | ✓ | 主线程 | 否 | SYNC | **游戏进程已创建。** payload 携带 pid |
 | `mcdk.game.exit` | ✓ | 进程监视线程 | 否 | QUEUED | 携带退出码 |
-| `mcdk.log.line` | ✓ | 日志读取线程 | 是 | QUEUED | `VETO` 抑制该行的控制台输出，见 §4.2 |
+| `mcdk.log.line` | ✓ | 日志读取线程（Safaia 模式下是启动线程） | 是 | QUEUED | `VETO` 抑制该行的控制台输出，见 §4.2 |
 | `mcdk.log.error` | ✓ | 日志读取线程 | 是 | QUEUED | 同上，stderr 通道 |
 | `mcdk.ipc.client.connected` | ✓ | IPC 线程 | 否 | QUEUED | 实际的"已进入世界"信号，`execute_python` 自此可用 |
 | `mcdk.ipc.client.disconnected` | ✓ | IPC 线程 | 否 | QUEUED | — |
@@ -145,6 +143,18 @@ v1 九条事件构成一个自洽的闭环：注册期拿到 MCP 开口，启动
 在此之前，插件在该事件里能做的是：条件性否决启动、启动前往 `project_root` 写文件、拉起辅助进程。
 
 这是一处值得单独确认的取舍——若"启动前改环境变量"是实际用例，`env_set` 的实现成本很低（`GameEnvironmentBuilder` 已存在），可以拉进 v1。
+
+### 4.0 为什么没有「主线程」派发（规范）
+
+早期设计里有第三种派发模式 `MCDK_DISPATCH_MAIN`，以及配套的 `post_main`。两者在 v1 发布前被移除。
+
+理由是它解决的问题不存在：**mcdk 没有任何线程亲和的资源**。六张接口表里，`mcdk.core` / `mcdk.console` / `mcdk.info` / `mcdk.log` / `mcdk.game` 全部可从任意线程调用，`mcdk.mcp` 的「仅主线程」其实是**阶段**限制（`McpToolRegistry::bind` 自带锁）。所谓「主线程」不过是恰好阻塞在 `WaitForSingleObject` 上的那条线程，没有特殊地位。
+
+代价却是实在的：它要求宿主在主线程上设一个抽水点，于是游戏等待循环被迫改成可唤醒的形态；派发时还要把 in-flight 所有权从派发线程转交给主线程，`detachSubscriber` 也因此必须边等边抽水，否则它自己就跑在主线程上、会把自己锁死。
+
+现在的模型与 mcmod 一致：**事件在干活的那条线程上广播**（`SYNC`），想异步就丢给宿主的派发线程（`QUEUED`）。每个事件的发射线程写在 §4 的表里，也标在 SDK 的 `ev::` 结构体上。
+
+取值 `2` 永久保留不复用。将来真出现线程亲和的宿主资源（例如窗口输入注入），按 [02-abi-contract.md](02-abi-contract.md) §8 的追加规则加回来即可，不影响任何已发布的东西。
 
 ### 4.1.1 `mcdk.ipc.client.*` 不保证成对（规范）
 

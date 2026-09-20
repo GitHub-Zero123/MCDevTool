@@ -17,12 +17,13 @@
 namespace mcdk {
 
     enum class Dispatch {
-        // 默认。payload 已深拷贝，回调跑在插件专用线程上，慢了也不拖住宿主。
+        // 默认。payload 已深拷贝，回调跑在宿主的派发线程上，不拖住发射方。
+        // 全部插件共用这一条线程，你慢会拖慢别人；不能否决。
         Queued,
-        // 发射线程内同步调用，可否决。必须极快：它串在宿主热路径上。
-        Sync,
-        // 投递到主线程。
-        Main
+        // 在发射线程上内联执行，可否决。具体是哪个线程取决于事件——
+        // 见各 ev:: 结构体上的标注。阻塞它就是阻塞那个子系统。
+        Sync
+        // 没有 Main：宿主没有线程亲和的资源，主线程派发已在 v1 发布前移除。
     };
 
     enum class EventResult { Continue, Stop, Veto };
@@ -32,8 +33,11 @@ namespace mcdk {
     // ---------------------------------------------------------------
     // 类型化事件
     // ---------------------------------------------------------------
+    // 每个事件下面标的「发射线程」，就是 Dispatch::Sync 回调实际运行的线程。
+    // Dispatch::Queued 一律在宿主的派发线程上，与这里无关。
     namespace ev {
 
+        // 发射线程：mcdk 启动线程（跑 launchGameExe 的那条）。
         struct McpRegisterBefore {
             using Payload                      = mcdk_ev_mcp_register;
             static constexpr auto    abiName   = MCDK_EVENT_MCP_REGISTER_BEFORE;
@@ -41,6 +45,7 @@ namespace mcdk {
             static McpRegisterBefore from(const Payload& raw) { return {raw.tool_count}; }
         };
 
+        // 发射线程：mcdk 启动线程。
         struct McpRegisterFinish {
             using Payload                      = mcdk_ev_mcp_register;
             static constexpr auto    abiName   = MCDK_EVENT_MCP_REGISTER_FINISH;
@@ -48,6 +53,7 @@ namespace mcdk {
             static McpRegisterFinish from(const Payload& raw) { return {raw.tool_count}; }
         };
 
+        // 发射线程：mcdk 启动线程。可否决——返回 Veto 则游戏不启动。
         struct GameLaunchBefore {
             using Payload                 = mcdk_ev_game_launch_before;
             static constexpr auto abiName = MCDK_EVENT_GAME_LAUNCH_BEFORE;
@@ -59,6 +65,7 @@ namespace mcdk {
             }
         };
 
+        // 发射线程：mcdk 启动线程。
         struct GameLaunchFinish {
             using Payload                   = mcdk_ev_game_launch_finish;
             static constexpr auto   abiName = MCDK_EVENT_GAME_LAUNCH_FINISH;
@@ -67,6 +74,7 @@ namespace mcdk {
             static GameLaunchFinish from(const Payload& raw) { return {raw.pid, detail::toView(raw.exe_path)}; }
         };
 
+        // 发射线程：mcdk 启动线程。
         struct GameExit {
             using Payload                  = mcdk_ev_game_exit;
             static constexpr auto abiName  = MCDK_EVENT_GAME_EXIT;
@@ -75,6 +83,11 @@ namespace mcdk {
             static GameExit       from(const Payload& raw) { return {raw.pid, raw.exit_code}; }
         };
 
+        // 发射线程**取决于日志协议**：管道模式是 stdout 读线程，Safaia 模式是
+        // mcdk 启动线程（在游戏等待循环里 poll）。两种都别阻塞——卡住它就是卡住
+        // 日志摄入，管道填满后游戏进程会阻塞在 write 上。
+        //
+        // 高频事件。可否决，Veto 只抑制该行的控制台输出，不影响 LogBuffer。
         struct LogLine {
             using Payload                     = mcdk_ev_log_line;
             static constexpr auto abiName     = MCDK_EVENT_LOG_LINE;
@@ -83,6 +96,7 @@ namespace mcdk {
             static LogLine        from(const Payload& raw) { return {raw.timestamp_ms, detail::toView(raw.text)}; }
         };
 
+        // 发射线程：同 LogLine，只是走 stderr 通道。
         struct LogError {
             using Payload                     = mcdk_ev_log_line;
             static constexpr auto abiName     = MCDK_EVENT_LOG_ERROR;
@@ -91,6 +105,7 @@ namespace mcdk {
             static LogError       from(const Payload& raw) { return {raw.timestamp_ms, detail::toView(raw.text)}; }
         };
 
+        // 发射线程：调试 IPC 的 accept 线程。阻塞它会挡住新连接。
         struct IpcClientConnected {
             using Payload                         = mcdk_ev_ipc_client;
             static constexpr auto     abiName     = MCDK_EVENT_IPC_CLIENT_CONNECTED;
@@ -98,6 +113,9 @@ namespace mcdk {
             static IpcClientConnected from(const Payload& raw) { return {raw.client_count}; }
         };
 
+        // 发射线程：该客户端的读线程。阻塞它会挡住这条连接的后续读取。
+        // 注意宿主关停时不会补发本事件，别指望 connected / disconnected 成对——
+        // 要收摊请用 GameExit 或 onShutdown。
         struct IpcClientDisconnected {
             using Payload                            = mcdk_ev_ipc_client;
             static constexpr auto        abiName     = MCDK_EVENT_IPC_CLIENT_DISCONNECTED;
@@ -176,8 +194,6 @@ namespace mcdk {
             switch (mode) {
             case Dispatch::Sync:
                 return MCDK_DISPATCH_SYNC;
-            case Dispatch::Main:
-                return MCDK_DISPATCH_MAIN;
             case Dispatch::Queued:
             default:
                 return MCDK_DISPATCH_QUEUED;

@@ -10,8 +10,8 @@
 #include <mcdk/plugin/abi/core.h>
 
 namespace mcdk::plugin_host {
-// 线程局部错误槽。插件通过 mcdk.core 的 get_last_error 取走，取到的是指向
-// 本槽的借用 mcdk_str，必须立即拷贝。按线程隔离——在工作线程上失败、到主
+    // 线程局部错误槽。插件通过 mcdk.core 的 get_last_error 取走，取到的是指向
+    // 本槽的借用 mcdk_str，必须立即拷贝。按线程隔离——在工作线程上失败、到主
     struct ErrorSlot {
         mcdk_status code = MCDK_OK;
         std::string message;
@@ -44,7 +44,7 @@ namespace mcdk::plugin_host {
         }
     }
 
-     // 无返回值的 shim（如 console log）。失败只记录，不向插件报告。
+    // 无返回值的 shim（如 console log）。失败只记录，不向插件报告。
     // 这类调用往往本身就在错误处理路径上，返回值只会诱导出无意义的嵌套处理。
     template <class Fn>
     void guardVoid(Fn&& fn) noexcept {

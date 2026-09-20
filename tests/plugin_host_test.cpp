@@ -68,21 +68,8 @@ int main() {
         }
     );
 
-    // 零插件契约：没加载任何插件时不存在主线程唤醒信号，游戏等待循环
-    // 因此退回无期限阻塞，一次周期性唤醒都没有（12-performance.md §1）。
-    passed &= expect(
-        plugin_host::mainThreadWorkWaitHandle() == nullptr,
-        "no main-thread wake signal exists before any plugin is loaded"
-    );
-
     host.loadDeclared(declarations, pluginPath.parent_path());
 
-#ifdef _WIN32
-    passed &= expect(
-        plugin_host::mainThreadWorkWaitHandle() != nullptr,
-        "loading a plugin creates the main-thread wake signal"
-    );
-#endif
 
     const auto loaded  = host.loaded();
     passed            &= expect(loaded.size() == 1, "only the enabled declaration is loaded");
@@ -217,29 +204,6 @@ int main() {
         passed &= expect(
             contains(output, "event:game-launch-finish:4242:D:/games/Minecraft.exe"),
             "the typed payload fields, strings included, survive the round trip through the C ABI"
-        );
-    }
-// --- MAIN 派发 --------------------------------------------------
-// Dispatch::Main 的回调只能在 pumpMainThreadWork() 里跑。先确认它不会
-    {
-        using namespace mcdk::plugin_host;
-        MCDK_EMIT(EventId::GameExit, [] {
-            mcdk_ev_game_exit payload{};
-            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
-            payload.pid         = 4242;
-            payload.exit_code   = 7;
-            return payload;
-        });
-        // 足够让派发线程把它搬到主线程队列里。
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
-        passed &= expect(
-            !contains(output, "event:game-exit-main:7"),
-            "a Dispatch::Main handler does not run until the main thread pumps"
-        );
-        pumpMainThreadWork();
-        passed &= expect(
-            contains(output, "event:game-exit-main:7"),
-            "a Dispatch::Main handler runs on the pumping thread"
         );
     }
 

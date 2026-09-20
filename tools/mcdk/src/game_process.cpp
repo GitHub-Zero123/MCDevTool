@@ -996,43 +996,28 @@ void mcdk::launchGameExe(
         }
     }
     styleProcessor.start();
-// 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
-// ERROR_BROKEN_PIPE）
-    {
-        HANDLE waitHandles[2] = {processHandle.get(), nullptr};
-        DWORD  waitCount      = 1;
-        if (void* const mainWorkSignal = mcdk::plugin_host::mainThreadWorkWaitHandle(); mainWorkSignal != nullptr) {
-            waitHandles[1] = static_cast<HANDLE>(mainWorkSignal);
-            waitCount      = 2;
-        }
-        // Safaia 的 poll() 内部是 {256 条, 1ms} 的预算，必须被周期驱动。
-        // 这个 20Hz 是 Safaia 自己的节拍，与插件无关。
+    // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
+    // ERROR_BROKEN_PIPE）
+    if (safaiaReceiver) {
         constexpr DWORD safaiaTicksPerSecond = 20;
-        const DWORD     timeout = safaiaReceiver ? (1000 / safaiaTicksPerSecond) : INFINITE;
-
+        constexpr DWORD safaiaTickMilliseconds = 1000 / safaiaTicksPerSecond;
         while (true) {
-            const DWORD waitResult = WaitForMultipleObjects(waitCount, waitHandles, FALSE, timeout);
-            if (safaiaReceiver) {
-                safaiaReceiver->poll();
-            }
-            // 无待办时是一次原子读 + 分支，不必先判断 waitResult。
-            mcdk::plugin_host::pumpMainThreadWork();
+            const auto waitResult = WaitForSingleObject(processHandle.get(), safaiaTickMilliseconds);
+            safaiaReceiver->poll();
             if (waitResult == WAIT_OBJECT_0) {
                 break;
             }
             if (waitResult == WAIT_FAILED) {
-                // 不抛：异常会跳过 SHUTDOWN；记录后继续收集进程退出码。
-                printColoredAtomic(
-                    "[MCDK] WaitForMultipleObjects failed while waiting for the game process, GetLastError=" +
-                        std::to_string(GetLastError()),
-                    ConsoleColor::Yellow
+                throw std::system_error(
+                    static_cast<int>(GetLastError()),
+                    std::system_category(),
+                    "WaitForSingleObject failed while polling Safaia"
                 );
-                break;
             }
         }
-    }
-    if (safaiaReceiver) {
         safaiaReceiver->stop();
+    } else {
+        WaitForSingleObject(processHandle.get(), INFINITE);
     }
 
     DWORD minecraftExitCode = 0;

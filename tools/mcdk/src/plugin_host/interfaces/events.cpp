@@ -48,7 +48,8 @@ namespace mcdk::plugin_host::detail {
                     setError(MCDK_ERR_INVALID_ARGUMENT, "unknown event id");
                     return;
                 }
-                if (mode != MCDK_DISPATCH_QUEUED && mode != MCDK_DISPATCH_SYNC && mode != MCDK_DISPATCH_MAIN) {
+                // 旧插件可能传 2（已移除的 MAIN），这里一律拒掉，不静默降级成 QUEUED。
+                if (mode != MCDK_DISPATCH_QUEUED && mode != MCDK_DISPATCH_SYNC) {
                     setError(MCDK_ERR_INVALID_ARGUMENT, "unknown dispatch mode");
                     return;
                 }
@@ -86,14 +87,6 @@ namespace mcdk::plugin_host::detail {
             });
         }
 
-        void MCDK_CALL eventsPostMain(mcdk_handle self, void(MCDK_CALL* fn)(void*), void* user) noexcept {
-            guardVoid([&] {
-                if (registry().find(self) == nullptr) {
-                    return;
-                }
-                postMainThreadWork(fn, user);
-            });
-        }
 
         constexpr mcdk_iface_events kTable = {
             /* struct_size */ static_cast<uint32_t>(sizeof(mcdk_iface_events)),
@@ -102,7 +95,6 @@ namespace mcdk::plugin_host::detail {
             /* subscribe   */ &eventsSubscribe,
             /* unsubscribe */ &eventsUnsubscribe,
             /* emit        */ &eventsEmit,
-            /* post_main   */ &eventsPostMain,
         };
 
     } // namespace

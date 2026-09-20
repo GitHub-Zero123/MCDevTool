@@ -180,11 +180,6 @@ namespace mcdk::plugin_host {
                     ++loaded;
                 }
             }
-            if (loaded > 0) {
-                // 有插件了，主线程才需要一个能被唤醒的口子。必须在游戏等待循环
-                // 开始前建好：那条循环只在进入时取一次句柄。
-                enableMainThreadSignal();
-            }
             report(
                 "已加载 " + std::to_string(loaded) + " 个插件，" + std::to_string(disabled) + " 个已禁用",
                 loaded > 0 ? ConsoleColor::Green : ConsoleColor::DarkGray
@@ -197,8 +192,6 @@ namespace mcdk::plugin_host {
                 mShutdownStageDone = true;
             }
             detail::setCurrentStage(stage);
-            // 阶段推进是主线程上的天然抽水点。
-            pumpMainThreadWork();
             // 零插件时这是一次空遍历，没有其他开销。
             detail::registry().forEach([&](mcdk_handle handle, detail::PluginRecord& record) {
                 if (record.degraded || record.desc.on_stage == nullptr) {

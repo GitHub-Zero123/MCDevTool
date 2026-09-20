@@ -43,11 +43,8 @@ typedef struct mcdk_iface_events {
     /* 插件发射自己的事件。名字必须用自己的反向域名前缀，禁止占用 mcdk. 命名空间。 */
     mcdk_status(MCDK_CALL* emit)(mcdk_handle self, uint32_t event_id, const void* payload, uint32_t payload_size);
 
-    /*
-     * 把一段工作投递到主线程。主线程在阶段推进点与游戏等待循环中抽取，
-     * 因此延迟是几十毫秒量级，不适合做需要即时响应的事。
-    */
-    void(MCDK_CALL* post_main)(mcdk_handle self, void(MCDK_CALL* fn)(void*), void* user);
+    /* 曾有过一个 post_main（投递到宿主主线程），v1 未发布前已移除，理由同
+       MCDK_DISPATCH_MAIN。要推迟执行就用 MCDK_DISPATCH_QUEUED，或自建线程。 */
 } mcdk_iface_events;
 
 #ifdef __cplusplus

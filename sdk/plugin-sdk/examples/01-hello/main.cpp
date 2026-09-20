@@ -28,10 +28,10 @@ namespace {
                 );
             });
 
-            // Dispatch::Main 的回调保证跑在宿主主线程上，适合要去碰
-            // 非线程安全宿主状态的场景。代价是比 Queued 多一跳延迟。
-            context.events().on<mcdk::ev::GameExit>(mcdk::Dispatch::Main, [&context](const auto& e) {
-                context.console().info("event:game-exit-main:" + std::to_string(e.exitCode));
+            // Sync 在发射线程上内联跑。ev::GameExit 由 mcdk 的启动线程发射，
+            // 所以这个回调就在那条线程上。
+            context.events().on<mcdk::ev::GameExit>(mcdk::Dispatch::Sync, [&context](const auto& e) {
+                context.console().info("event:game-exit-sync:" + std::to_string(e.exitCode));
             });
 
             // MCP 工具只能在 REGISTER 阶段注册，SDK 负责转换其复杂参数。

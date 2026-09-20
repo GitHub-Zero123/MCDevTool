@@ -201,7 +201,7 @@ typedef struct mcdk_iface_game {
 
 **规范：禁止在 `MCDK_DISPATCH_SYNC` 派发的事件处理器中调用 `execute_python`。**
 
-尤其是 `mcdk.log.line`：该回调运行在日志读取线程上，阻塞它会卡住整条游戏日志管道；而 Python 执行本身又会产生日志，构成自锁。需要在收到日志后执行代码，必须改用 `MCDK_DISPATCH_QUEUED` 或经由 `post_main` 转手。
+尤其是 `mcdk.log.line`：该回调运行在日志读取线程上，阻塞它会卡住整条游戏日志管道；而 Python 执行本身又会产生日志，构成自锁。需要在收到日志后执行代码，改用 `MCDK_DISPATCH_QUEUED`。
 
 `execute_python` 可安全地在 MCP 工具 handler 中调用——那是它最主要的用法。
 
@@ -419,7 +419,7 @@ SDK 自动处理这一层：用户的 handler 直接 `return nlohmann::json{...}
 | `mcdk.rpc` 注册 Host Bridge 方法 | 面向 IDE，与 MCP 能力重叠，等 MCP 路径验证后再开 |
 | `mcdk.hotreload` 注册自定义 watcher | 需要先确定通配语法与 `IncrementalReloadWatcherTask` 的复用边界 |
 | `mcdk.pack` 干预 Pack 清单 | 涉及 `WORLD` 阶段的写盘时序，风险高于收益 |
-| `mcdk.task` 定时器与后台 job | 插件可自建线程，`post_main` 已由 `mcdk.events` 提供 |
+| `mcdk.task` 定时器与后台 job | 插件可自建线程；要推迟执行用 `MCDK_DISPATCH_QUEUED` |
 | `mcdk.store` 私有 KV | 插件可自行读写 `mcdk_session_info::project_root` 下的文件 |
 | `mcdk.mem` 共享分配器 | v1 靠句柄 + 调用方缓冲解决，不引入分配器（见 [02](02-abi-contract.md) §6） |
 | `mcdk.core::register_interface` 插件间接口 | 依赖拓扑排序已在 [06-loading.md](06-loading.md) 设计，但 v1 无消费方 |

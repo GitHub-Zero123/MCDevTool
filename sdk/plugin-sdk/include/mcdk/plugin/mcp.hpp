@@ -44,6 +44,8 @@ namespace mcdk {
         [[nodiscard]] bool available() const noexcept { return mTable != nullptr; }
 // 注册一个 MCP 工具。
 // 只能在 REGISTER 阶段调用，通常写在 ev::McpRegisterBefore 处理器中。
+        // handler 跑在 **MCP 工作线程**上，且**可能被并发调用**（默认上限 8），
+        // 必须自行保证线程安全。允许阻塞——这正是它调 game().executePython 的场景。
         template <class Handler>
         mcdk_status addTool(const ToolDesc& desc, Handler&& handler) {
             if (!detail::ifaceHas(mTable, &mcdk_iface_mcp::add_tool)) {

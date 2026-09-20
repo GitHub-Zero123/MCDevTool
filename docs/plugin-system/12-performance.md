@@ -37,9 +37,10 @@
 `WaitForSingleObject(INFINITE)` 改成定时轮询以便抽干 `post_main` 队列——哪怕只有 20 次/秒，那也是
 零插件用户白白多付的错。
 
-**正确做法是事件驱动而非轮询。** 主线程唤醒信号（`enableMainThreadSignal()`）只在真的加载了至少一个
-插件时创建；没有它时 `mainThreadWorkWaitHandle()` 返回 `nullptr`，等待循环退回无期限阻塞。这样
-即使是「一个 if」都省了，而且有插件时的延迟反而比轮询更低。该契约由 `plugin-host` 测试看守。
+**这条最后是靠删掉需求解决的**：主线程派发在 v1 发布前被移除（[04-events.md](04-events.md) §4.0），
+抽水点随之消失，游戏等待循环恢复成原来的 `WaitForSingleObject(INFINITE)`，与引入插件系统之前逐字相同。
+
+结论值得记住：**当一个机制逼着你去改宿主的主循环时，先确认它解决的问题真的存在。**
 
 ## 2. 发射点的标准写法（规范）
 

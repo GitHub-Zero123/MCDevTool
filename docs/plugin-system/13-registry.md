@@ -108,9 +108,9 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `subscribe` | 1.0 | 可用 | 返回退订 token |
 | `unsubscribe` | 1.0 | 可用 | — |
 | `emit` | 1.0 | 计划 | 插件自定义事件。当前对内置 `mcdk.*` 事件返回 `MCDK_ERR_NOT_SUPPORTED`，待自定义事件命名空间开放 |
-| `post_main` | 1.0 | 可用 | 投递到主线程 |
+| ~~`post_main`~~ | 1.0 | 已移除 | v1 发布前移除，见 [04-events.md](04-events.md) §4.0。表尾空位不占号，将来可重新追加 |
 
-v1 合计 **21 个 ABI 函数，六张接口表，全部可用**。
+v1 合计 **20 个 ABI 函数，六张接口表，全部可用**（原 21 个，`post_main` 已移除）。
 
 阶段窗口（[05-interfaces.md](05-interfaces.md) §9）由宿主 shim 实际强制执行，
 不在窗口内调用返回 `MCDK_ERR_WRONG_STAGE`——这一条不能只写在文档里：
@@ -165,7 +165,7 @@ v1 合计 **9 个事件、6 个 payload 结构体**，全部已接上发射点�
 | `mcdk_stage` | 1.0 | 0..4 | 5 |
 | `mcdk_log_level` | 1.0 | 0..4 | 5 |
 | `mcdk_color` | 1.0 | 0..10 | 11 |
-| `mcdk_dispatch_mode` | 1.0 | 0..2 | 3 |
+| `mcdk_dispatch_mode` | 1.0 | 0..1，**2 已移除且永久保留** | 3 |
 | `mcdk_event_result` | 1.0 | 0..2 | 3 |
 | `mcdk_side` | 1.0 | 0..1 | 2 |
 | `mcdk_log_channel` | 1.0 | 0..1 | 2 |

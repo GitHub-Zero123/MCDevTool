@@ -42,8 +42,8 @@ namespace mcdk::plugin_host {
     // 下面两个只在确有订阅者时才会被调用，因此可以随便做重活。
     void               dispatchRaw(EventId id, const void* payload, std::uint32_t payloadSize);
     [[nodiscard]] bool dispatchRawVetoable(EventId id, const void* payload, std::uint32_t payloadSize);
-// payload 工厂的临时字符串寄存处。
-// payload 里的 mcdk_str 是借用的，而工厂是个返回 payload 的 lambda——它内部
+    // payload 工厂的临时字符串寄存处。
+    // payload 里的 mcdk_str 是借用的，而工厂是个返回 payload 的 lambda——它内部
     class PayloadArena {
     public:
         [[nodiscard]] mcdk_str hold(std::string text) {
@@ -57,7 +57,7 @@ namespace mcdk::plugin_host {
         std::deque<std::string> mStorage;
     };
 
-     // 工厂可接收无参或 arena 参数，后者用于构造字符串 payload。
+    // 工厂可接收无参或 arena 参数，后者用于构造字符串 payload。
     template <class Factory>
     void dispatch(EventId id, Factory&& makePayload) {
         if constexpr (std::is_invocable_v<Factory&, PayloadArena&>) {
@@ -103,19 +103,6 @@ namespace mcdk::plugin_host {
         void*              user
     );
     void unsubscribeEvent(mcdk_handle owner, mcdk_handle token);
-
-    void postMainThreadWork(void(MCDK_CALL* fn)(void*), void* user);
-
-    // 抽干投递到主线程的工作。宿主在阶段推进点与游戏等待循环中调用。
-    // 无待办时是一次原子读 + 分支。
-    void pumpMainThreadWork();
-// 创建主线程唤醒信号。只在确实加载了插件时调用一次。
-// 零插件时不创建是刻意的：没有信号句柄，等待循环就退回无期限阻塞，
-    void enableMainThreadSignal();
-
-    // 有主线程待办时被置位的等待句柄（Windows 上是 HANDLE）。
-    // 从未加载过插件则返回 nullptr，调用方据此退回无超时等待。
-    [[nodiscard]] void* mainThreadWorkWaitHandle() noexcept;
 
     // 断开某插件的全部订阅并等待其 in-flight 回调返回。
     // 必须在 on_unload 之前调用，见 docs/plugin-system/03-abi-reference.md §5.1 第 1~3 步。

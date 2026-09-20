@@ -22,8 +22,9 @@ namespace mcdk::runtime {
     };
 
     [[nodiscard]] std::string_view describeMcpToolBindError(McpToolBindError error) noexcept;
-// 与 mcp::tool_handler 逐字相同（mcp::json 是 ordered_json，不是 nlohmann::json）。
-// 这里仅声明所需类型，避免公开头文件依赖完整的 mcp_server.h。
+
+    // 与 mcp::tool_handler 逐字相同（mcp::json 是 ordered_json，不是 nlohmann::json）。
+    // 这里仅声明所需类型，避免公开头文件依赖完整的 mcp_server.h。
     using McpToolHandler = std::function<mcp::json(const mcp::json& params, const std::string& sessionId)>;
 
     struct McpToolEntry {
@@ -32,8 +33,9 @@ namespace mcdk::runtime {
         // 注册来源，"builtin" 或插件 id。重名时用它给出可定位的报错。
         std::string owner;
     };
-// MCP 工具注册表。形态对齐 RpcRegistry：注册窗口关闭后封存，运行期只读。
-// 它把"有哪些工具"与"MCP 服务器"解耦：内置工具与插件工具注册进同一张表，
+
+    // MCP 工具注册表。形态对齐 RpcRegistry：注册窗口关闭后封存，运行期只读。
+    // 它把"有哪些工具"与"MCP 服务器"解耦：内置工具与插件工具注册进同一张表，
     class McpToolRegistry {
     public:
         McpToolRegistry()                                  = default;

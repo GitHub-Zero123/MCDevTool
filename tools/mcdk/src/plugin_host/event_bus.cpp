@@ -4,10 +4,6 @@
 
 #include "registry.hpp"
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -28,7 +24,7 @@ namespace mcdk::plugin_host {
 
         constexpr std::size_t kMaxQueuedEvents = 4096;
 // payload 布局表
-// QUEUED / MAIN 派发必须深拷贝：发射方的字符串存储在 MCDK_EMIT 所在作用域
+// QUEUED 派发必须深拷贝：发射方的字符串存储在 MCDK_EMIT 所在作用域
         constexpr std::uint16_t kStrGameLaunchBefore[] = {
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, exe_path)),
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, dev_config_path)),
@@ -119,27 +115,13 @@ namespace mcdk::plugin_host {
             std::vector<unsigned char> blob;
         };
 
-        struct MainThreadWork {
-            void (*MCDK_CALL fn)(void*) = nullptr;
-            void* user                  = nullptr;
-        };
-
-        // MAIN 订阅者的一次投递。它自带 payload 副本，并持有订阅的一份 in-flight
-        // 引用——回调要到主线程抽水时才跑，在那之前插件不能被卸载。
-        struct MainDispatch {
-            Subscription*              subscription = nullptr;
-            EventId                    event        = EventId::Count;
-            std::uint32_t              payloadSize  = 0;
-            std::vector<unsigned char> blob;
-        };
-
         struct Bus {
             std::mutex mutex;
             // deque + 槽位复用：派发会把裸指针带出锁外使用，容器不能搬动元素。
             std::deque<Subscription> subscriptions;
             mcdk_handle              nextToken = 1;
 
-            // ---- QUEUED / MAIN 派发线程（惰性创建）----
+            // ---- QUEUED 派发线程（惰性创建）----
             std::thread             worker;
             std::deque<QueuedEvent> queue;
             std::condition_variable queueReady;
@@ -147,16 +129,6 @@ namespace mcdk::plugin_host {
             bool                    workerLive    = false;
             std::uint64_t           droppedEvents = 0;
             bool                    dropWarned    = false;
-
-            // ---- 主线程队列 ----
-            std::mutex                  mainMutex;
-            std::vector<MainThreadWork> mainWork;
-            std::atomic<bool>           mainWorkPending{false};
-#ifdef _WIN32
-            // 自动重置事件。只在真的加载了插件时才创建；保持为 nullptr
-            // 就是「零插件时不存在周期性唤醒」这个契约的实现方式。
-            HANDLE mainWorkSignal = nullptr;
-#endif
 
             // ---- detach 等待 in-flight ----
             std::condition_variable inFlightDone;
@@ -243,17 +215,6 @@ namespace mcdk::plugin_host {
             return event;
         }
 
-        void MCDK_CALL mainDispatchTrampoline(void* raw) {
-            std::unique_ptr<MainDispatch> work(static_cast<MainDispatch*>(raw));
-            if (work->subscription->alive.load(std::memory_order_acquire)) {
-                relocate(work->event, work->blob);
-                const auto event = makeEvent(work->event, work->blob.data(), work->payloadSize);
-                (void)work->subscription->handler(&event, work->subscription->user);
-            }
-            // in-flight 的所有权在这里归还，detach 才能继续往下走。
-            releaseOne(work->subscription);
-        }
-
         void workerLoop() {
             std::vector<Subscription*> taken;
             std::vector<Subscription*> toRelease;
@@ -278,18 +239,6 @@ namespace mcdk::plugin_host {
                 for (auto* subscription : taken) {
                     if (!subscription->alive.load(std::memory_order_acquire)) {
                         toRelease.push_back(subscription);
-                        continue;
-                    }
-                    if (subscription->mode == MCDK_DISPATCH_MAIN) {
-                        // 转交给主线程，连同 in-flight 的所有权一起——所以这里不 release。
-                        auto work          = std::make_unique<MainDispatch>();
-                        work->subscription = subscription;
-                        work->event        = item.event;
-                        work->payloadSize  = item.payloadSize;
-                        // 重新 pack 一份：item.blob 已经被 relocate 成真指针了，
-                        // 而这份副本还要再搬一次家。
-                        pack(item.event, item.blob.data(), item.payloadSize, work->blob);
-                        postMainThreadWork(&mainDispatchTrampoline, work.release());
                         continue;
                     }
                     // 插件侧的异常由 SDK 屏障吃掉，这里拿到的只会是返回值。
@@ -327,7 +276,7 @@ namespace mcdk::plugin_host {
             bus().queueReady.notify_one();
         }
 
-        // 异步（QUEUED + MAIN）订阅者的计数。dispatchRaw 据此决定要不要付深拷贝的钱。
+        // 异步（QUEUED）订阅者的计数。dispatchRaw 据此决定要不要付深拷贝的钱。
         std::array<std::atomic<std::uint32_t>, kEventCount> gAsyncSubscriberCount{};
 
         bool hasAsyncSubscribers(EventId id) noexcept {
@@ -347,16 +296,6 @@ namespace mcdk::plugin_host {
                 "[Plugin] 事件 " + std::string(eventName(id)) + " 的 payload 尺寸与事件表不符，已拒绝发射"
             );
             return false;
-        }
-
-        void closeMainThreadSignal() {
-#ifdef _WIN32
-            const std::lock_guard lock(bus().mainMutex);
-            if (bus().mainWorkSignal != nullptr) {
-                CloseHandle(bus().mainWorkSignal);
-                bus().mainWorkSignal = nullptr;
-            }
-#endif
         }
 
         bool anyInFlight(mcdk_handle owner) {
@@ -491,7 +430,6 @@ namespace mcdk::plugin_host {
 
         if (mode != MCDK_DISPATCH_SYNC) {
             // 惰性：没有异步订阅就不建线程（12-performance.md §3）。
-            // MAIN 也要经过派发线程——它是从发射线程到主线程之间的那一跳。
             ensureWorker();
             gAsyncSubscriberCount[static_cast<std::size_t>(id)].fetch_add(1, std::memory_order_relaxed);
         }
@@ -525,57 +463,6 @@ namespace mcdk::plugin_host {
         }
     }
 
-    void postMainThreadWork(void(MCDK_CALL* fn)(void*), void* user) {
-        if (fn == nullptr) {
-            return;
-        }
-        const std::lock_guard lock(bus().mainMutex);
-        bus().mainWork.push_back(MainThreadWork{fn, user});
-        // 先置 pending 再置位事件：反过来的话，被唤醒的主线程可能看到
-        // pending == false 而空跑一轮，随后又退回无期限等待，这件工作就永远压在那里了。
-        bus().mainWorkPending.store(true, std::memory_order_release);
-#ifdef _WIN32
-        if (bus().mainWorkSignal != nullptr) {
-            SetEvent(bus().mainWorkSignal);
-        }
-#endif
-    }
-
-    void enableMainThreadSignal() {
-#ifdef _WIN32
-        const std::lock_guard lock(bus().mainMutex);
-        if (bus().mainWorkSignal == nullptr) {
-            bus().mainWorkSignal = CreateEventW(nullptr, /*bManualReset=*/FALSE, /*bInitialState=*/FALSE, nullptr);
-        }
-#endif
-    }
-
-    void* mainThreadWorkWaitHandle() noexcept {
-#ifdef _WIN32
-        const std::lock_guard lock(bus().mainMutex);
-        return bus().mainWorkSignal;
-#else
-        return nullptr;
-#endif
-    }
-
-    void pumpMainThreadWork() {
-        // 无待办时就是一次原子读 + 分支。
-        if (!bus().mainWorkPending.load(std::memory_order_acquire)) {
-            return;
-        }
-        std::vector<MainThreadWork> work;
-        {
-            const std::lock_guard lock(bus().mainMutex);
-            work.swap(bus().mainWork);
-            bus().mainWorkPending.store(false, std::memory_order_release);
-        }
-        for (const auto& item : work) {
-            // 插件侧已有屏障，这里只兜宿主自身的意外。
-            guardVoid([&item] { item.fn(item.user); });
-        }
-    }
-
     void detachSubscriber(mcdk_handle owner) {
         {
             // 第 1、3 步：停止派发并注销订阅。
@@ -589,15 +476,8 @@ namespace mcdk::plugin_host {
         }
         // 第 2 步：等待 in-flight 回调返回。必须在 on_unload 之前完成，
         // 否则事件会打进正在析构的插件对象（03-abi-reference.md §5.1）。
-            for (;;) {
-            pumpMainThreadWork();
-            std::unique_lock lock(bus().mutex);
-            const bool       done =
-                bus().inFlightDone.wait_for(lock, std::chrono::milliseconds(2), [owner] { return !anyInFlight(owner); });
-            if (done) {
-                return;
-            }
-        }
+        std::unique_lock lock(bus().mutex);
+        bus().inFlightDone.wait(lock, [owner] { return !anyInFlight(owner); });
     }
 
     void shutdownEventBus() {
@@ -613,10 +493,6 @@ namespace mcdk::plugin_host {
         if (worker.joinable()) {
             worker.join();
         }
-        // 派发线程可能刚往主线程投递过 MAIN 回调，它们持有订阅的 in-flight 引用。
-        // 先把这些活儿跑完（并释放引用），再清订阅表，否则回调会引用已销毁的槽位。
-        pumpMainThreadWork();
-
         const std::lock_guard lock(bus().mutex);
         bus().workerLive = false;
         bus().stopping   = false;
@@ -628,7 +504,6 @@ namespace mcdk::plugin_host {
         for (auto& counter : gAsyncSubscriberCount) {
             counter.store(0, std::memory_order_relaxed);
         }
-        closeMainThreadSignal();
     }
 
 } // namespace mcdk::plugin_host

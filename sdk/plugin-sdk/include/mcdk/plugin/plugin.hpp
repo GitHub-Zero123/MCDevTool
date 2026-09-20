@@ -26,6 +26,9 @@ namespace mcdk {
     };
 // 插件基类。全部回调都有空实现，只重写用得上的那些。
 // 这些是正常的 C++ 虚函数；SDK 会为它们生成带异常屏障的 noexcept 蹦床。
+//
+// 线程：五个阶段回调全部在 mcdk 启动线程上按顺序调用，彼此不会并发。
+// 事件回调不在此列，跑在哪条线程由 Dispatch 与事件本身决定，见 ev:: 上的标注。
     class Plugin {
     public:
         Plugin()                         = default;

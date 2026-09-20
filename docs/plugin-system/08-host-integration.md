@@ -101,17 +101,7 @@ main.cpp
 | `mcdk.mcp.tool_call.*` | `McpToolRegistry` 分发入口 |
 | `mcdk.host_bridge.connected` | `HostBridgeTask` 连接建立回调 |
 
-### 5.1 主线程抽干点
-
-`MCDK_DISPATCH_MAIN` 的回调与 `post_main` 投递的工作只会在 `pumpMainThreadWork()` 里执行。
-它必须被放在**主线程唯一的长时间阻塞点**上，目前是 `launchGameExe()` 等待游戏进程退出
-的 20Hz 轮询循环。无待办时它是一次原子读加一次分支。
-
-**该循环只能有一条。** 日志走 Safaia 接收器还是走 stdout/stderr 管道，只影响 tick 里额外
-做什么，不得为此分成两条等待循环——一旦分叉，将来新增的日志通道就会多出一条忘了 pump
-的分支，表现为“某些配置下插件的主线程回调永远不触发”这种极难定位的问题。
-
-### 5.2 两个发射点的位置说明
+### 5.1 两个发射点的位置说明
 
 **日志事件不在 `LogBuffer::add` 上。** 看上去那里才是「日志写入路径」，但 `handlers.output`
 对带 `[INFO][Developer]` / `SUC` / `ERROR` / `WARN` / `DEBUG` 的行都是打完就 `return`，根本不进
