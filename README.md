@@ -23,6 +23,7 @@
 - 支持 Shader / Material 单文件热更新，可在资源包文件变化后回到游戏前台触发增量重载。
 - 内置调试 MOD，可重定向 Python 输出、绑定热更新快捷键，并提供调试期 IPC 能力。
 - 可选启用 MCP 服务，让 AI / 自动化客户端读取日志、执行代码、分析 JSON UI、截图和点击游戏窗口。
+- 支持 C++ 插件扩展 mcdk 自身：订阅生命周期事件、注册自己的 MCP 工具。插件**只从 `.mcdev.json` 的 `plugins` 显式声明加载，不扫描任何目录**。
 
 ## 配置mcdk
 您可以将**mcdk**添加到环境变量Path中，也可以直接放置在本地项目工作区以便命令搜索。
@@ -243,9 +244,30 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
         "server_ip": "localhost",
         // 服务器端口
         "server_port": 19133
-    }
+    },
+    // C++ 插件声明。只加载这里列出的，不扫描任何目录——未声明的插件不会被加载。
+    "plugins": [
+        {
+            // 是否启用该条声明
+            "enable": true,
+            // 插件目录（含 plugin.json）或直接指向动态库。
+            // 相对路径以 .mcdev.json 所在目录为基准，支持 ~/ 展开
+            "path": "./plugins/my-plugin",
+            // 期望的插件 id（选填）。非空时与插件自报的 id 比对，不符则拒绝加载，防止内容被替换
+            "id": "com.example.my-plugin",
+            // 传给该插件的配置，任意 JSON。原样透传，由插件自行解析
+            "config": {},
+            // 加载顺序，小者先加载。相同时按声明顺序（选填，默认 0）
+            "priority": 0
+        }
+    ]
 }
 ```
+
+## C++ 插件
+插件可以在自己的 `plugin.json` 里声明 MCP 工具，这类工具在 mcdk 没启动时也能被 MCP 客户端列出（见 [tools/mcdk_stdio_bridge/README.md](tools/mcdk_stdio_bridge/README.md)）。
+
+开发插件见 [docs/plugin-system/](docs/plugin-system/)，SDK 与示例在 [sdk/plugin-sdk/](sdk/plugin-sdk/)。
 
 ## 玩法地图工程
 
