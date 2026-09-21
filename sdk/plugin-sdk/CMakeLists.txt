@@ -8,6 +8,14 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(McdkAddPlugin)
 
+# 本目录下的源码是不带 BOM 的 UTF-8，注释里有中文。MSVC 默认按系统 ANSI 代码页
+# 读源文件，在 936(GBK) 上会把多字节序列的尾字节与后一个字符凑成一个双字节字符，
+# 进而吃掉整行——症状是 #include 莫名消失。英文 locale 上只是乱码，不报错，所以
+# CI 发现不了。不加 /EHsc：异常开关由调用方决定（见 CI 的 msvc-md-noexcept）。
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # ------------------------------------------------------------------
 # 第一层：ABI 头。宿主与 SDK 的唯一真源，物理上只有这一份。
 # 纯 C99，除 <stddef.h> / <stdint.h> 外无依赖。

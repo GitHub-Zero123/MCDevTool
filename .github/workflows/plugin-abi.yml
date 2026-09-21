@@ -40,17 +40,33 @@ jobs:
         with:
           submodules: recursive
 
+      # mods/Resource 被 .gitignore 排除，干净检出里没有 INCLUDE_MOD.cpp，
+      # 不先生成的话 mods/CMakeLists.txt 在 configure 阶段就失败。
+      - name: Generate embedded resources
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            python3 mods/generate.py
+          else
+            python mods/generate.py
+          fi
+
+      # 不写 -G：让 CMake 选默认生成器，也就是 runner 上装的 Visual Studio。
+      # 原本写死 -G Ninja 却没有任何 MSVC 环境，CMake 会就近取到 PATH 上的
+      # C:\mingw64\bin\c++.exe——名义上测 MSVC 的 job 实际一次都没测过 MSVC。
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build
           -DMC_DEV_TOOL_BUILD_TEST=ON
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --config Release
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build -C Release --output-on-failure
 
       - name: Upload the reference plugin
         uses: actions/upload-artifact@v4
@@ -72,24 +88,38 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # MSVC 各档不写 -G：默认生成器就是 runner 上的 Visual Studio。
+          # 写死 -G Ninja 而不进 MSVC 环境的话，CMake 会取到 PATH 上的 MinGW，
+          # 于是这几档名义测 MSVC、实际测 MinGW（msvc-md-noexcept 因为用了
+          # MSVC 专有的 /EHs-c- 才暴露出来，其余两档一直静默地测错东西）。
           # 与宿主同 CRT
           - name: msvc-mt
-            preset_args: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+            configure_args: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+            build_args: --config Release
           # 与宿主不同 CRT：允许，因为边界上没有分配器穿越（02 §6）
           - name: msvc-md
-            preset_args: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+            configure_args: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+            build_args: --config Release
+          # 这一档原本就是对的：显式指定 clang-cl，它自己能找到 MSVC 的头与库，
+          # 不依赖 vcvars。别动。
           - name: clang-cl-md
-            preset_args: >
+            configure_args: >
+              -G Ninja -DCMAKE_BUILD_TYPE=Release
               -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
               -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
-          # 完全不同的标准库（libstdc++）与异常模型
+            build_args: ""
+          # 完全不同的标准库（libstdc++）与异常模型。这一档自带生成器与编译器。
           - name: mingw-gcc
-            preset_args: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+            configure_args: >
+              -G Ninja -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+            build_args: ""
           # 关闭异常：屏障退化为直通，ABI 签名必须完全不变（02 §4.4）
           - name: msvc-md-noexcept
-            preset_args: >
+            configure_args: >
               -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
               -DCMAKE_CXX_FLAGS=/EHs-c-
+            build_args: --config Release
 
     steps:
       - uses: actions/checkout@v4
@@ -97,14 +127,13 @@ jobs:
       - name: Configure SDK only
         working-directory: sdk/plugin-sdk
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build
           -DMCDK_PLUGIN_SDK_BUILD_CHECKS=ON
-          ${{ matrix.preset_args }}
+          ${{ matrix.configure_args }}
 
       - name: Build
         working-directory: sdk/plugin-sdk
-        run: cmake --build build
+        run: cmake --build build ${{ matrix.build_args }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -132,14 +161,29 @@ jobs:
           pattern: plugin-*
           path: artifacts
 
+      # 与 host job 同因：mods/Resource 被 .gitignore 排除。
+      - name: Generate embedded resources
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            python3 mods/generate.py
+          else
+            python mods/generate.py
+          fi
+
+      # 不写 -G：让 CMake 选默认生成器，也就是 runner 上装的 Visual Studio。
+      # 原本写死 -G Ninja 却没有任何 MSVC 环境，CMake 会就近取到 PATH 上的
+      # C:\mingw64\bin\c++.exe——名义上测 MSVC 的 job 实际一次都没测过 MSVC。
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build
           -DMC_DEV_TOOL_BUILD_TEST=ON
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --config Release
 
       - name: Collect every toolchain's plugin
         shell: pwsh
@@ -166,4 +210,4 @@ jobs:
       # 真正的那一步：五种工具链的产物同时在一个进程里跑完整生命周期。
       # CRT 错配、符号插入这类问题只会在这里显形。
       - name: Load them all at once
-        run: ctest --test-dir build -R plugin-load-all --output-on-failure
+        run: ctest --test-dir build -C Release -R plugin-load-all --output-on-failure

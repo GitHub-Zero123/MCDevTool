@@ -26,6 +26,13 @@ function(mcdk_add_plugin target)
     target_link_libraries(${target} PRIVATE mcdk::plugin-sdk)
     target_compile_features(${target} PRIVATE cxx_std_17)
 
+    # SDK 头文件里有中文注释，且不带 BOM。MSVC 默认按系统 ANSI 代码页读源文件，
+    # 在 GBK 等双字节代码页上会错读多字节序列并吃掉整行。插件作者的工程未必设过
+    # 这个标志，这里替他加上。
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /utf-8)
+    endif()
+
     set_target_properties(${target} PROPERTIES
         # 只导出入口符号，其余一律隐藏，避免与宿主静态链接的同名第三方库冲突。
         CXX_VISIBILITY_PRESET hidden
