@@ -47,8 +47,8 @@ namespace mcdk {
 
         // MCP 工具注册。非 const：注册要把 handler 闭包存进来。
         [[nodiscard]] Mcp& mcp() noexcept { return mMcp; }
-// .mcdev.json 中本条插件声明的 config 字段，UTF-8 JSON 文本。
-// 同一个插件二进制可以声明多次、各带不同 config，据此表现出不同行为。
+        // .mcdev.json 中本条插件声明的 config 字段，UTF-8 JSON 文本。
+        // 同一个插件二进制可以声明多次、各带不同 config，据此表现出不同行为。
         [[nodiscard]] std::string_view configJson() const noexcept { return mConfigJson; }
 
         // 由 SDK 的入口胶水调用，插件不应直接使用。

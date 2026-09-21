@@ -8,8 +8,8 @@
 #include "../abi/core.h"
 
 namespace mcdk::detail {
-// 字符串
-// std::string_view → mcdk_str。借用语义：被引用的存储必须在本次 ABI 调用
+    // 字符串
+    // std::string_view → mcdk_str。借用语义：被引用的存储必须在本次 ABI 调用
     [[nodiscard]] inline mcdk_str toAbi(std::string_view text) noexcept {
         mcdk_str out;
         out.ptr = text.data();
