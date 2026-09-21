@@ -1,0 +1,43 @@
+name: Enter the MSVC environment
+description: >
+  把 vcvars64 的环境导入后续步骤，使 Ninja 能找到 cl.exe。
+  windows-latest 的 PATH 上有 C:\mingw64\bin，不进这个环境的话
+  CMake 会就近取到 MinGW 的 c++.exe——名义上用 MSVC 的构建会静默变成 MinGW。
+
+runs:
+  using: composite
+  steps:
+    - name: Import vcvars64
+      shell: pwsh
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found at $vswhere" }
+        $vs = & $vswhere -latest -products * `
+                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                -property installationPath
+        if (-not $vs) { throw "no Visual Studio with the x64 toolset was found" }
+
+        $bat = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+        if (-not (Test-Path $bat)) { throw "vcvars64.bat not found at $bat" }
+
+        # 只导出被 vcvars 改动过的变量，避免覆盖 runner 自己的环境。
+        $before = @{}
+        cmd /c set | ForEach-Object {
+          $pair = $_.Split('=', 2)
+          if ($pair.Count -eq 2) { $before[$pair[0]] = $pair[1] }
+        }
+        $changed = 0
+        cmd /c "`"$bat`" >nul 2>&1 && set" | ForEach-Object {
+          $pair = $_.Split('=', 2)
+          if ($pair.Count -eq 2 -and $before[$pair[0]] -ne $pair[1]) {
+            "$($pair[0])=$($pair[1])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            $changed++
+          }
+        }
+        Write-Host "imported $changed variables from $bat"
+
+    # PATH 要到下一个步骤才生效，所以校验单独一步。导入没成功的话在这里
+    # 一秒内失败，而不是让 configure 报一堆看不懂的错。
+    - name: Verify cl.exe is the active compiler
+      shell: cmd
+      run: where cl.exe
