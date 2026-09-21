@@ -26,6 +26,19 @@ if(WIN32)
 endif()
 
 # Tool descriptions are shared with the forwarding-only stdio bridge.
+# 只读清单，不加载任何动态库。mcdk 与 mcdk_stdio_bridge 共用——两份解析必然分叉，
+# 而分叉的表现是 tools/list 列出的工具和实际注册的对不上。
+add_library(mcdk_plugin_manifest STATIC
+    src/plugin_host/manifest.cpp
+    src/plugin_host/declarations.cpp
+)
+target_compile_features(mcdk_plugin_manifest PUBLIC cxx_std_23)
+target_include_directories(mcdk_plugin_manifest PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(mcdk_plugin_manifest PUBLIC mcp mcdk::plugin-abi)
+
 add_library(mcdk_mcp_tools STATIC src/mcp_tool_definitions.cpp)
 target_compile_features(mcdk_mcp_tools PUBLIC cxx_std_20)
 target_include_directories(mcdk_mcp_tools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -54,7 +67,7 @@ add_library(mcdk_core STATIC
 )
 target_compile_features(mcdk_core PUBLIC cxx_std_23)
 target_include_directories(mcdk_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(mcdk_core PUBLIC mcdevtool mcdev_profiler_core mcdk_mcp_tools mcp PRIVATE MCDEV_MOD_RESOURCE)
+target_link_libraries(mcdk_core PUBLIC mcdevtool mcdev_profiler_core mcdk_mcp_tools mcdk_plugin_manifest mcp PRIVATE MCDEV_MOD_RESOURCE)
 
 add_library(mcdk_runtime STATIC
     src/application.cpp
@@ -69,7 +82,6 @@ add_library(mcdk_runtime STATIC
     src/plugin_host/guard.cpp
     src/plugin_host/images.cpp
     src/plugin_cli.cpp
-    src/plugin_host/manifest.cpp
     src/plugin_host/host.cpp
     src/plugin_host/registry.cpp
     src/plugin_host/session_binding.cpp
@@ -92,7 +104,7 @@ option(MCDK_ENABLE_PLUGINS "Enable the mcdk plugin system" ON)
 target_compile_definitions(mcdk_runtime PUBLIC MCDK_ENABLE_PLUGINS=$<BOOL:${MCDK_ENABLE_PLUGINS}>)
 
 # 插件 ABI 头的唯一真源在 sdk/plugin-sdk，宿主与插件 SDK 共用同一份。
-target_link_libraries(mcdk_runtime PUBLIC mcdk_core mcdk::plugin-abi PRIVATE mcp MCDevLink::MCDevLink)
+target_link_libraries(mcdk_runtime PUBLIC mcdk_core mcdk::plugin-abi mcdk_plugin_manifest PRIVATE mcp MCDevLink::MCDevLink)
 if(WIN32)
     target_link_libraries(mcdk_runtime PRIVATE ws2_32)
 endif()

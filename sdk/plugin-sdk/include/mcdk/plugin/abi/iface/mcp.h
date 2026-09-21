@@ -67,6 +67,21 @@ typedef struct mcdk_iface_mcp {
 
     /* 当前已注册的全部工具，JSON 数组文本。借用，必须立即拷贝。 */
     mcdk_status(MCDK_CALL* list_tools)(mcdk_handle self, mcdk_str* out_json);
+
+    /*
+     * 给 plugin.json 的 mcpTools 里声明过的工具装上实现。描述符来自清单，这里只给
+     * 处理函数。仅 MCDK_STAGE_REGISTER 可调用。
+     *
+     * 与 add_tool 的区别只有一个，但很重要：清单声明的工具在 mcdk 启动之前就能被
+     * 读出来，mcdk_stdio_bridge 的 tools/list 因此能在游戏没开时列出它们；
+     * add_tool 注册的工具只在本进程活着时存在，AI 在启动前看不到。
+     */
+    mcdk_status(MCDK_CALL* bind_tool)(
+        mcdk_handle           self,
+        mcdk_str              name,
+        mcdk_mcp_tool_handler handler,
+        void*                 user
+    );
 } mcdk_iface_mcp;
 
 #ifdef __cplusplus

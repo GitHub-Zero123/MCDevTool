@@ -34,35 +34,47 @@ namespace {
                 context.console().info("event:game-exit-sync:" + std::to_string(e.exitCode));
             });
 
-            // MCP 工具只能在 REGISTER 阶段注册，SDK 负责转换其复杂参数。
-            // handler 闭包都由 SDK 降级成 C 形态，这里一个 mcdk_ 类型都看不到。
-            mcdk::ToolDesc tool;
-            tool.name                 = "hello_echo";
-            tool.description          = "回显参数";
-            tool.inputSchema          = R"({"type":"object","properties":{"text":{"type":"string"}}})";
-            tool.annotations.readOnly = true;
-            const auto added = context.mcp().addTool(tool, [](std::string_view args, std::string_view session) {
-                return std::string(R"({"echo":)") + std::string(args) + R"(,"session":")" + std::string(session)
-                     + R"("})";
+            // MCP 工具的注册窗口是 mcp.register.before 到注册表封存之间。
+            // onRegister 太早——那时 mcdk 还没把工具注册表接进来。
+            context.events().on<mcdk::ev::McpRegisterBefore>([&context](const auto&) {
+                // 推荐写法：描述符写在 plugin.json 的 mcpTools 里，这里只补 handler。
+                // 这样 mcdk 没跑的时候 mcdk_stdio_bridge 也能把它列进 tools/list。
+                const auto bound =
+                    context.mcp().bindTool("hello_echo", [](std::string_view args, std::string_view session) {
+                        return std::string(R"({"echo":)") + std::string(args) + R"(,"session":")"
+                             + std::string(session) + R"("})";
+                    });
+                context.console().info("mcp:bind-tool:" + std::to_string(bound));
+
+                // 动态注册：描述符随调用传过去，不进清单。代价是启动前不可见。
+                mcdk::ToolDesc dynamic;
+                dynamic.name                 = "hello_dynamic";
+                dynamic.description          = "运行期注册的工具";
+                dynamic.inputSchema          = R"({"type":"object"})";
+                dynamic.annotations.readOnly = true;
+                const auto added =
+                    context.mcp().addTool(dynamic, [](std::string_view args, std::string_view session) {
+                        return std::string(R"({"echo":)") + std::string(args) + R"(,"session":")"
+                             + std::string(session) + R"("})";
+                    });
+                context.console().info("mcp:add-tool:" + std::to_string(added));
             });
-            context.console().info("mcp:add-tool:" + std::to_string(added));
         }
 
-        void onConfig(mcdk::Context& context) override {
-            context.console().print(mcdk::Color::Cyan, "stage:config");
-            // 注册窗口已过，必须被拒。
-            mcdk::ToolDesc late;
-            late.name        = "hello_too_late";
-            late.inputSchema = R"({"type":"object"})";
-            const auto status =
-                context.mcp().addTool(late, [](std::string_view, std::string_view) { return std::string("{}"); });
-            context.console().info("mcp:late-tool:" + std::to_string(status));
-        }
+        void onConfig(mcdk::Context& context) override { context.console().print(mcdk::Color::Cyan, "stage:config"); }
 
         void onWorld(mcdk::Context& context) override { context.console().print(mcdk::Color::Cyan, "stage:world"); }
 
         void onRuntime(mcdk::Context& context) override {
             context.console().print(mcdk::Color::Cyan, "stage:runtime");
+
+            // 注册表此刻已封存，注册窗口已过，必须被拒。
+            mcdk::ToolDesc late;
+            late.name        = "hello_too_late";
+            late.inputSchema = R"({"type":"object"})";
+            const auto lateStatus =
+                context.mcp().addTool(late, [](std::string_view, std::string_view) { return std::string("{}"); });
+            context.console().info("mcp:late-tool:" + std::to_string(lateStatus));
 
             // mcdk.info：会话快照。ABI 那边这些字符串都是借用的，
             // SDK 已经拷成 std::string，这里随便用。

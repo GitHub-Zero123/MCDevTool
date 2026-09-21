@@ -10,6 +10,10 @@
 #include <mcdk/plugin/abi/core.h>
 #include <mcdk/settings.hpp>
 
+namespace mcdk::runtime {
+    class McpToolRegistry;
+}
+
 namespace mcdk::plugin_host {
 
     struct LoadedPlugin {
@@ -35,6 +39,10 @@ namespace mcdk::plugin_host {
         // 按声明加载，路径相对 manifest 所在目录解析。
         void
         loadDeclared(const std::vector<PluginDeclaration>& declarations, const std::filesystem::path& baseDirectory);
+
+        // 把各插件 plugin.json 里声明的 MCP 工具录入注册表。必须在注册窗口打开前
+        // 调用：插件随后才能给它们 attach handler。
+        void declareMcpTools(runtime::McpToolRegistry& registry);
 
         // 推进生命周期阶段，按加载顺序调用未降级插件的 on_stage。
         // 某插件失败则标记降级并继续处理其余插件。

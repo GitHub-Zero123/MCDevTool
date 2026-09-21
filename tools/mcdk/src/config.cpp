@@ -16,6 +16,8 @@
 
 #include <mcdk/env.hpp>
 
+#include <mcdk/plugin_declarations.hpp>
+
 namespace mcdk {
     namespace {
         using Json = nlohmann::json;
@@ -160,53 +162,6 @@ namespace mcdk {
                 style.lockCorner = static_cast<MCDevTool::Style::WindowCorner>(corner->get<int>());
             }
         }
-// plugins 数组。条目格式错误直接报错，不静默跳过。
-// 静默跳过会让「我明明写了插件却没生效」变成无从排查的问题。
-        std::vector<PluginDeclaration> parsePluginDeclarations(const Json& root) {
-            std::vector<PluginDeclaration> declarations;
-            const auto                     plugins = root.find("plugins");
-            if (plugins == root.end()) {
-                return declarations;
-            }
-            if (!plugins->is_array()) {
-                throw std::runtime_error("配置文件的 plugins 字段必须是数组。");
-            }
-
-            declarations.reserve(plugins->size());
-            std::size_t index = 0;
-            for (const auto& item : *plugins) {
-                const auto where = "plugins[" + std::to_string(index) + "]";
-                ++index;
-                if (!item.is_object()) {
-                    throw std::runtime_error(where + " 必须是对象。");
-                }
-
-                PluginDeclaration declaration;
-                declaration.enabled  = item.value("enable", false);
-                declaration.path     = item.value("path", "");
-                declaration.id       = item.value("id", "");
-                declaration.priority = item.value("priority", 0);
-                if (declaration.path.empty()) {
-                    throw std::runtime_error(where + " 缺少 path 字段。");
-                }
-                // config 允许是任意 JSON 值（对象、数组、标量都行），原样序列化后
-                // 透传给插件。这是「同一个插件二进制按不同参数声明多次」的基础。
-                if (const auto pluginConfig = item.find("config"); pluginConfig != item.end()) {
-                    declaration.configJson = pluginConfig->dump();
-                }
-                declarations.push_back(std::move(declaration));
-            }
-
-            // 稳定排序：priority 相同者保持声明顺序，使加载顺序完全可预测。
-            std::stable_sort(
-                declarations.begin(),
-                declarations.end(),
-                [](const PluginDeclaration& left, const PluginDeclaration& right) {
-                    return left.priority < right.priority;
-                }
-            );
-            return declarations;
-        }
 
         UserConfig parseUserConfigJson(const Json& root) {
             if (!root.is_object()) {
@@ -261,7 +216,7 @@ namespace mcdk {
                 config.mcpServer.serverIp   = mcp->value("server_ip", "localhost");
                 config.mcpServer.serverPort = mcp->value("server_port", 19133);
             }
-            config.plugins = parsePluginDeclarations(root);
+            config.plugins = plugin_host::detail::parsePluginDeclarations(root);
             return config;
         }
 
@@ -290,13 +245,11 @@ namespace mcdk {
         }
 
         Json readConfigJson(const std::filesystem::path& path) {
-            std::ifstream     input(path, std::ios::binary);
-            const std::string content{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-            auto              result = Json::parse(content, nullptr, false, true);
-            if (result.is_discarded()) {
+            auto result = plugin_host::detail::readConfigJson(path);
+            if (!result) {
                 throw std::runtime_error("配置文件解析失败，JSON异常，请检查格式是否正确。");
             }
-            return result;
+            return std::move(*result);
         }
     } // namespace
 

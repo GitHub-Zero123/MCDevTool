@@ -42,7 +42,31 @@ namespace mcdk {
         Mcp(mcdk_handle self, const mcdk_iface_mcp* table) noexcept : mSelf(self), mTable(table) {}
 
         [[nodiscard]] bool available() const noexcept { return mTable != nullptr; }
-        // 注册一个 MCP 工具。
+        // 给 plugin.json 的 mcpTools 里声明过的工具装上实现。描述符写在清单里，
+        // 代码里只出现名字——所以 mcdk 没跑的时候 stdio bridge 也能列出这个工具。
+        // 声明了不绑、或绑了没声明，都会让插件加载失败。
+        // 线程约束与 addTool 相同。
+        template <class Handler>
+        mcdk_status bindTool(std::string_view name, Handler&& handler) {
+            if (!detail::ifaceHas(mTable, &mcdk_iface_mcp::bind_tool)) {
+                return MCDK_ERR_NOT_SUPPORTED;
+            }
+
+            using Stored = std::decay_t<Handler>;
+            auto  holder = std::make_unique<Holder<Stored>>(std::forward<Handler>(handler));
+            void* user   = holder.get();
+
+            const auto status = mTable->bind_tool(mSelf, detail::toAbi(name), &trampoline<Stored>, user);
+            if (status != MCDK_OK) {
+                return status;
+            }
+            mHolders.push_back(std::move(holder));
+            return MCDK_OK;
+        }
+
+        // 运行期注册一个 MCP 工具，描述符随调用传过去。
+        // 与 bindTool 的取舍：动态注册的工具只在本进程活着时存在，mcdk 没跑的时候
+        // stdio bridge 列不出来，AI 也就发现不了。能写进清单的都应该用 bindTool。
         // 只能在 REGISTER 阶段调用，通常写在 ev::McpRegisterBefore 处理器中。
         // handler 跑在 **MCP 工作线程**上，且**可能被并发调用**（默认上限 8），
         // 必须自行保证线程安全。允许阻塞——这正是它调 game().executePython 的场景。

@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include <mcp_tool.h>
 
@@ -19,6 +20,10 @@ namespace mcdk::runtime {
         DuplicateName,
         EmptyHandler,
         RegistrySealed,
+        // attach 专用：清单里没有这个名字，或它不属于调用方，或已经绑过了。
+        NotDeclared,
+        OwnerMismatch,
+        AlreadyBound,
     };
 
     [[nodiscard]] std::string_view describeMcpToolBindError(McpToolBindError error) noexcept;
@@ -32,6 +37,8 @@ namespace mcdk::runtime {
         McpToolHandler handler;
         // 注册来源，"builtin" 或插件 id。重名时用它给出可定位的报错。
         std::string owner;
+        // declare 建的条目在 attach 之前为 false，此时 handler 是个只会报错的占位。
+        bool bound = true;
     };
 
     // MCP 工具注册表。形态对齐 RpcRegistry：注册窗口关闭后封存，运行期只读。
@@ -46,6 +53,16 @@ namespace mcdk::runtime {
         // AI 看到的工具语义，这类问题排查时几乎无迹可循。
         [[nodiscard]] std::expected<void, McpToolBindError>
         bind(mcp::tool descriptor, McpToolHandler handler, std::string owner);
+
+        // 清单声明的工具。描述符此刻就定下来，handler 等插件在 REGISTER 阶段 attach。
+        [[nodiscard]] std::expected<void, McpToolBindError> declare(mcp::tool descriptor, std::string owner);
+
+        // 给已声明的工具装上实现。owner 必须与声明者一致，否则插件之间可以互相顶替。
+        [[nodiscard]] std::expected<void, McpToolBindError>
+        attach(std::string_view name, McpToolHandler handler, std::string_view owner);
+
+        // 声明了却没人 attach 的工具名。封存前用它拦住「清单列了但调不通」。
+        [[nodiscard]] std::vector<std::string> unboundTools() const;
 
         void               seal();
         [[nodiscard]] bool sealed() const noexcept;

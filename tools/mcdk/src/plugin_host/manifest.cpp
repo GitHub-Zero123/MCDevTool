@@ -12,6 +12,14 @@ namespace mcdk::plugin_host::detail {
 
     namespace {
 
+        // 未出现的注解保持未设置——optional 要区分「没写」与「显式 false」。
+        template <class T>
+        void readAnnotation(const nlohmann::json& source, const char* key, std::optional<T>& target) {
+            if (const auto found = source.find(key); found != source.end() && !found->is_null()) {
+                target = found->get<T>();
+            }
+        }
+
         // 库选择键：<platform>.<arch>[.<config>]，由具体到通用回退。
         // 见 docs/plugin-system/06-loading.md §3.3。
         [[nodiscard]] std::string platformKey() {
@@ -204,6 +212,63 @@ namespace mcdk::plugin_host::detail {
                 }
             }
         }
+        if (const auto tools = root.find("mcpTools"); tools != root.end()) {
+            if (!tools->is_array()) {
+                error = "plugin.json 的 mcpTools 必须是数组";
+                return std::nullopt;
+            }
+            std::size_t index = 0;
+            for (const auto& item : *tools) {
+                const auto where = "mcpTools[" + std::to_string(index) + "]";
+                ++index;
+                if (!item.is_object()) {
+                    error = where + " 必须是对象";
+                    return std::nullopt;
+                }
+                mcp::tool tool;
+                tool.name        = item.value("name", std::string{});
+                tool.description = item.value("description", std::string{});
+                if (tool.name.empty()) {
+                    error = where + " 缺少 name";
+                    return std::nullopt;
+                }
+                const auto schema = item.find("inputSchema");
+                if (schema == item.end() || !schema->is_object()) {
+                    error = where + "（" + tool.name + "）的 inputSchema 必须是对象";
+                    return std::nullopt;
+                }
+                tool.parameters_schema = *schema;
+                if (const auto output = item.find("outputSchema"); output != item.end()) {
+                    if (!output->is_object()) {
+                        error = where + "（" + tool.name + "）的 outputSchema 必须是对象";
+                        return std::nullopt;
+                    }
+                    tool.output_schema = *output;
+                }
+                if (const auto notes = item.find("annotations"); notes != item.end()) {
+                    if (!notes->is_object()) {
+                        error = where + "（" + tool.name + "）的 annotations 必须是对象";
+                        return std::nullopt;
+                    }
+                    readAnnotation(*notes, "title", tool.annotations.title);
+                    readAnnotation(*notes, "readOnlyHint", tool.annotations.read_only_hint);
+                    readAnnotation(*notes, "destructiveHint", tool.annotations.destructive_hint);
+                    readAnnotation(*notes, "idempotentHint", tool.annotations.idempotent_hint);
+                    readAnnotation(*notes, "openWorldHint", tool.annotations.open_world_hint);
+                }
+                const auto duplicate = std::find_if(
+                    manifest.mcpTools.begin(),
+                    manifest.mcpTools.end(),
+                    [&tool](const mcp::tool& existing) { return existing.name == tool.name; }
+                );
+                if (duplicate != manifest.mcpTools.end()) {
+                    error = "mcpTools 中工具名重复：" + tool.name;
+                    return std::nullopt;
+                }
+                manifest.mcpTools.push_back(std::move(tool));
+            }
+        }
+
         if (const auto perms = root.find("permissions"); perms != root.end() && perms->is_array()) {
             for (const auto& item : *perms) {
                 if (item.is_string()) {

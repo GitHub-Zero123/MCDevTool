@@ -98,6 +98,16 @@ endif()
 add_test(NAME host-bridge COMMAND host_bridge_test)
 set_tests_properties(host-bridge PROPERTIES TIMEOUT 60)
 
+# stdio 代理的端到端：工具清单（含 plugin.json 声明的）、转发、后端离线恢复。
+if(TARGET mcdk_stdio_bridge)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME stdio-bridge COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/stdio_bridge_test.py $<TARGET_FILE:mcdk_stdio_bridge>)
+        set_tests_properties(stdio-bridge PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
 if(TARGET mcdk-api)
     add_executable(mcdk_api_test mcdk_api_test.c)
     target_link_libraries(mcdk_api_test PRIVATE mcdk-api)
@@ -150,6 +160,12 @@ if(TARGET script_host_plugin AND MCDK_ENABLE_PLUGINS)
 endif()
 
 # 游戏生命周期状态机。纯逻辑，不需要游戏也不需要插件。
+# 声明式 MCP 工具：清单解析、注册表 declare/attach、纯磁盘的工具清单查询。
+add_executable(plugin_mcp_tools_test plugin_mcp_tools_test.cpp)
+target_compile_features(plugin_mcp_tools_test PRIVATE cxx_std_23)
+target_link_libraries(plugin_mcp_tools_test PRIVATE mcdk_runtime mcdk_plugin_manifest)
+add_test(NAME plugin-mcp-tools COMMAND plugin_mcp_tools_test)
+
 add_executable(game_lifecycle_test game_lifecycle_test.cpp)
 target_compile_features(game_lifecycle_test PRIVATE cxx_std_23)
 target_link_libraries(game_lifecycle_test PRIVATE mcdk_runtime)

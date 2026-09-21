@@ -9,6 +9,8 @@
 #include <vector>
 #include <string>
 
+#include <mcp_tool.h>
+
 #include <mcdk/console.hpp>
 #include <mcdk/plugin/abi/entry.h>
 #include <mcdk/plugin_host/session_binding.hpp>
@@ -24,6 +26,9 @@ namespace mcdk::plugin_host::detail {
         // .mcdev.json 中该条声明的 config，JSON 文本。未设置时为字面量 "null"。
         // 由宿主持有，生命周期覆盖整个会话。
         std::string configJson = "null";
+
+        // plugin.json 里声明的 MCP 工具。宿主录入注册表，插件只补 handler。
+        std::vector<mcp::tool> mcpTools;
 
         void*            module = nullptr; // HMODULE / dlopen 句柄
         mcdk_plugin_desc desc{};

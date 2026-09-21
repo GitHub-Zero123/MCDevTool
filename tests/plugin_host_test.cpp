@@ -100,9 +100,20 @@ int main() {
     }
 
     // --- 阶段推进 ----------------------------------------------------
+    // 顺序照搬 launchGameExe：WORLD 之后才开注册窗口，封存之后才进 RUNTIME。
     host.advance(MCDK_STAGE_REGISTER);
     host.advance(MCDK_STAGE_CONFIG);
     host.advance(MCDK_STAGE_WORLD);
+
+    host.declareMcpTools(*toolRegistry);
+    MCDK_EMIT(plugin_host::EventId::McpRegisterBefore, [] {
+        mcdk_ev_mcp_register payload{};
+        payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+        payload.tool_count  = 0;
+        return payload;
+    });
+    toolRegistry->seal();
+
     host.advance(MCDK_STAGE_RUNTIME);
     host.advance(MCDK_STAGE_SHUTDOWN);
 
@@ -126,17 +137,22 @@ int main() {
     );
 
     // --- mcdk.mcp ----------------------------------------------------
-    passed &= expect(contains(output, "mcp:add-tool:0"), "REGISTER 阶段的 add_tool 成功");
+    passed &= expect(contains(output, "mcp:add-tool:0"), "注册窗口内的 add_tool 成功");
+    // 本夹具直指动态库、没有清单，所以 hello_echo 没被声明过。
+    passed &= expect(
+        contains(output, "mcp:bind-tool:" + std::to_string(MCDK_ERR_NOT_FOUND)),
+        "bind_tool 绑一个清单里没声明的名字时失败，而不是凭空造一个工具"
+    );
     passed &= expect(
         contains(output, "mcp:late-tool:" + std::to_string(MCDK_ERR_WRONG_STAGE)),
-        "过了注册窗口的 add_tool 返回 WRONG_STAGE 而不是默默成功"
+        "注册表封存之后 add_tool 返回 WRONG_STAGE 而不是默默成功"
     );
 
-    const auto* entry = toolRegistry->find("hello_echo");
+    const auto* entry = toolRegistry->find("hello_dynamic");
     passed           &= expect(entry != nullptr, "插件的工具进了共享注册表");
     if (entry != nullptr) {
         passed &= expect(entry->owner == "com.example.hello", "工具记下了来源插件 id");
-        passed &= expect(entry->descriptor.description == "回显参数", "description 跨过了 ABI");
+        passed &= expect(entry->descriptor.description == "运行期注册的工具", "description 跨过了 ABI");
         // std::optional<bool> 被拆成两个位掩码又装回来，这里盯的就是那一跑。
         passed &= expect(
             entry->descriptor.annotations.read_only_hint.value_or(false),

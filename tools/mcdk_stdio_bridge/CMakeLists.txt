@@ -2,7 +2,7 @@ project(MC_DEV_TOOL_MCDK_STDIO_BRIDGE)
 
 add_executable(mcdk_stdio_bridge main.cpp)
 target_compile_features(mcdk_stdio_bridge PRIVATE cxx_std_20)
-target_link_libraries(mcdk_stdio_bridge PRIVATE mcdk_mcp_tools mcp)
+target_link_libraries(mcdk_stdio_bridge PRIVATE mcdk_mcp_tools mcdk_plugin_manifest mcp)
 if(WIN32)
     target_link_libraries(mcdk_stdio_bridge PRIVATE ws2_32)
 endif()

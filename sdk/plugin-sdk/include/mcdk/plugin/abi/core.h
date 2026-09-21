@@ -71,6 +71,7 @@ enum {
     MCDK_ERR_GAME_NOT_READY   = -7,
     MCDK_ERR_DUPLICATE        = -8,
     MCDK_ERR_BUFFER_TOO_SMALL = -9,
+    MCDK_ERR_NOT_FOUND        = -10, /* 目标不存在，如 bind_tool 的工具名未在清单中声明 */
 
     MCDK_ERR_PLUGIN_EXCEPTION = -100, /* 插件侧异常屏障捕获 */
     MCDK_ERR_HOST_EXCEPTION   = -101  /* 宿主侧异常屏障捕获 */

@@ -13,11 +13,14 @@
 #endif
 
 #include <mcdk/mcp_tool_definitions.hpp>
+#include <mcdk/plugin_declarations.hpp>
 
 #include <httplib.h>
 #include <mcp_message.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <filesystem>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -61,6 +64,9 @@ namespace {
     struct BridgeConfig {
         std::string host = DefaultHost;
         int         port = DefaultPort;
+        // .mcdev.json 所在目录，可给多个。插件声明的工具从这些目录读。
+        // 不能靠工作目录：MCP 客户端拉起子进程时的 cwd 通常是客户端自己的。
+        std::vector<std::filesystem::path> projectRoots;
     };
 
     std::string trim(std::string_view value) {
@@ -114,6 +120,16 @@ namespace {
                 int parsedPort = config.port;
                 if (parseInteger(arg.substr(7), parsedPort)) {
                     config.port = parsedPort;
+                }
+            } else if (arg == "--project") {
+                std::string projectText;
+                readNext(projectText);
+                if (!projectText.empty()) {
+                    config.projectRoots.push_back(std::filesystem::u8path(projectText));
+                }
+            } else if (arg.rfind("--project=", 0) == 0) {
+                if (arg.size() > 10) {
+                    config.projectRoots.push_back(std::filesystem::u8path(arg.substr(10)));
                 }
             } else {
                 int parsedPort = config.port;
@@ -441,7 +457,8 @@ namespace {
 
     class BridgeServer {
     public:
-        explicit BridgeServer(BridgeConfig config) : gameClient_(std::move(config)) {}
+        explicit BridgeServer(BridgeConfig config)
+            : projectRoots_(config.projectRoots), gameClient_(std::move(config)) {}
 
         void run() {
             StdioTransport transport;
@@ -490,9 +507,23 @@ namespace {
                 return makeSuccessResponse(id, json::object());
             }
             if (method == "tools/list") {
-                json tools = json::array();
+                // 纯磁盘。mcdk 没跑、游戏没开时也必须答得出来——MCP 客户端就是在
+                // 那个时候问这一次的，而且多数客户端不会再问第二次。
+                json                     tools = json::array();
+                std::vector<std::string> seen;
                 for (const auto& tool : mcdk::mcp_tool_definitions::buildAllTools()) {
+                    seen.push_back(tool.name);
                     tools.push_back(tool.to_json());
+                }
+                for (const auto& root : projectRoots_) {
+                    for (const auto& tool : mcdk::plugin_host::detail::declaredMcpTools(root)) {
+                        // 内置工具先占名；多个项目声明同名工具时先列出的胜出，
+                        // 与 mcdk 里注册表「禁止后来者覆盖」的规则一致。
+                        if (std::find(seen.begin(), seen.end(), tool.name) == seen.end()) {
+                            seen.push_back(tool.name);
+                            tools.push_back(tool.to_json());
+                        }
+                    }
                 }
                 return makeSuccessResponse(id, json{{"tools", tools}});
             }
@@ -522,7 +553,8 @@ namespace {
             return makeErrorResponse(id, mcp::error_code::method_not_found, "Method not found: " + method);
         }
 
-        GameMcpClient gameClient_;
+        std::vector<std::filesystem::path> projectRoots_;
+        GameMcpClient                      gameClient_;
     };
 
 } // namespace

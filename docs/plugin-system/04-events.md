@@ -95,6 +95,7 @@ typedef struct mcdk_iface_events {
 - `resolve` 返回 **0 表示该宿主不认识这个事件名**。`subscribe` 传入 0 返回无效 token（0）。插件**应该**据此优雅降级——在新宿主上多用一个事件、在旧宿主上少用一个，而不是直接判定加载失败。
 - 事件 id **只在本进程本次运行内稳定**，禁止序列化、缓存到文件或硬编码。跨版本、跨进程都可能变。
 - **事件不重放。** 在某事件已经发射之后才订阅，不会补发。因此依赖早期事件（`mcp.register.before` 等）的订阅**必须**在 `MCDK_STAGE_REGISTER` 内完成。
+- **标「SYNC（强制）」的事件忽略订阅方要求的派发模式，一律同步。** 注册窗口类事件只能如此：宿主发完就封存注册表，异步 handler 醒来时窗口已经关了，而且关得毫无声响——注册会静默丢失。
 
 ### 3.2 设计约束
 
@@ -109,8 +110,8 @@ v1 列标注该事件是否在首版实现。事件的取舍与 [05-interfaces.m
 
 | 事件名 | v1 | 发射线程 | 可否决 | 默认派发 | 说明 |
 | --- | :-: | --- | --- | --- | --- |
-| `mcdk.mcp.register.before` | ✓ | 主线程 | 否 | SYNC | **MCP 工具注册窗口开启。** 插件在此调用 `mcdk.mcp` 注册自己的工具 |
-| `mcdk.mcp.register.finish` | ✓ | 主线程 | 否 | SYNC | **MCP 工具注册完成、注册表已封存。** payload 携带最终工具数，可用于自检与日志 |
+| `mcdk.mcp.register.before` | ✓ | 主线程 | 否 | SYNC（强制） | **MCP 工具注册窗口开启。** 插件在此调用 `mcdk.mcp` 绑定或注册工具 |
+| `mcdk.mcp.register.finish` | ✓ | 主线程 | 否 | SYNC（强制） | **MCP 工具注册完成、注册表已封存。** payload 携带最终工具数，可用于自检与日志 |
 | `mcdk.game.launch.before` | ✓ | 主线程 | 是 | SYNC | **游戏启动前。** 否决则不启动。见 §4.1 |
 | `mcdk.game.launch.finish` | ✓ | 主线程 | 否 | SYNC | **游戏进程已创建。** payload 携带 pid |
 | `mcdk.game.exit` | ✓ | 进程监视线程 | 否 | QUEUED | 携带退出码 |
@@ -248,7 +249,8 @@ typedef struct mcdk_ev_ipc_client {
 void onRegister(mcdk::Context& ctx) override {
     // MCP 工具注册窗口
     ctx.events().on<mcdk::ev::McpRegisterBefore>([&](const auto&) {
-        ctx.mcp().addTool("my_tool", "说明", schema, handler);
+        // 描述符写在 plugin.json 的 mcpTools 里，这里只补 handler。
+        ctx.mcp().bindTool("my_tool", handler);
     });
 
     ctx.events().on<mcdk::ev::McpRegisterFinish>([&](const auto& e) {

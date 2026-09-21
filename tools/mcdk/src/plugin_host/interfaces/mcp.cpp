@@ -51,6 +51,76 @@ namespace mcdk::plugin_host::detail {
             return true;
         }
 
+        // handler 跨界的形态是「函数指针 + void* user」，这里把它包成 std::function。
+        // 捕获 self 而非 record 指针：句柄作废后要能查得出来。
+        [[nodiscard]] runtime::McpToolHandler makeBoundHandler(
+            mcdk_handle           self,
+            mcdk_mcp_tool_handler handler,
+            void*                 user,
+            std::string           owner,
+            std::string           toolName
+        ) {
+            return [self, handler, user, owner = std::move(owner), toolName = std::move(toolName)](
+                       const mcp::json&   params,
+                       const std::string& sessionId
+                   ) -> mcp::json {
+                if (registry().find(self) == nullptr) {
+                    // 插件已被终结，但 MCP 服务器还挂着它的工具。
+                    return mcp::json{
+                        {"isError", true},
+                        {"content",
+                         mcp::json::array(
+                             {mcp::json{{"type", "text"}, {"text", "插件 " + owner + " 已卸载，工具不再可用"}}}
+                         )},
+                    };
+                }
+                const std::string argumentsText = params.dump();
+                mcdk_str          rawResult{};
+                const mcdk_status status = handler(
+                    user,
+                    mcdk_str{argumentsText.data(), argumentsText.size()},
+                    mcdk_str{sessionId.data(), sessionId.size()},
+                    &rawResult
+                );
+                if (status != MCDK_OK) {
+                    // 失败时从插件错误槽取消息。取不到就只报状态码，
+                    // 总比把一个空字符串当成结果发给 AI 强。
+                    std::string message = std::string(toView(rawResult));
+                    if (message.empty()) {
+                        message = "工具 " + toolName + " 失败，status=" + std::to_string(status);
+                    }
+                    return mcp::json{
+                        {"isError", true},
+                        {"content", mcp::json::array({mcp::json{{"type", "text"}, {"text", message}}})},
+                    };
+                }
+                // 借用的，立即拷贝再解析。
+                const std::string resultText(toView(rawResult));
+                try {
+                    return mcp::json::parse(resultText);
+                } catch (const std::exception&) {
+                    // 插件返回了非 JSON，按纯文本结果处理而不是把整个调用打成失败。
+                    return mcp::json{
+                        {"content", mcp::json::array({mcp::json{{"type", "text"}, {"text", resultText}}})},
+                    };
+                }
+            };
+        }
+
+        [[nodiscard]] mcdk_status toolBindStatus(runtime::McpToolBindError error) noexcept {
+            switch (error) {
+            case runtime::McpToolBindError::DuplicateName:
+            case runtime::McpToolBindError::AlreadyBound:
+                return MCDK_ERR_DUPLICATE;
+            case runtime::McpToolBindError::RegistrySealed:
+                return MCDK_ERR_WRONG_STAGE;
+            case runtime::McpToolBindError::NotDeclared:
+                return MCDK_ERR_NOT_FOUND;
+            default:
+                return MCDK_ERR_INVALID_ARGUMENT;
+            }
+        }
+
         mcdk_status MCDK_CALL mcpAddTool(
             mcdk_handle               self,
             const mcdk_mcp_tool_desc* desc,
@@ -68,10 +138,9 @@ namespace mcdk::plugin_host::detail {
                 if (record == nullptr) {
                     return MCDK_ERR_INVALID_HANDLE;
                 }
-                if (currentStage() != MCDK_STAGE_REGISTER) {
-                    return MCDK_ERR_WRONG_STAGE;
-                }
-
+                // 窗口的边界是注册表封存，不是阶段计数器：注册表在 bindSession 之后
+                // 才存在，而那时阶段早已过了 REGISTER。封存后 bind 会返回
+                // RegistrySealed，映射成 MCDK_ERR_WRONG_STAGE。
                 const auto binding = sessionBinding();
                 if (!binding->mcpToolRegistry) {
                     return MCDK_ERR_NOT_SUPPORTED;
@@ -129,69 +198,56 @@ namespace mcdk::plugin_host::detail {
                     MCDK_MCP_ANNOTATION_OPEN_WORLD
                 );
 
-                // handler 跨界的形态是「函数指针 + void* user」，这里把它包成
-                // std::function。捕获 self 而非 record 指针：句柄作废后要能查得出来。
-                const std::string owner   = record->id;
+                const std::string owner    = record->id;
                 const std::string toolName = tool.name;
-                auto              bound   = [self, handler, user, owner, toolName](
-                                   const mcp::json&   params,
-                                   const std::string& sessionId
-                               ) -> mcp::json {
-                    if (registry().find(self) == nullptr) {
-                        // 插件已被终结，但 MCP 服务器还挂着它的工具。
-                        return mcp::json{
-                            {"isError", true},
-                            {"content",
-                             mcp::json::array(
-                                 {mcp::json{{"type", "text"}, {"text", "插件 " + owner + " 已卸载，工具不再可用"}}}
-                             )},
-                        };
-                    }
-                    const std::string argumentsText = params.dump();
-                    mcdk_str          rawResult{};
-                    const mcdk_status status = handler(
-                        user,
-                        mcdk_str{argumentsText.data(), argumentsText.size()},
-                        mcdk_str{sessionId.data(), sessionId.size()},
-                        &rawResult
-                    );
-                    if (status != MCDK_OK) {
-                        // 失败时从插件错误槽取消息。取不到就只报状态码，
-                        // 总比把一个空字符串当成结果发给 AI 强。
-                        std::string message = std::string(toView(rawResult));
-                        if (message.empty()) {
-                            message = "工具 " + toolName + " 失败，status=" + std::to_string(status);
-                        }
-                        return mcp::json{
-                            {"isError", true},
-                            {"content", mcp::json::array({mcp::json{{"type", "text"}, {"text", message}}})},
-                        };
-                    }
-                    // 借用的，立即拷贝再解析。
-                    const std::string resultText(toView(rawResult));
-                    try {
-                        return mcp::json::parse(resultText);
-                    } catch (const std::exception&) {
-                        // 插件返回了非 JSON，按纯文本结果处理而不是把整个调用打成失败。
-                        return mcp::json{
-                            {"content", mcp::json::array({mcp::json{{"type", "text"}, {"text", resultText}}})},
-                        };
-                    }
-                };
+                auto bound = makeBoundHandler(self, handler, user, owner, toolName);
 
                 const auto bindResult = binding->mcpToolRegistry->bind(std::move(tool), std::move(bound), owner);
                 if (bindResult) {
                     return MCDK_OK;
                 }
-                const mcdk_status code = bindResult.error() == runtime::McpToolBindError::DuplicateName
-                                           ? MCDK_ERR_DUPLICATE
-                                       : bindResult.error() == runtime::McpToolBindError::RegistrySealed
-                                           ? MCDK_ERR_WRONG_STAGE
-                                           : MCDK_ERR_INVALID_ARGUMENT;
                 return setError(
-                    code,
+                    toolBindStatus(bindResult.error()),
                     "注册工具 " + toolName + " 失败："
                         + std::string(runtime::describeMcpToolBindError(bindResult.error()))
+                );
+            });
+        }
+
+        mcdk_status MCDK_CALL mcpBindTool(
+            mcdk_handle           self,
+            mcdk_str              name,
+            mcdk_mcp_tool_handler handler,
+            void*                 user
+        ) noexcept {
+            return guard([&]() -> mcdk_status {
+                if (handler == nullptr) {
+                    return MCDK_ERR_INVALID_ARGUMENT;
+                }
+                const auto* record = registry().find(self);
+                if (record == nullptr) {
+                    return MCDK_ERR_INVALID_HANDLE;
+                }
+                const auto binding = sessionBinding();
+                if (!binding->mcpToolRegistry) {
+                    return MCDK_ERR_NOT_SUPPORTED;
+                }
+                const auto toolName = toView(name);
+                if (toolName.empty()) {
+                    return setError(MCDK_ERR_INVALID_ARGUMENT, "工具名不能为空");
+                }
+
+                const std::string owner = record->id;
+                auto bound = makeBoundHandler(self, handler, user, owner, std::string(toolName));
+
+                const auto result = binding->mcpToolRegistry->attach(toolName, std::move(bound), owner);
+                if (result) {
+                    return MCDK_OK;
+                }
+                return setError(
+                    toolBindStatus(result.error()),
+                    "绑定工具 " + std::string(toolName) + " 失败："
+                        + std::string(runtime::describeMcpToolBindError(result.error()))
                 );
             });
         }
@@ -227,6 +283,7 @@ namespace mcdk::plugin_host::detail {
             /* _reserved   */ 0u,
             /* add_tool    */ &mcpAddTool,
             /* list_tools  */ &mcpListTools,
+            /* bind_tool   */ &mcpBindTool,
         };
 
     } // namespace

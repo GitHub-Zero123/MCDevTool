@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <mcp_tool.h>
+
 #include <mcdk/plugin/abi/core.h>
 
 namespace mcdk::plugin_host::detail {
@@ -31,6 +33,9 @@ namespace mcdk::plugin_host::detail {
         std::filesystem::path libraryPath;
         std::vector<PluginDependency>  dependencies;
         std::vector<std::string>       permissions;
+        // 声明式的 MCP 工具。字段与 mcp::tool::to_json() 逐字对应，所以清单里写的
+        // 就是 tools/list 里出现的。插件只在运行期绑 handler，不再重复描述。
+        std::vector<mcp::tool> mcpTools;
     };
 
     // 读取 directory/plugin.json。失败时返回 nullopt 并填 error。

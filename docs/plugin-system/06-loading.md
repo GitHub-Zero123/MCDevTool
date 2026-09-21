@@ -99,6 +99,14 @@
         { "id": "com.example.base", "version": ">=0.3.0" }
     ],
     "permissions": ["game.execute_code", "fs.project_write"],
+    "mcpTools": [
+        {
+            "name": "example_dump_entities",
+            "description": "列出当前维度的实体",
+            "inputSchema": { "type": "object", "properties": { "dimension": { "type": "string" } } },
+            "annotations": { "readOnlyHint": true, "title": "实体清单" }
+        }
+    ],
     "config_schema": { "$schema": "...", "type": "object", "properties": { } },
     "description": "..."
 }
@@ -106,7 +114,19 @@
 
 `config_schema` 描述 `.mcdev.json` 中该插件 `config` 字段的结构，供 IDE 补全与宿主校验使用。
 
-### 3.3 库选择
+### 3.3 `mcpTools`（规范）
+
+**MCP 工具的描述符写在清单里，插件代码只提供处理函数**（`mcdk.mcp` 的 `bind_tool`，见 [05](05-interfaces.md) §8.2）。
+
+理由是时序：MCP 客户端在**启动时**问一次 `tools/list`，那一刻 mcdk 多半还没运行、游戏也没开。运行期注册的工具在那个时刻不存在，于是 AI 永远不会知道它们。声明写在磁盘上，`mcdk_stdio_bridge` 什么都不用启动就能答出来。
+
+- 字段与 `mcp::tool::to_json()` 逐字对应（`name` / `description` / `inputSchema` / `outputSchema` / `annotations`），所以**清单里写的就是 `tools/list` 里出现的**，中间不经改写。
+- `annotations` 用 MCP 规范的键名：`title`、`readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`。未出现的键保持「未设置」，与显式 `false` 不同。
+- `name` 缺失、`inputSchema` 不是对象、同一清单内工具重名，都让清单解析失败——不静默跳过。
+- 声明了却没有插件 `bind_tool`，或 `bind_tool` 用了没声明的名字，都在启动时报错。
+- 直指动态库的声明（`.mcdev.json` 的 `path` 指向文件而非目录）没有清单，因此不能有声明式工具。
+
+### 3.4 库选择
 
 按 `<platform>.<arch>[.<config>]` 由具体到通用回退：宿主先找 `windows.x86_64.debug`，未命中则退到 `windows.x86_64`。无匹配项则该插件加载失败并报告缺少当前平台产物。
 

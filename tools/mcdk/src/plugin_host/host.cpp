@@ -7,6 +7,10 @@
 
 #include "images.hpp"
 #include "manifest.hpp"
+#include <mcdk/runtime/mcp_tool_registry.hpp>
+
+#include <mcdk/plugin_declarations.hpp>
+
 #include "registry.hpp"
 
 #include <algorithm>
@@ -58,27 +62,6 @@ namespace mcdk::plugin_host {
                 return {};
             }
             return std::string(text.ptr, text.len);
-        }
-
-        // 相对路径以 .mcdev.json 所在目录为基准，而非进程工作目录；
-        // 以 ~/ 开头展开为用户主目录。见 docs/plugin-system/06-loading.md §2.2。
-        [[nodiscard]] std::filesystem::path
-        resolvePath(const std::string& raw, const std::filesystem::path& baseDirectory) {
-            if (raw.size() >= 2 && raw[0] == '~' && (raw[1] == '/' || raw[1] == '\\')) {
-#ifdef _WIN32
-                const char* home = std::getenv("USERPROFILE");
-#else
-                const char* home = std::getenv("HOME");
-#endif
-                if (home != nullptr) {
-                    return std::filesystem::path(home) / std::filesystem::u8path(raw.substr(2));
-                }
-            }
-            auto path = std::filesystem::u8path(raw);
-            if (path.is_absolute()) {
-                return path.lexically_normal();
-            }
-            return (baseDirectory / path).lexically_normal();
         }
 
         [[nodiscard]] void* loadModule(const std::filesystem::path& path, std::string& error) {
@@ -242,6 +225,24 @@ namespace mcdk::plugin_host {
 
     public:
 
+        // 清单声明的工具录进注册表，handler 留空等插件在注册窗口里 attach。
+        void declareMcpTools(runtime::McpToolRegistry& registry) {
+            detail::registry().forEach([&registry](mcdk_handle, detail::PluginRecord& record) {
+                if (record.degraded) {
+                    return;
+                }
+                for (const auto& tool : record.mcpTools) {
+                    if (const auto result = registry.declare(tool, record.id); !result) {
+                        report(
+                            record.id + " 声明的工具 " + tool.name + " 无法录入："
+                                + std::string(runtime::describeMcpToolBindError(result.error())),
+                            ConsoleColor::Red
+                        );
+                    }
+                }
+            });
+        }
+
         [[nodiscard]] std::vector<LoadedPlugin> loaded() const {
             std::vector<LoadedPlugin> result;
             detail::registry().forEach([&result](mcdk_handle, detail::PluginRecord& record) {
@@ -300,7 +301,7 @@ namespace mcdk::plugin_host {
         // 解析一条声明：定位动态库、读清单、做所有不需要加载代码就能做的校验。
         [[nodiscard]] static std::optional<Candidate>
         prepare(const PluginDeclaration& declaration, const std::filesystem::path& baseDirectory) {
-            const auto path  = resolvePath(declaration.path, baseDirectory);
+            const auto path  = detail::resolvePluginPath(declaration.path, baseDirectory);
             const auto shown = path.generic_string();
 
             Candidate candidate;
@@ -566,6 +567,9 @@ namespace mcdk::plugin_host {
             record->desc     = desc;
             record->abiMajor = desc.abi_major;
             record->abiMinor = desc.abi_minor;
+            if (candidate.manifest) {
+                record->mcpTools = candidate.manifest->mcpTools;
+            }
 
             report(
                 record->id + " " + record->version + "  (abi " + std::to_string(desc.abi_major) + "."
@@ -588,6 +592,8 @@ namespace mcdk::plugin_host {
             // 析构必须保持 noexcept。
         }
     }
+
+    void Host::declareMcpTools(runtime::McpToolRegistry& registry) { mImpl->declareMcpTools(registry); }
 
     void
     Host::loadDeclared(const std::vector<PluginDeclaration>& declarations, const std::filesystem::path& baseDirectory) {

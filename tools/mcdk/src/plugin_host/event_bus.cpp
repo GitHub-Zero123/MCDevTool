@@ -43,19 +43,22 @@ namespace mcdk::plugin_host {
             // 被否决时这个事件是否就此作废。
             // `.before` 类事件否决即不会发生，再投给异步订阅者只会让对方
             bool vetoCancelsEvent;
+            // 订阅一律按 SYNC 处理，忽略订阅方要的模式。注册窗口类事件必须如此：
+            // 宿主发完就封存注册表，异步 handler 醒来时窗口早关了，而且是静默关的。
+            bool syncOnly;
         };
 
         constexpr EventTraits kTraits[] = {
-            /* McpRegisterBefore     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false},
-            /* McpRegisterFinish     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false},
-            /* GameLaunchBefore      */ {sizeof(mcdk_ev_game_launch_before), kStrGameLaunchBefore, 2, true},
-            /* GameLaunchFinish      */ {sizeof(mcdk_ev_game_launch_finish), kStrGameLaunchFinish, 1, false},
-            /* GameExit              */ {sizeof(mcdk_ev_game_exit), nullptr, 0, false},
-            /* GameStateChanged      */ {sizeof(mcdk_ev_game_state), nullptr, 0, false},
-            /* LogLine               */ {sizeof(mcdk_ev_log_line), kStrLogLine, 1, false},
-            /* LogError              */ {sizeof(mcdk_ev_log_line), kStrLogLine, 1, false},
-            /* IpcClientConnected    */ {sizeof(mcdk_ev_ipc_client), nullptr, 0, false},
-            /* IpcClientDisconnected */ {sizeof(mcdk_ev_ipc_client), nullptr, 0, false},
+            /* McpRegisterBefore     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false, true},
+            /* McpRegisterFinish     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false, true},
+            /* GameLaunchBefore      */ {sizeof(mcdk_ev_game_launch_before), kStrGameLaunchBefore, 2, true, false},
+            /* GameLaunchFinish      */ {sizeof(mcdk_ev_game_launch_finish), kStrGameLaunchFinish, 1, false, false},
+            /* GameExit              */ {sizeof(mcdk_ev_game_exit), nullptr, 0, false, false},
+            /* GameStateChanged      */ {sizeof(mcdk_ev_game_state), nullptr, 0, false, false},
+            /* LogLine               */ {sizeof(mcdk_ev_log_line), kStrLogLine, 1, false, false},
+            /* LogError              */ {sizeof(mcdk_ev_log_line), kStrLogLine, 1, false, false},
+            /* IpcClientConnected    */ {sizeof(mcdk_ev_ipc_client), nullptr, 0, false, false},
+            /* IpcClientDisconnected */ {sizeof(mcdk_ev_ipc_client), nullptr, 0, false, false},
         };
         static_assert(std::size(kTraits) == kEventCount, "每新增一个事件都必须在这里登记 payload 布局与否决语义");
 // 把 payload 和字符串打包成自包含 blob，先存偏移，最后再还原指针。
@@ -406,6 +409,9 @@ namespace mcdk::plugin_host {
     ) {
         if (handler == nullptr || id >= EventId::Count) {
             return 0;
+        }
+        if (kTraits[static_cast<std::size_t>(id)].syncOnly) {
+            mode = MCDK_DISPATCH_SYNC;
         }
         const std::lock_guard lock(bus().mutex);
         const auto            token = bus().nextToken++;

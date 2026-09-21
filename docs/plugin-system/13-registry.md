@@ -98,8 +98,9 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 
 | 字段 | @since | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `add_tool` | 1.0 | 可用 | 仅 REGISTER 阶段可用；参数是带 `struct_size` 的 `mcdk_mcp_tool_desc`，不是位置参数 |
+| `add_tool` | 1.0 | 可用 | 动态注册：描述符随调用传入，带 `struct_size`，不是位置参数。启动前不可见 |
 | `list_tools` | 1.0 | 可用 | 已注册工具清单，含 `owner` 字段 |
+| `bind_tool` | 1.0 | 可用 | 给 `plugin.json` 的 `mcpTools` 声明的工具装 handler。推荐路径，见 [05](05-interfaces.md) §8.2 |
 
 ### 3.7 `mcdk.events/1`
 
@@ -111,7 +112,7 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `emit` | 1.0 | 计划 | 插件自定义事件。当前对内置 `mcdk.*` 事件返回 `MCDK_ERR_NOT_SUPPORTED`，待自定义事件命名空间开放 |
 | ~~`post_main`~~ | 1.0 | 已移除 | v1 发布前移除，见 [04-events.md](04-events.md) §4.0。表尾空位不占号，将来可重新追加 |
 
-v1 合计 **21 个 ABI 函数，六张接口表，全部可用**（`post_main` 移除、`get_ipc_clients` 新增）。
+v1 合计 **22 个 ABI 函数，六张接口表，全部可用**（`post_main` 移除，`get_ipc_clients`、`bind_tool` 新增）。
 
 阶段窗口（[05-interfaces.md](05-interfaces.md) §9）由宿主 shim 实际强制执行，
 不在窗口内调用返回 `MCDK_ERR_WRONG_STAGE`——这一条不能只写在文档里：
@@ -163,7 +164,7 @@ v1 合计 **10 个事件、7 个 payload 结构体**，全部已接上发射点�
 
 | 枚举 | @since | 已分配范围 | 下一个可用值 |
 | --- | --- | --- | --- |
-| `mcdk_status` | 1.0 | 0, -1..-9, -100, -101 | -10（通用段）、-102（屏障段） |
+| `mcdk_status` | 1.0 | 0, -1..-10, -100, -101 | -11（通用段）、-102（屏障段） |
 | `mcdk_stage` | 1.0 | 0..4 | 5 |
 | `mcdk_log_level` | 1.0 | 0..4 | 5 |
 | `mcdk_color` | 1.0 | 0..10 | 11 |
@@ -182,4 +183,4 @@ v1 合计 **10 个事件、7 个 payload 结构体**，全部已接上发射点�
 
 | ABI 版本 | 日期 | 变更 |
 | --- | --- | --- |
-| 1.0 | 未发布 | 初版：21 个 ABI 函数、9 个事件、6 张接口表 |
+| 1.0 | 未发布 | 初版：22 个 ABI 函数、10 个事件、6 张接口表 |

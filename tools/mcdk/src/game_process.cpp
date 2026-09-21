@@ -363,14 +363,30 @@ void mcdk::launchGameExe(
         // 内置工具先进注册表，各自占住名字，重名的插件工具才能被检出。
         mcpServer.registerBuiltinTools();
 
-        // 插件的注册窗口。before 之后插件可以补充工具，start() 内部会封存注册表。
+        // 清单声明的插件工具先占位，插件在窗口里给它们补 handler。
         const auto& toolRegistry = mcpServer.toolRegistry();
+        mcdk::plugin_host::instance().declareMcpTools(*toolRegistry);
+
+        // 插件的注册窗口。before 之后插件可以补充工具，start() 内部会封存注册表。
         MCDK_EMIT(mcdk::plugin_host::EventId::McpRegisterBefore, [&] {
             mcdk_ev_mcp_register payload{};
             payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
             payload.tool_count  = static_cast<std::uint32_t>(toolRegistry->size());
             return payload;
         });
+
+        // 声明了却没人实现的工具会被发布成一个只会报错的占位，AI 调到才发现。
+        // 宁可在这里直说。
+        if (const auto unbound = toolRegistry->unboundTools(); !unbound.empty()) {
+            std::string names;
+            for (const auto& name : unbound) {
+                names += (names.empty() ? "" : "、") + name;
+            }
+            printColoredAtomic(
+                "[MCDK] plugin.json 声明了以下工具但没有插件实现它们：" + names,
+                ConsoleColor::Red
+            );
+        }
 
         // Publish the MCP server only after every buffer and callback has been configured.
         mcpServer.start();

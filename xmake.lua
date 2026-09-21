@@ -221,6 +221,20 @@ if has_config("build_mcdk") then
         end
     target_end()
 
+    -- 只读清单，不加载任何动态库。mcdk 与 mcdk_stdio_bridge 共用——两份解析必然分叉，
+    -- 而分叉的表现是 tools/list 列出的工具和实际注册的对不上。
+    target("mcdk_plugin_manifest")
+        set_kind("static")
+        set_languages("c++23")
+        add_files("tools/mcdk/src/plugin_host/manifest.cpp")
+        add_files("tools/mcdk/src/plugin_host/declarations.cpp")
+        add_includedirs("tools/mcdk/include", {public = true})
+        add_includedirs("tools/mcdk/src", {public = true})
+        add_includedirs("sdk/plugin-sdk/include", {public = true})
+        add_includedirs("libs/nlohmann", {public = true})
+        add_deps("mcp")
+    target_end()
+
     -- 工具描述由 mcdk 和只做转发的 stdio bridge 共用，因此单独成库。
     target("mcdk_mcp_tools")
         set_kind("static")
@@ -256,7 +270,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/world_project.cpp"
         )
         add_includedirs("tools/mcdk/include", {public = true})
-        add_deps("mcdevtool", "mcdev_profiler_core", "mcdk_mcp_tools", "mcp", "mcdev_mod_resource")
+        add_deps("mcdevtool", "mcdev_profiler_core", "mcdk_mcp_tools", "mcdk_plugin_manifest", "mcp", "mcdev_mod_resource")
     target_end()
 
     target("mcdk_runtime")
@@ -276,7 +290,6 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/plugin_host/guard.cpp",
             "tools/mcdk/src/plugin_host/host.cpp",
             "tools/mcdk/src/plugin_host/images.cpp",
-            "tools/mcdk/src/plugin_host/manifest.cpp",
             "tools/mcdk/src/plugin_host/registry.cpp",
             "tools/mcdk/src/plugin_host/session_binding.cpp",
             "tools/mcdk/src/plugin_host/interfaces/console.cpp",
@@ -297,7 +310,7 @@ if has_config("build_mcdk") then
         else
             add_defines("MCDK_ENABLE_PLUGINS=0", {public = true})
         end
-        add_deps("mcdk_core", "mcp", "MCDevLink")
+        add_deps("mcdk_core", "mcdk_plugin_manifest", "mcp", "MCDevLink")
         if is_plat("windows") then
             add_syslinks("ws2_32")
         end
@@ -330,7 +343,7 @@ if has_config("build_mcdk") then
         set_languages("c++20")
         add_files("tools/mcdk_stdio_bridge/main.cpp")
         add_includedirs("tools/mcdk/include")
-        add_deps("mcdk_mcp_tools", "mcp")
+        add_deps("mcdk_mcp_tools", "mcdk_plugin_manifest", "mcp")
         if is_plat("windows") then
             add_syslinks("ws2_32")
         end

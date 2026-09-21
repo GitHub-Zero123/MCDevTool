@@ -49,9 +49,10 @@ class MyPlugin final : public mcdk::Plugin {
         ctx.console().info("my-plugin 已加载");
 
         ctx.events().on<mcdk::ev::McpRegisterBefore>([&](const auto&) {
-            ctx.mcp().addTool("my_tool", "工具说明", schema,
-                [&ctx](const nlohmann::json& args) {
-                    return ctx.game().executePython(args["code"], mcdk::Side::Server);
+            // 名字、说明、schema 都在 plugin.json 的 mcpTools 里。
+            ctx.mcp().bindTool("my_tool",
+                [&ctx](std::string_view args, std::string_view) {
+                    return ctx.game().executePython(nlohmann::json::parse(args)["code"], mcdk::Side::Server);
                 });
         });
 

@@ -362,6 +362,11 @@ typedef struct mcdk_iface_mcp {
                                       void*                       user);
     /* 当前已注册的全部工具，JSON 数组文本。借用 */
     mcdk_status MCDK_CALL (*list_tools)(mcdk_handle self, mcdk_str* out_json);
+    /* 给 plugin.json 的 mcpTools 里声明过的工具装上实现 */
+    mcdk_status MCDK_CALL (*bind_tool)(mcdk_handle           self,
+                                       mcdk_str              name,
+                                       mcdk_mcp_tool_handler handler,
+                                       void*                 user);
 } mcdk_iface_mcp;
 ```
 
@@ -382,22 +387,40 @@ typedef struct mcdk_iface_mcp {
 
 **禁止**把 JSON 以任何二进制/句柄形式过界。文本形态虽有序列化开销，但工具注册是一次性的、参数调用是低频的（相对日志而言），换来的是零 ABI 耦合——插件用什么 JSON 库、什么版本，宿主完全不需要知道。
 
-### 8.2 注册窗口
+### 8.2 声明式与动态注册（规范）
 
-`add_tool` 只能在 `MCDK_STAGE_REGISTER` 阶段调用，通常写在 `mcdk.mcp.register.before` 事件处理器里。注册表封存后调用返回 `MCDK_ERR_WRONG_STAGE`。
+注册工具有两条路，差别只有一个，但很重要：
+
+| | `bind_tool` | `add_tool` |
+| --- | --- | --- |
+| 描述符来自 | `plugin.json` 的 `mcpTools` | 调用参数 |
+| mcdk 没跑时 `tools/list` 能列出 | **能** | 不能 |
+| 适用 | 绝大多数工具 | 运行期才能确定的工具 |
+
+MCP 客户端在启动时问一次 `tools/list`，那时 mcdk 通常还没运行。动态注册的工具在那一刻不存在，AI 也就发现不了它。**能写进清单的都应该用 `bind_tool`。**
+
+`bind_tool` 的名字没在清单里声明过时返回 `MCDK_ERR_NOT_FOUND`；声明者不是调用方时同样失败——插件之间不能互相顶替工具。重复绑定返回 `MCDK_ERR_DUPLICATE`。
+
+清单声明了却没有任何插件绑定的工具，宿主在封存前报错并列出名字。
+
+### 8.3 注册窗口（规范）
+
+窗口从 `mcdk.mcp.register.before` 发射开始，到注册表封存为止。**`MCDK_STAGE_REGISTER` 阶段太早**——那时宿主还没把工具注册表接进接口层，调用返回 `MCDK_ERR_NOT_SUPPORTED`。窗口关闭后返回 `MCDK_ERR_WRONG_STAGE`。
+
+两个 `mcdk.mcp.register.*` 事件一律按 `SYNC` 派发，忽略订阅方要求的模式（见 [04](04-events.md) §3）：宿主发完事件就封存注册表，异步 handler 醒来时窗口早关了，而且是静默关的。
 
 **工具名冲突返回 `MCDK_ERR_DUPLICATE`，禁止后注册者覆盖先注册者。** 否则插件的加载顺序会悄悄改变 AI 看到的工具语义，这类问题在排查时几乎无迹可循。插件**应该**给自己的工具名加可辨识的前缀。
 
 `input_schema_json` 必须是合法的 JSON Schema 对象文本；宿主在注册时校验，非法则返回 `MCDK_ERR_INVALID_ARGUMENT` 并在错误槽给出解析位置。`output_schema_json` 非空时同样校验。
 
-### 8.3 handler 的线程与并发（规范）
+### 8.4 handler 的线程与并发（规范）
 
 - handler 运行在 **MCP 工作线程**，不是主线程；
 - **可能被并发调用**——现有 `RpcMethodOptions` 的默认 `maxConcurrency` 是 8，handler **必须**自行保证线程安全；
 - **允许阻塞**，这正是 `execute_python` 的主要调用场景（见 §6.1，该处禁止的是 SYNC 事件处理器，不是这里）；
 - v1 **不提供**取消令牌，handler 需自行限制耗时。超时由 MCP 层判定，但超时后 handler 仍会跑完。
 
-### 8.4 结果的所有权（规范）
+### 8.5 结果的所有权（规范）
 
 `out_result_json` 指向**插件侧**线程局部缓冲，宿主**必须**在 handler 返回后立即拷贝。这与错误槽（§3）是同一套机制，只是方向相反：谁产生数据谁用自己的 TLS 暂存，对方立即拷走，两边都不分配跨界内存。
 
