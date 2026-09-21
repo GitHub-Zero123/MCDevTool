@@ -11,6 +11,10 @@
 #include <mcdk/env.hpp>
 #include <mcdk/rpc_registry.hpp>
 
+namespace mcdk::runtime {
+    class GameLifecycleTracker;
+}
+
 namespace mcdk {
 
     struct HostBridgeSessionInfo {
@@ -47,6 +51,8 @@ namespace mcdk {
         void setOutputCallback(ConsoleOutputCallback callback);
         void setSessionInfo(HostBridgeSessionInfo sessionInfo);
         void setGameStateProvider(GameStateProvider provider);
+        // 会话状态的来源。未设置时退回纯判定，分不出主菜单与加载中。start() 之前设置。
+        void setGameLifecycle(std::shared_ptr<const runtime::GameLifecycleTracker> tracker);
 
         [[nodiscard]] RpcRegistry& registry();
         [[nodiscard]] bool         enabled() const noexcept;

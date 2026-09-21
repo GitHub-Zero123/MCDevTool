@@ -95,6 +95,8 @@ target_link_libraries(host_bridge_test PRIVATE mcdk_runtime)
 if(WIN32)
     target_link_libraries(host_bridge_test PRIVATE ws2_32)
 endif()
+add_test(NAME host-bridge COMMAND host_bridge_test)
+set_tests_properties(host-bridge PROPERTIES TIMEOUT 60)
 
 if(TARGET mcdk-api)
     add_executable(mcdk_api_test mcdk_api_test.c)

@@ -933,6 +933,7 @@ void mcdk::launchGameExe(
     });
 
     if (hostBridgeTask.enabled()) {
+        hostBridgeTask.setGameLifecycle(session.gameLifecycle());
         hostBridgeTask.setGameStateProvider([ipcServer, debugCapabilityEnabled] {
             return mcdk::HostBridgeGameState{
                 .debugCapabilityEnabled = debugCapabilityEnabled,

@@ -163,7 +163,7 @@ enum {
 
 状态变化通过 `mcdk.game.state_changed` 事件推送，插件**不应**轮询 `get_session`。
 
-判定逻辑在宿主内只有一份（`mcdk::runtime::classifyGameLifecycle`），Host Bridge 报给 IDE 的 `state` 字符串与插件拿到的枚举出自同一处——两份实现必然分叉。
+状态在宿主内只有一份（`mcdk::runtime::GameLifecycleTracker`），插件拿到的枚举与 Host Bridge 报给 IDE 的 `state` 字符串出自同一个对象，包括区分主菜单与加载中的那个锁存位。
 
 ## 6. `mcdk.game/1`
 
