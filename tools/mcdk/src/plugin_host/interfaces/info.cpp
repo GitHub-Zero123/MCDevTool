@@ -121,13 +121,12 @@ namespace mcdk::plugin_host::detail {
                 info.game_ipc_port = binding->ipcServer ? binding->ipcServer->getPort() : std::uint16_t{0};
                 info.mcp_port      = binding->facts.mcpPort;
                 info.mcp_enabled   = binding->facts.mcpEnabled ? MCDK_TRUE : MCDK_FALSE;
-                // 「游戏已进入世界」的判据就是调试 IPC 上已经有客户端连上来。
-                info.game_debug_ready =
-                    (binding->ipcServer && binding->ipcServer->getClientCount() > 0) ? MCDK_TRUE : MCDK_FALSE;
                 info.game_state = toAbiGameState(
                     binding->gameLifecycle ? binding->gameLifecycle->state()
                                            : runtime::GameLifecycleState::Unavailable
                 );
+                // 由 game_state 导出，两个字段就不会来自不同时刻的两次读。
+                info.game_debug_ready = info.game_state == MCDK_GAME_IN_WORLD ? MCDK_TRUE : MCDK_FALSE;
 
                 info.mcp_ip             = toAbi(strings.mcpIp);
                 info.game_exe_path      = toAbi(strings.gameExePath);
