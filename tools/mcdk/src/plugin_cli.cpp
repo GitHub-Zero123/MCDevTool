@@ -35,7 +35,7 @@ namespace mcdk {
             }
             return result;
         }
-// 注意：写回会丢掉原文件的注释和缩进（jsonc 解析不会保留它们）。
+        // 注意：写回会丢掉原文件的注释和缩进（jsonc 解析不会保留它们）。
         void writeConfig(const Json& config) {
             const auto path = configPath();
             std::ofstream output(path, std::ios::binary | std::ios::trunc);

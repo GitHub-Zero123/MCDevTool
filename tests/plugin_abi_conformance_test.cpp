@@ -57,8 +57,8 @@ int main() {
     const std::filesystem::path pluginPath = MCDEV_TEST_CONFORMANCE_PLUGIN;
     const auto                  path       = pluginPath.generic_string();
     bool                        passed     = true;
-// 一、宿主侧屏障（方向：宿主 → 插件）
-// 宿主现有代码大量使用异常，这些异常绝不能穿过 C 边界。这里直接测
+    // 一、宿主侧屏障（方向：宿主 → 插件）
+    // 宿主现有代码大量使用异常，这些异常绝不能穿过 C 边界。这里直接测
     {
         const auto status = plugin_host::guard([]() -> mcdk_status { throw std::runtime_error("boom"); });
         passed &= expect(status == MCDK_ERR_HOST_EXCEPTION, "host::guard converts std::exception to a status");

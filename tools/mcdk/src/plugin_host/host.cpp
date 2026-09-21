@@ -281,8 +281,8 @@ namespace mcdk::plugin_host {
             }
             // 6. 作废句柄。此后该插件的任何调用都返回 MCDK_ERR_INVALID_HANDLE 而非崩溃。
             detail::registry().retire(handle);
-// 刻意不 FreeLibrary / dlclose：v1 不做热卸载，进程退出时交给操作系统。
-// 插件静态对象析构、残留线程、两侧 CRT 卸载顺序叠加，主动卸载的崩溃
+            // 刻意不 FreeLibrary / dlclose：v1 不做热卸载，进程退出时交给操作系统。
+            // 插件静态对象析构、残留线程、两侧 CRT 卸载顺序叠加，主动卸载的崩溃
             record.module = nullptr;
         }
 

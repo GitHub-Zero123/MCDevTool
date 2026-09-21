@@ -53,8 +53,8 @@ namespace mcdk {
         Info(mcdk_handle self, const mcdk_iface_info* table) noexcept : mSelf(self), mTable(table) {}
 
         [[nodiscard]] bool available() const noexcept { return mTable != nullptr; }
-// 取一份会话快照。
-// gamePid 与 gameDebugReady 会随时间变化，不要缓存后长期使用；需要跟踪
+        // 取一份会话快照。
+        // gamePid 与 gameDebugReady 会随时间变化，不要缓存后长期使用；需要跟踪
         [[nodiscard]] SessionInfo session() const {
             SessionInfo result;
             if (!detail::ifaceHas(mTable, &mcdk_iface_info::get_session)) {

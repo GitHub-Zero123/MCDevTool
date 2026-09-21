@@ -42,8 +42,8 @@ namespace mcdk {
         Game(mcdk_handle self, const mcdk_iface_game* table) noexcept : mSelf(self), mTable(table) {}
 
         [[nodiscard]] bool available() const noexcept { return mTable != nullptr; }
-// 在游戏进程里执行 Python 并取回 JSON 文本形式的返回值。
-// 阻塞调用。禁止在 Dispatch::Sync 的事件处理器里用——尤其是 ev::LogLine，
+        // 在游戏进程里执行 Python 并取回 JSON 文本形式的返回值。
+        // 阻塞调用。禁止在 Dispatch::Sync 的事件处理器里用——尤其是 ev::LogLine，
         [[nodiscard]] std::string executePython(
             std::string_view code,
             Side             side      = Side::Server,

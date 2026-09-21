@@ -13,8 +13,8 @@
 #include <mcdk/utils.hpp>
 
 namespace {
-// 发射 mcdk.log.line / mcdk.log.error。
-// 这是整套事件里频率最高的两个，直接串在日志读取线程上，所以
+    // 发射 mcdk.log.line / mcdk.log.error。
+    // 这是整套事件里频率最高的两个，直接串在日志读取线程上，所以
     [[nodiscard]] inline bool emitLogLine(
         mcdk::plugin_host::EventId id,
         std::uint32_t              channel,

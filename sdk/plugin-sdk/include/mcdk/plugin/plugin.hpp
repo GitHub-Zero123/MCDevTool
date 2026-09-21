@@ -24,19 +24,19 @@ namespace mcdk {
         std::string name;
         std::string version;
     };
-// 插件基类。全部回调都有空实现，只重写用得上的那些。
-// 这些是正常的 C++ 虚函数；SDK 会为它们生成带异常屏障的 noexcept 蹦床。
-//
-// 线程：五个阶段回调全部在 mcdk 启动线程上按顺序调用，彼此不会并发。
-// 事件回调不在此列，跑在哪条线程由 Dispatch 与事件本身决定，见 ev:: 上的标注。
+    // 插件基类。全部回调都有空实现，只重写用得上的那些。
+    // 这些是正常的 C++ 虚函数；SDK 会为它们生成带异常屏障的 noexcept 蹦床。
+    //
+    // 线程：五个阶段回调全部在 mcdk 启动线程上按顺序调用，彼此不会并发。
+    // 事件回调不在此列，跑在哪条线程由 Dispatch 与事件本身决定，见 ev:: 上的标注。
     class Plugin {
     public:
         Plugin()                         = default;
         virtual ~Plugin()                = default;
         Plugin(const Plugin&)            = delete;
         Plugin& operator=(const Plugin&) = delete;
-// 在任何阶段回调之前调用，此时 Context 的 config 已可读。
-// 返回的非空字段会覆盖 MCDK_PLUGIN 宏里写死的对应值。
+        // 在任何阶段回调之前调用，此时 Context 的 config 已可读。
+        // 返回的非空字段会覆盖 MCDK_PLUGIN 宏里写死的对应值。
         virtual PluginIdentity identity(Context& context) {
             (void)context;
             return {};
@@ -67,8 +67,8 @@ namespace mcdk {
     };
 
     namespace detail {
-// 一次加载对应的全部插件侧状态。
-// 刻意不用静态单例：同一动态库可在 .mcdev.json 中声明多次。
+        // 一次加载对应的全部插件侧状态。
+        // 刻意不用静态单例：同一动态库可在 .mcdev.json 中声明多次。
         template <class PluginT>
         struct PluginInstance {
             Context context;

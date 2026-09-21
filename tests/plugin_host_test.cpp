@@ -81,8 +81,8 @@ int main() {
     }
 
     auto toolRegistry = std::make_shared<runtime::McpToolRegistry>();
-// --- 绑定一份假的运行期 -------------------------------------------
-// mcdk.info / mcdk.log 的数据源。真实运行时由 launchGameExe 绑定，
+    // --- 绑定一份假的运行期 -------------------------------------------
+    // mcdk.info / mcdk.log 的数据源。真实运行时由 launchGameExe 绑定，
     {
         auto logBuffer = std::make_shared<LogBuffer>();
         logBuffer->add("log-oldest");
@@ -171,8 +171,8 @@ int main() {
         );
         passed &= expect(response.value("session", "") == "session-42", "session id 传给了 handler");
     }
-// --- mcdk.game 的降级行为 ------------------------------------
-// 本测试不启动游戏，因此两个能力都应明确返回未就绪。
+    // --- mcdk.game 的降级行为 ------------------------------------
+    // 本测试不启动游戏，因此两个能力都应明确返回未就绪。
     passed &= expect(
         contains(output, "game:exec-status:" + std::to_string(MCDK_ERR_GAME_NOT_READY)),
         "execute_python 在游戏未就绪时返回 GAME_NOT_READY 而非阻塞或崩溃"
@@ -188,8 +188,8 @@ int main() {
         contains(output, R"(config={"mode":"test","level":3})"),
         "the declaration's config JSON reaches the plugin verbatim"
     );
-// --- 事件 --------------------------------------------------------
-// 01-hello 在 onRegister 里订阅事件；这里手动发射验证异步派发。
+    // --- 事件 --------------------------------------------------------
+    // 01-hello 在 onRegister 里订阅事件；这里手动发射验证异步派发。
     {
         using namespace mcdk::plugin_host;
         MCDK_EMIT(EventId::McpRegisterFinish, [] {

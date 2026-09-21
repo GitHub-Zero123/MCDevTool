@@ -212,8 +212,8 @@ void mcdk::launchGameExe(
     auto& particleReloadTask = session.particleReloadTask();
     auto& styleProcessor     = session.styleProcessor();
     auto& hostBridgeTask     = session.hostBridgeTask();
-// 把运行期子系统接给插件接口层。尽早做：插件在 mcdk.mcp.register.before
-// 里就可能要读 mcdk.info，而那个事件就在几十行之后。此刻游戏进程还没创建，
+    // 把运行期子系统接给插件接口层。尽早做：插件在 mcdk.mcp.register.before
+    // 里就可能要读 mcdk.info，而那个事件就在几十行之后。此刻游戏进程还没创建，
     if (!mcdk::plugin_host::instance().empty()) {
         mcdk::plugin_host::SessionBinding binding;
         binding.facts.mcdkPid    = GetCurrentProcessId();

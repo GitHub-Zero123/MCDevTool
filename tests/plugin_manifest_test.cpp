@@ -158,8 +158,8 @@ int main() {
     passed &= expect(indexOf("com.test.orphan") < 0, "依赖不在已启用集合内的插件被跳过");
     passed &= expect(indexOf("com.test.ring-a") < 0 && indexOf("com.test.ring-b") < 0, "成环的插件整环跳过");
     passed &= expect(ids.size() == 2, "只有两个插件真的加载了");
-// 本测试不推进 SHUTDOWN，模拟启动被否决或 startGame 抛异常。
-// shutdown() 必须自行推进该阶段，否则插件的 onShutdown 不会执行。
+    // 本测试不推进 SHUTDOWN，模拟启动被否决或 startGame 抛异常。
+    // shutdown() 必须自行推进该阶段，否则插件的 onShutdown 不会执行。
     host.shutdown();
     passed &= expect(
         std::any_of(

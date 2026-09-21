@@ -10,8 +10,8 @@ namespace mcdk {
     enum class LogLevel { Trace, Debug, Info, Warn, Error };
 
     enum class Color { Default, Green, Red, Blue, Yellow, Cyan, Magenta, White, Black, Gray, DarkGray };
-// 线程安全：底下的 ABI 函数可从任意线程调用，宿主负责串行化并保证单次调用
-// 的消息整体原子写出。因此这里不需要任何加锁。
+    // 线程安全：底下的 ABI 函数可从任意线程调用，宿主负责串行化并保证单次调用
+    // 的消息整体原子写出。因此这里不需要任何加锁。
     class Console {
     public:
         Console() = default;

@@ -1,6 +1,6 @@
 #pragma once
 // mcdk.mcp 的 C++ 封装。
- // MCP 接口在 ABI 层以 JSON 文本传递复杂参数。
+// MCP 接口在 ABI 层以 JSON 文本传递复杂参数。
 #include <cstdint>
 #include <memory>
 #include <optional>

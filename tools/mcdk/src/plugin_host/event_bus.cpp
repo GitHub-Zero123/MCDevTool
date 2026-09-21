@@ -23,8 +23,8 @@ namespace mcdk::plugin_host {
     namespace {
 
         constexpr std::size_t kMaxQueuedEvents = 4096;
-// payload 布局表
-// QUEUED 派发必须深拷贝：发射方的字符串存储在 MCDK_EMIT 所在作用域
+        // payload 布局表
+        // QUEUED 派发必须深拷贝：发射方的字符串存储在 MCDK_EMIT 所在作用域
         constexpr std::uint16_t kStrGameLaunchBefore[] = {
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, exe_path)),
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, dev_config_path)),
@@ -61,7 +61,7 @@ namespace mcdk::plugin_host {
             /* IpcClientDisconnected */ {sizeof(mcdk_ev_ipc_client), nullptr, 0, false, false},
         };
         static_assert(std::size(kTraits) == kEventCount, "每新增一个事件都必须在这里登记 payload 布局与否决语义");
-// 把 payload 和字符串打包成自包含 blob，先存偏移，最后再还原指针。
+        // 把 payload 和字符串打包成自包含 blob，先存偏移，最后再还原指针。
         void pack(EventId id, const void* payload, std::uint32_t payloadSize, std::vector<unsigned char>& blob) {
             const auto&          layout = kTraits[static_cast<std::size_t>(id)];
             const auto* const    bytes  = static_cast<const unsigned char*>(payload);
@@ -415,8 +415,8 @@ namespace mcdk::plugin_host {
         }
         const std::lock_guard lock(bus().mutex);
         const auto            token = bus().nextToken++;
-// 槽位复用：退订只置 alive=false，不删元素（派发会把裸指针带出锁外）。
-// 不复用的话，反复订阅/退订的 loader 型插件会让派发的线性扫描无限变长。
+        // 槽位复用：退订只置 alive=false，不删元素（派发会把裸指针带出锁外）。
+        // 不复用的话，反复订阅/退订的 loader 型插件会让派发的线性扫描无限变长。
         Subscription* entry = nullptr;
         for (auto& candidate : bus().subscriptions) {
             if (!candidate.alive.load(std::memory_order_relaxed)

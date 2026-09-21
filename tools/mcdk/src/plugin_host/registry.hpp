@@ -79,8 +79,8 @@ namespace mcdk::plugin_host::detail {
     [[nodiscard]] const std::string& hostVersion() noexcept;
     void                             setCurrentStage(mcdk_stage stage) noexcept;
     [[nodiscard]] mcdk_stage         currentStage() noexcept;
-// 阶段窗口判定。接口的可调用阶段矩阵见
-// docs/plugin-system/05-interfaces.md §9；在错误阶段调用必须返回 MCDK_ERR_WRONG_STAGE。
+    // 阶段窗口判定。接口的可调用阶段矩阵见
+    // docs/plugin-system/05-interfaces.md §9；在错误阶段调用必须返回 MCDK_ERR_WRONG_STAGE。
     [[nodiscard]] inline bool stageAtLeast(mcdk_stage minimum) noexcept { return currentStage() >= minimum; }
 
     // 当前运行期绑定的不可变快照。永不返回空指针；未绑定时里面各

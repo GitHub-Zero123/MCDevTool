@@ -34,8 +34,8 @@ namespace mcdk::plugin_host::detail {
             thread_local std::string storage;
             return storage;
         }
-// 从 JPEG 的 SOFn 段读出尺寸。
-// captureMinecraftWindowJpeg 只给字节流，不给宽高，而 image_get_info 里放一个
+        // 从 JPEG 的 SOFn 段读出尺寸。
+        // captureMinecraftWindowJpeg 只给字节流，不给宽高，而 image_get_info 里放一个
         bool readJpegSize(const std::vector<std::uint8_t>& data, std::uint32_t& width, std::uint32_t& height) {
             if (data.size() < 4 || data[0] != 0xFF || data[1] != 0xD8) {
                 return false;

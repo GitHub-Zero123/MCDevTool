@@ -69,8 +69,8 @@ namespace mcdk::plugin_host::detail {
                 end = std::min(end, total);
 
                 const bool newestFirst = query->order != MCDK_LOG_ORDER_ASC;
-// 先在锁内取一份快照，再在锁外回调。
-    // 回调在锁外执行，避免慢处理器阻塞日志写入。
+                // 先在锁内取一份快照，再在锁外回调。
+                // 回调在锁外执行，避免慢处理器阻塞日志写入。
                 const auto lines = newestFirst ? buffer->getRangeReversed(start, end) : buffer->getRange(start, end);
 
                 for (std::size_t offset = 0; offset < lines.size(); ++offset) {

@@ -10,7 +10,7 @@
 #include <vector>
 
 namespace {
-// 无订阅者时每个发射点的额外成本上限为 15ns，容忍 CI 噪声。
+    // 无订阅者时每个发射点的额外成本上限为 15ns，容忍 CI 噪声。
     constexpr double kMaxNanosPerEmitWithNoSubscribers = 15.0;
 
     constexpr int kIterations = 2'000'000;

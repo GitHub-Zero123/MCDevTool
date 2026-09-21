@@ -25,8 +25,8 @@ int MCDK_CLI_PARSE(int argc, char* argv[]);
 #endif
 
 namespace {
-// 插件终结的作用域守卫。
-// 析构里绝不能让异常逃出去：它多半是在栈展开途中运行的，再抛一次就是
+    // 插件终结的作用域守卫。
+    // 析构里绝不能让异常逃出去：它多半是在栈展开途中运行的，再抛一次就是
     struct PluginScope {
         ~PluginScope() {
             try {
@@ -67,8 +67,8 @@ int main(int argc, char* argv[]) {
         // 相对路径以 .mcdev.json 所在目录（即当前工作目录）为基准。
         auto& pluginHost = mcdk::plugin_host::instance();
         pluginHost.loadDeclared(config.plugins, std::filesystem::current_path());
-// 无论 startGame 怎么退出——正常结束、被插件否决、或中途抛异常——插件都必须
-// 走完终结流程。正常路径上 launchGameExe 已经做过，Host::shutdown 幂等，
+        // 无论 startGame 怎么退出——正常结束、被插件否决、或中途抛异常——插件都必须
+        // 走完终结流程。正常路径上 launchGameExe 已经做过，Host::shutdown 幂等，
         const PluginScope pluginScope;
 
         pluginHost.advance(MCDK_STAGE_REGISTER);

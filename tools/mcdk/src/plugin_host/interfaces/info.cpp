@@ -21,8 +21,8 @@ namespace mcdk::plugin_host::detail {
             out.len = text.size();
             return out;
         }
-// 字符串字段按借用交付，所以指向的存储必须活过本次调用返回之后的「立即拷贝」
-// 那一瞬。快照本身是调用时现算的，因此存进线程局部——同一线程的下一次
+        // 字符串字段按借用交付，所以指向的存储必须活过本次调用返回之后的「立即拷贝」
+        // 那一瞬。快照本身是调用时现算的，因此存进线程局部——同一线程的下一次
         struct InfoStrings {
             std::string mcpIp;
             std::string gameExePath;

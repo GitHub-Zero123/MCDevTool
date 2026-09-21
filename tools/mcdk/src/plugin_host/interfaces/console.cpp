@@ -17,8 +17,8 @@ namespace mcdk::plugin_host::detail {
             }
             return std::string(text.ptr, text.len);
         }
-// 显式 switch 而非 static_cast：ABI 枚举值永久冻结，ConsoleColor 是宿主
-// 内部枚举、可以自由调整。写成强制转换的话，哪天有人往 ConsoleColor
+        // 显式 switch 而非 static_cast：ABI 枚举值永久冻结，ConsoleColor 是宿主
+        // 内部枚举、可以自由调整。写成强制转换的话，哪天有人往 ConsoleColor
         [[nodiscard]] ConsoleColor toConsoleColor(mcdk_color color) noexcept {
             switch (color) {
             case MCDK_COLOR_GREEN:
