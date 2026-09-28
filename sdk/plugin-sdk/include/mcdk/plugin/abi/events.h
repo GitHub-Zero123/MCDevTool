@@ -68,6 +68,22 @@ typedef struct mcdk_ev_game_launch_before {
     /* 后续版本在此追加 env_builder 句柄（04-events.md §4.1） */
 } mcdk_ev_game_launch_before;
 
+/*
+ * mcdk.game.process.create —— 强制 SYNC。插件可在此接管游戏进程的创建，
+ * 契约见 04-events.md §4.4。字段都是宿主本来要传给 CreateProcessW 的东西。
+ */
+typedef struct mcdk_ev_game_process_create {
+    uint32_t    struct_size;
+    uint32_t    _reserved;
+    mcdk_handle request;      /* commit_process 的凭据，仅本次派发内有效 */
+    mcdk_str    exe_path;     /* 借用 */
+    mcdk_str    command_line; /* 借用；完整命令行，首段是带引号的 exe */
+    mcdk_str    environment;  /* 借用；"K=V\0K=V\0\0" 形式的完整环境块，len 含结尾的两个 \0 */
+    uint64_t    std_input;    /* 可继承的 HANDLE，必须原样用作子进程的 std 句柄 */
+    uint64_t    std_output;
+    uint64_t    std_error;
+} mcdk_ev_game_process_create;
+
 /* mcdk.game.launch.finish */
 typedef struct mcdk_ev_game_launch_finish {
     uint32_t struct_size;
@@ -114,6 +130,7 @@ typedef struct mcdk_ev_game_state {
 #define MCDK_EVENT_MCP_REGISTER_BEFORE "mcdk.mcp.register.before"
 #define MCDK_EVENT_MCP_REGISTER_FINISH "mcdk.mcp.register.finish"
 #define MCDK_EVENT_GAME_LAUNCH_BEFORE "mcdk.game.launch.before"
+#define MCDK_EVENT_GAME_PROCESS_CREATE "mcdk.game.process.create"
 #define MCDK_EVENT_GAME_LAUNCH_FINISH "mcdk.game.launch.finish"
 #define MCDK_EVENT_GAME_EXIT "mcdk.game.exit"
 #define MCDK_EVENT_LOG_LINE "mcdk.log.line"

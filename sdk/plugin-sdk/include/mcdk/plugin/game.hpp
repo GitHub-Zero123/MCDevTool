@@ -119,6 +119,14 @@ namespace mcdk {
             return result;
         }
 
+        // 只能在 ev::GameProcessCreate 的回调里调用。进程须挂起创建，宿主负责恢复。
+        [[nodiscard]] mcdk_status commitProcess(mcdk_handle request, std::uint32_t pid, std::uint32_t tid) const {
+            if (!detail::ifaceHas(mTable, &mcdk_iface_game::commit_process)) {
+                return MCDK_ERR_NOT_SUPPORTED;
+            }
+            return mTable->commit_process(mSelf, request, pid, tid);
+        }
+
     private:
         mcdk_handle            mSelf  = 0;
         const mcdk_iface_game* mTable = nullptr;

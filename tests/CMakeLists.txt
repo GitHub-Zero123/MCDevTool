@@ -71,6 +71,17 @@ if(TARGET hello_plugin AND MCDK_ENABLE_PLUGINS)
     add_test(NAME plugin-host COMMAND plugin_host_test)
 endif()
 
+if(TARGET launcher_plugin AND MCDK_ENABLE_PLUGINS)
+    add_executable(plugin_launcher_test plugin_launcher_test.cpp)
+    target_compile_features(plugin_launcher_test PRIVATE cxx_std_23)
+    target_link_libraries(plugin_launcher_test PRIVATE mcdk_runtime)
+    add_dependencies(plugin_launcher_test launcher_plugin)
+    target_compile_definitions(plugin_launcher_test PRIVATE
+        MCDEV_TEST_LAUNCHER_PLUGIN="$<TARGET_FILE:launcher_plugin>"
+    )
+    add_test(NAME plugin-launcher COMMAND plugin_launcher_test)
+endif()
+
 # 零插件开销基准。它是唯一会因为「变慢了」而失败的测试，故意留在常规 ctest 里
 # 而不是另开一个只有 CI 跑的靶——本地改坏了当场就能看到。
 add_executable(plugin_event_bench plugin_event_bench.cpp)

@@ -67,4 +67,8 @@ if(MCDK_PLUGIN_SDK_BUILD_EXAMPLES)
     add_subdirectory(examples/00-abi-conformance)
     add_subdirectory(examples/01-hello)
     add_subdirectory(examples/02-loader)
+    # 进程接管的辅助只有 Win32 版本。
+    if(WIN32)
+        add_subdirectory(examples/03-launcher)
+    endif()
 endif()

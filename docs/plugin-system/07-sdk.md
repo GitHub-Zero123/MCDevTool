@@ -170,6 +170,49 @@ mcdk::PluginIdentity identity(mcdk::Context& context) override {
 | `examples/00-abi-conformance/` | ABI 一致性测试插件，见 [09-compatibility.md](09-compatibility.md) §2 |
 | `examples/01-hello/` | 最小插件：注册、打日志、读 config |
 | `examples/02-loader/` | 加载器模式：一个 DLL 充当其他插件的宿主，见 §5 |
-| `examples/03-mcp-tool/` | 注册一个 MCP 工具并调用游戏内 Python（待 `mcdk.mcp` 开放） |
-| `examples/04-hotreload/` | 注册自定义 watcher（待 `mcdk.hotreload` 开放） |
+| `examples/03-launcher/` | 自定义游戏启动器：接管进程创建，追加参数与环境变量，见 §7 |
+| `examples/04-mcp-tool/` | 注册一个 MCP 工具并调用游戏内 Python（计划） |
+| `examples/05-hotreload/` | 注册自定义 watcher（待 `mcdk.hotreload` 开放） |
 | `templates/plugin-template/` | 供用户复制的起步工程，含 `CMakeLists.txt` 与 `plugin.json` |
+
+## 7. 自定义游戏启动器
+
+`ev::GameProcessCreate` 让插件接管游戏进程的创建。契约有五条（[04-events.md](04-events.md) §4.4），
+其中四条是 Win32 细节，漏一条 mcdk 就会丢日志或拿错进程。`mcdk/plugin/process.hpp` 把它们收了起来：
+
+```cpp
+#include <mcdk/plugin/process.hpp>
+
+ctx.events().on<mcdk::ev::GameProcessCreate>([&](const auto& e) {
+    auto spec = mcdk::process::LaunchSpec::from(e);        // payload → UTF-16 命令行与环境块
+    spec.commandLine += L" --my-flag";
+    spec.setEnvironment(L"MY_VAR", L"1");                   // 覆盖同名变量并保持排序
+    return mcdk::process::launch(ctx.game(), e, std::move(spec));
+});
+```
+
+`launch()` 做的事：挂起创建（继承句柄、用宿主给的 std 句柄）→ `commitProcess` → 关掉自己的两个句柄 →
+返回 `Stop`。创建失败或交回被拒时返回 `Veto`，交回被拒的那个进程会被它终止。
+
+要在进程恢复前动手（注入 DLL、改内存），就不用 `launch()`，拆开写：
+
+```cpp
+PROCESS_INFORMATION info{};
+if (!mcdk::process::createSuspended(spec, info)) {
+    return mcdk::EventResult::Veto;
+}
+injectInto(info.hProcess);                                  // 进程仍挂起
+const auto status = ctx.game().commitProcess(e.request, info.dwProcessId, info.dwThreadId);
+if (status != MCDK_OK) {
+    TerminateProcess(info.hProcess, 1);
+}
+CloseHandle(info.hThread);
+CloseHandle(info.hProcess);
+return status == MCDK_OK ? mcdk::EventResult::Stop : mcdk::EventResult::Veto;
+```
+
+**不要自己 `ResumeThread`。** 恢复由宿主做，它要先把 Safaia 日志接收器准备好；挂起计数不是恰好 1
+会被当作违约，进程被终止、启动中止。
+
+该头文件只在 Windows 上可用，且会引入 `<windows.h>`，所以 `plugin.hpp` 不包含它，按需自取。
+完整示例见 `examples/03-launcher/`，回归测试见 `tests/plugin_launcher_test.cpp`。

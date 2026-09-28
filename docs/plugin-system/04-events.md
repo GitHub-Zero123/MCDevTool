@@ -34,6 +34,7 @@ STAGE_WORLD
   └─ mcdk.world.deploy.finish
 STAGE_RUNTIME
   ├─ mcdk.game.launch.before    *  ← v1 只能否决，见 §4.1
+  ├─ mcdk.game.process.create   *  ← 可接管进程创建，见 §4.4
   ├─ mcdk.game.launch.finish    *  ← 携带 pid
   ├─ mcdk.ipc.client.connected  *  ← execute_python 自此可用
   ├─ mcdk.log.line / .error     *  ← 高频，默认 QUEUED
@@ -113,6 +114,7 @@ v1 列标注该事件是否在首版实现。事件的取舍与 [05-interfaces.m
 | `mcdk.mcp.register.before` | ✓ | 主线程 | 否 | SYNC（强制） | **MCP 工具注册窗口开启。** 插件在此调用 `mcdk.mcp` 绑定或注册工具 |
 | `mcdk.mcp.register.finish` | ✓ | 主线程 | 否 | SYNC（强制） | **MCP 工具注册完成、注册表已封存。** payload 携带最终工具数，可用于自检与日志 |
 | `mcdk.game.launch.before` | ✓ | 主线程 | 是 | SYNC | **游戏启动前。** 否决则不启动。见 §4.1 |
+| `mcdk.game.process.create` | ✓ | 主线程 | 是 | SYNC（强制） | **即将创建游戏进程。** 插件可接管创建，见 §4.4 |
 | `mcdk.game.launch.finish` | ✓ | 主线程 | 否 | SYNC | **游戏进程已创建。** payload 携带 pid |
 | `mcdk.game.exit` | ✓ | 进程监视线程 | 否 | QUEUED | 携带退出码 |
 | `mcdk.game.state_changed` | ✓ | 启动线程 / IPC 线程 | 否 | QUEUED | **生命周期状态迁移**：加载中 / 主菜单 / 在世界里 / 已退出。判定只基于 IPC 连接，**不保证准确**，见 [05](05-interfaces.md) §5.1 |
@@ -144,6 +146,8 @@ v1 九条事件构成一个自洽的闭环：注册期拿到 MCP 开口，启动
 原有设计是在 payload 中带一个 `env_builder` 句柄，指向现有的 `GameEnvironmentBuilder`。但那需要 `mcdk.game` 暴露 `env_set`，超出 [05-interfaces.md](05-interfaces.md) §1 划定的 v1 范围，故一并推迟。
 
 在此之前，插件在该事件里能做的是：条件性否决启动、启动前往 `project_root` 写文件、拉起辅助进程。
+
+需要改命令行或环境变量的插件，现在可以用 `mcdk.game.process.create` 接管进程创建（§4.4）：payload 里有完整的命令行与环境块，插件改完自己起进程。`env_set` 仍未提供——它只在「不接管、只改一个变量」时更省事。
 
 这是一处值得单独确认的取舍——若"启动前改环境变量"是实际用例，`env_set` 的实现成本很低（`GameEnvironmentBuilder` 已存在），可以拉进 v1。
 
@@ -180,13 +184,74 @@ v1 九条事件构成一个自洽的闭环：注册期拿到 MCP 开口，启动
 | `mcdk.game.launch.before` | 整个操作（游戏不会启动） | 否 |
 | `mcdk.log.line` / `.error` | 仅控制台输出（日志行仍存在） | 是 |
 
-判判据是「这件事还算发生过吗」。`.before` 被否决后它没发生，再投过去只会让异步订阅者枯等一个永远不来的 `.finish`；而日志行被抑制输出后它依然存在，异步订阅者照收。
+判据是「这件事还算发生过吗」。`.before` 被否决后它没发生，再投过去只会让异步订阅者枯等一个永远不来的 `.finish`；而日志行被抑制输出后它依然存在，异步订阅者照收。
 
 该语义逐事件登记在 `event_bus.cpp` 的 `kTraits` 表中（`vetoCancelsEvent`），新增可否决事件时必须同步填写。
 
 理由有二。其一，`LogBuffer` 是诊断真源：一个用于过滤噪音的插件若同时让 AI 在排查时看不到那些行，会造成极难定位的"日志莫名缺失"。其二，这个选择是**可逆**的——将来若确有需求，可以追加一个 `MCDK_EVENT_VETO_ALL` 取值来同时过滤缓冲区；反过来，一旦放行了"插件能从缓冲区抹掉日志"，再收回就是破坏性变更。
 
 **v1 不提供改写日志文本的能力。** 事件 payload 是 `const`，没有回写通道。要提供改写就得引入可变 payload，这会给整个事件系统增加一类需要单独定义所有权与并发语义的机制，收益不匹配。需要变形后的日志，插件自己输出一份到 `mcdk.console` 即可。
+
+### 4.4 `mcdk.game.process.create`：接管进程创建（规范）
+
+发射点就是宿主调用 `CreateProcessW` 的位置。此时 IPC 服务已在监听、MCP 已启动、日志管道已建好，
+payload 里的命令行、环境块、三个 std 句柄就是宿主本来要传给 `CreateProcessW` 的东西。
+
+**为什么不复用 `launch.before`。** 它刻意放在所有子系统搭起来之前，否决时什么都不用拆；
+那个时刻 IPC 端口、管道、环境变量都还不存在，交给插件也无从使用。
+
+**为什么是「插件交回进程」而不是「否决后插件自己起」。** 启动之后 mcdk 离不开这个进程：
+pid 喂给 profiler、热更新、UI 重载、样式处理器、MCP；句柄用来等待退出、取退出码；管道是非 Safaia
+模式下日志的唯一来源；环境变量里有调试 Mod 要读的 IPC 端口。插件只否决不交回，mcdk 就成了空壳。
+
+#### 契约
+
+插件接管时**必须**：
+
+1. 以 `CREATE_SUSPENDED` 创建进程，且只挂起一次；
+2. `bInheritHandles = TRUE`，并以 payload 的 `std_input` / `std_output` / `std_error` 作为子进程的 std 句柄；
+3. 交回的 pid 是**游戏进程本身**，不是某个启动器或包装进程；
+4. 调用 `mcdk.game.commit_process(request, pid, tid)`，然后返回 `STOP`；
+5. 关闭自己的 `hProcess` / `hThread`——宿主会另开。
+
+环境块可以改，但**应该**保留宿主写入的 `MCDEV_*` 变量，否则调试 Mod 连不回来。
+SDK 的 `mcdk/plugin/process.hpp` 把 1、2、4、5 收成了 `mcdk::process::launch()`，见 [07-sdk.md](07-sdk.md) §7。
+
+#### 宿主的处理
+
+| 插件的行为 | 宿主的反应 |
+| --- | --- |
+| 返回 `CONTINUE`，未 commit | 交给下一个 handler；都没接管则走默认的 `CreateProcessW` |
+| commit | 立即停止派发（不论返回值），接手该进程 |
+| 返回 `VETO`，未 commit | 启动失败，报错并点名该插件，中止启动 |
+| 返回 `STOP`，未 commit | 视为插件 bug，同上 |
+| 第二次 commit | 返回 `MCDK_ERR_DUPLICATE`。实际上到不了：第一次 commit 后派发就停了 |
+
+接手时宿主用 pid 与 tid 自己 `OpenProcess` / `OpenThread`，并校验 tid 属于 pid（不符则 commit 返回
+`MCDK_ERR_INVALID_ARGUMENT`）。之后与默认路径汇合：Safaia 模式先启动日志接收器，然后 `ResumeThread`。
+**`ResumeThread` 返回的旧挂起计数必须恰好是 1**：0 说明进程早已在跑，大于 1 说明恢复后仍挂着。
+两种都终止该进程、报错点名、中止启动。
+
+「commit 即停止派发」而不是「看返回值」，是因为 SDK 的异常屏障会把抛异常的 handler 记成
+`CONTINUE`。若插件起了进程、commit 成功、随后抛了异常，按返回值走就会让下一个插件再起一个。
+
+宿主在交接途中失败（例如 Safaia 接收器起不来）时，受理窗口析构会终止那个仍挂起的进程，不留孤儿。
+
+#### 必须挂起的理由
+
+- **pid 不会失效。** 挂起的进程不会退出，宿主拿 pid 去 `OpenProcess` 一定打开的是同一个进程，不存在「已退出、pid 被复用」的竞态。
+- **不丢日志。** Safaia 接收器必须在游戏跑起来之前就绪，由宿主掌握恢复时机才保证得了。
+- **孙进程能被识破。** 插件若交回某个启动器的 pid，那个启动器多半不是挂起的，挂起计数的校验会拦住它，而不是让 mcdk 静默盯着一个错的进程。
+
+通过 RenderDoc、PIX 等工具间接拉起游戏（交回的不是挂起的直接子进程）不在本契约之内。
+
+#### 为什么结果走接口函数而不是可变 payload
+
+payload 保持 `const`，结果经宿主句柄 `request` 加 `commit_process` 交回，与 `bind_tool`、图像句柄同一套做法。
+§4.2 拒绝可变 payload 的理由在这里同样成立：它会让整个事件系统多出一类要单独定义所有权与并发语义的机制。
+
+`request` 只在本次派发内有效，派发结束后 commit 一律返回 `MCDK_ERR_INVALID_HANDLE`。
+`commit_process` 不受阶段矩阵约束（发射时 RUNTIME 尚未到来），它的有效期就是这个窗口。
 
 ## 5. payload 定义
 
@@ -207,6 +272,18 @@ typedef struct mcdk_ev_game_launch_before {
     mcdk_str dev_config_path;     /* 借用，未启用自动进入存档时为空 */
     /* 后续版本在此追加 env_builder 句柄，见 §4.1 */
 } mcdk_ev_game_launch_before;
+
+typedef struct mcdk_ev_game_process_create {
+    uint32_t    struct_size;
+    uint32_t    _reserved;
+    mcdk_handle request;          /* commit_process 的凭据，仅本次派发内有效 */
+    mcdk_str    exe_path;         /* 借用 */
+    mcdk_str    command_line;     /* 借用；完整命令行，首段是带引号的 exe */
+    mcdk_str    environment;      /* 借用；"K=V\0K=V\0\0"，len 含结尾的两个 \0 */
+    uint64_t    std_input;        /* 可继承的 HANDLE */
+    uint64_t    std_output;
+    uint64_t    std_error;
+} mcdk_ev_game_process_create;
 
 typedef struct mcdk_ev_game_launch_finish {
     uint32_t struct_size;
@@ -235,7 +312,7 @@ typedef struct mcdk_ev_ipc_client {
 } mcdk_ev_ipc_client;
 ```
 
-以上六个结构体覆盖 §4 中标为 v1 的全部九个事件（`mcp.register.before/finish` 共用 `mcdk_ev_mcp_register`，`log.line/error` 共用 `mcdk_ev_log_line`，`ipc.client.connected/disconnected` 共用 `mcdk_ev_ipc_client`）。全部登记在 [13-registry.md](13-registry.md)。
+§4 中标为 v1 的十一个事件共用八个 payload 结构体：以上七个，外加 `game.state_changed` 的 `mcdk_ev_game_state`（`mcp.register.before/finish` 共用 `mcdk_ev_mcp_register`，`log.line/error` 共用 `mcdk_ev_log_line`，`ipc.client.connected/disconnected` 共用 `mcdk_ev_ipc_client`）。全部登记在 [13-registry.md](13-registry.md)。
 
 上表中标注为非 v1 的事件，其 payload 结构体在 v1 阶段**不定义**——按 [02-abi-contract.md](02-abi-contract.md) §5.9，一旦定义就只能追加不能改，过早固化没有实现依据的布局是最容易留下历史包袱的做法。
 
@@ -261,6 +338,13 @@ void onRegister(mcdk::Context& ctx) override {
     ctx.events().on<mcdk::ev::GameLaunchBefore>([&](const auto& e) {
         return readyToLaunch(e.exePath) ? mcdk::EventResult::Continue
                                         : mcdk::EventResult::Veto;
+    });
+
+    // 接管进程创建（需 #include <mcdk/plugin/process.hpp>）
+    ctx.events().on<mcdk::ev::GameProcessCreate>([&](const auto& e) {
+        auto spec = mcdk::process::LaunchSpec::from(e);
+        spec.commandLine += L" --my-flag";
+        return mcdk::process::launch(ctx.game(), e, std::move(spec));
     });
 
     ctx.events().on<mcdk::ev::GameLaunchFinish>([&](const auto& e) {

@@ -113,6 +113,12 @@ MCDK_ABI_CHECK_GROWABLE(mcdk_iface_core);
     /* 事件 payload：每新增一个都必须在此登记，否则它不受任何保护。 */
     MCDK_ABI_CHECK_GROWABLE(mcdk_ev_mcp_register);
     MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_launch_before);
+    MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_process_create);
+    static_assert(offsetof(mcdk_ev_game_process_create, request) == 8, "mcdk_ev_game_process_create field order changed");
+    static_assert(
+        offsetof(mcdk_ev_game_process_create, std_input) == 16 + 3 * sizeof(mcdk_str),
+        "mcdk_ev_game_process_create field order changed"
+    );
     MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_launch_finish);
     MCDK_ABI_CHECK_GROWABLE(mcdk_ev_game_exit);
     MCDK_ABI_CHECK_GROWABLE(mcdk_ev_log_line);

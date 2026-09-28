@@ -92,6 +92,14 @@ typedef struct mcdk_iface_game {
      * 宿主会在 MCDK_STAGE_SHUTDOWN 清理遗留图像并告警。
     */
     void(MCDK_CALL* image_release)(mcdk_handle self, mcdk_handle image);
+
+    /*
+     * 只能在 mcdk.game.process.create 的回调里调用：交回插件自己创建的游戏进程。
+     * 进程必须以 CREATE_SUSPENDED 创建且只挂起一次，由宿主恢复。宿主另开句柄，
+     * 插件自己的 hProcess / hThread 照常关闭。
+     * 别的插件已交回过返回 MCDK_ERR_DUPLICATE；tid 不属于 pid 返回 MCDK_ERR_INVALID_ARGUMENT。
+     */
+    mcdk_status(MCDK_CALL* commit_process)(mcdk_handle self, mcdk_handle request, uint32_t pid, uint32_t tid);
 } mcdk_iface_game;
 
 #ifdef __cplusplus

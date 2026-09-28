@@ -47,6 +47,7 @@
 #include <mcdk/plugin_host/events.hpp>
 #include <mcdk/plugin_host/session_binding.hpp>
 #include <mcdk/plugin_host/host.hpp>
+#include <mcdk/plugin_host/process_request.hpp>
 #include <mcdk/performance/profiler_service_factory.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
 #include <mcdk/runtime/game_lifecycle.hpp>
@@ -72,6 +73,7 @@
 using mcdk::printColoredAtomic;
 using mcdk::UserModDirConfig;
 using mcdk::UserStyleProcessor;
+using mcdk::detail::convertUtf16ToUtf8;
 using mcdk::detail::convertUtf8ToUtf16;
 using mcdk::detail::createGameLogHandlers;
 using mcdk::detail::currentExecutableDirectory;
@@ -886,44 +888,97 @@ void mcdk::launchGameExe(
         );
     }
 
-    auto        cmdUtf16        = convertUtf8ToUtf16(cmd);
-    auto        gameEnvironment = std::move(environment).build();
-    const DWORD creationFlags   = CREATE_UNICODE_ENVIRONMENT | (useSafaiaLogs ? CREATE_SUSPENDED : 0);
-    if (!CreateProcessW(
-            nullptr,
-            cmdUtf16.data(),
-            nullptr,
-            nullptr,
-            TRUE, // 继承句柄
-            creationFlags,
-            gameEnvironment.data(),
-            nullptr,
-            &si,
-            &pi
-        )) {
-        throw std::runtime_error("CreateProcessW failed");
-    }
+    auto cmdUtf16        = convertUtf8ToUtf16(cmd);
+    auto gameEnvironment = std::move(environment).build();
 
-    UniqueHandle processHandle(pi.hProcess);
-    UniqueHandle primaryThreadHandle(pi.hThread);
+    // 插件可以在这里接管进程创建（04-events.md §4.4）。受理窗口在工厂里才开，
+    // 零插件时这里只有一次原子读。
+    std::optional<mcdk::plugin_host::ProcessRequest> processRequest;
+    const auto                                       processVerdict = MCDK_EMIT_UNTIL(
+        mcdk::plugin_host::EventId::GameProcessCreate,
+        [&] { return processRequest->settled(); },
+        [&](auto& arena) {
+            processRequest.emplace();
+            mcdk_ev_game_process_create payload{};
+            payload.struct_size      = static_cast<std::uint32_t>(sizeof(payload));
+            payload.request          = processRequest->handle();
+            payload.exe_path         = arena.hold(MCDevTool::Utils::pathToGenericUtf8(exePath));
+            payload.command_line.ptr = cmd.data();
+            payload.command_line.len = cmd.size();
+            payload.environment      = arena.hold(convertUtf16ToUtf8(gameEnvironment));
+            payload.std_input        = reinterpret_cast<std::uintptr_t>(si.hStdInput);
+            payload.std_output       = reinterpret_cast<std::uintptr_t>(si.hStdOutput);
+            payload.std_error        = reinterpret_cast<std::uintptr_t>(si.hStdError);
+            return payload;
+        }
+    );
+    auto committed = processRequest ? processRequest->take() : std::nullopt;
+
+    UniqueHandle processHandle;
+    UniqueHandle primaryThreadHandle;
+    DWORD        pid = 0;
+    if (committed) {
+        processHandle.reset(committed->process);
+        primaryThreadHandle.reset(committed->thread);
+        pid = committed->pid;
+        printColoredAtomic("[MCDK] 游戏进程由插件 " + committed->ownerId + " 创建", ConsoleColor::Cyan);
+    } else if (processVerdict.result != MCDK_EVENT_CONTINUE) {
+        const auto owner = mcdk::plugin_host::pluginIdOf(processVerdict.owner);
+        throw std::runtime_error(
+            processVerdict.result == MCDK_EVENT_VETO
+                ? "插件 " + owner + " 接管游戏进程创建失败，启动中止"
+                : "插件 " + owner + " 截停了游戏进程创建却没有交回进程（commit_process），启动中止"
+        );
+    } else {
+        const DWORD creationFlags = CREATE_UNICODE_ENVIRONMENT | (useSafaiaLogs ? CREATE_SUSPENDED : 0);
+        if (!CreateProcessW(
+                nullptr,
+                cmdUtf16.data(),
+                nullptr,
+                nullptr,
+                TRUE, // 继承句柄
+                creationFlags,
+                gameEnvironment.data(),
+                nullptr,
+                &si,
+                &pi
+            )) {
+            throw std::runtime_error("CreateProcessW failed");
+        }
+        processHandle.reset(pi.hProcess);
+        primaryThreadHandle.reset(pi.hThread);
+        pid = pi.dwProcessId;
+    }
     nullInput.reset();
     nullOutput.reset();
 
-    const DWORD                        pid = pi.dwProcessId;
+    // 插件交回的进程一律是挂起的，与 Safaia 模式共用「先就绪、再恢复」这一步。
+    const bool                         startedSuspended = committed.has_value() || useSafaiaLogs;
     std::unique_ptr<SafaiaLogReceiver> safaiaReceiver;
-    if (useSafaiaLogs) {
+    if (startedSuspended) {
         try {
-            safaiaReceiver = std::make_unique<SafaiaLogReceiver>(pid);
-            if (const auto error = safaiaReceiver->start()) {
-                throw std::system_error(error, "Failed to start the Safaia log receiver");
+            if (useSafaiaLogs) {
+                safaiaReceiver = std::make_unique<SafaiaLogReceiver>(pid);
+                if (const auto error = safaiaReceiver->start()) {
+                    throw std::system_error(error, "Failed to start the Safaia log receiver");
+                }
+                const auto endpoint = safaiaReceiver->localEndpoint();
+                printColoredAtomic(
+                    "[MCDK] Safaia log receiver listening on " + endpoint.address + ":"
+                        + std::to_string(endpoint.port),
+                    ConsoleColor::Cyan
+                );
             }
-            const auto endpoint = safaiaReceiver->localEndpoint();
-            printColoredAtomic(
-                "[MCDK] Safaia log receiver listening on " + endpoint.address + ":" + std::to_string(endpoint.port),
-                ConsoleColor::Cyan
-            );
-            if (ResumeThread(primaryThreadHandle.get()) == static_cast<DWORD>(-1)) {
-                throw std::runtime_error("ResumeThread failed for the Safaia game launch");
+            const DWORD previousCount = ResumeThread(primaryThreadHandle.get());
+            if (previousCount == static_cast<DWORD>(-1)) {
+                throw std::runtime_error("ResumeThread failed for the game launch");
+            }
+            // 恰好挂起一次才对：0 说明进程早已在跑，>1 说明恢复后仍然挂着。
+            if (committed && previousCount != 1) {
+                throw std::runtime_error(
+                    "插件 " + committed->ownerId + " 交回的进程挂起计数为 " + std::to_string(previousCount)
+                    + "，不符合接管契约（须以 CREATE_SUSPENDED 创建且只挂起一次），启动中止"
+                );
             }
         } catch (...) {
             if (safaiaReceiver) {

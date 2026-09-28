@@ -29,6 +29,11 @@ namespace mcdk::plugin_host {
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, exe_path)),
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, dev_config_path)),
         };
+        constexpr std::uint16_t kStrGameProcessCreate[] = {
+            static_cast<std::uint16_t>(offsetof(mcdk_ev_game_process_create, exe_path)),
+            static_cast<std::uint16_t>(offsetof(mcdk_ev_game_process_create, command_line)),
+            static_cast<std::uint16_t>(offsetof(mcdk_ev_game_process_create, environment)),
+        };
         constexpr std::uint16_t kStrGameLaunchFinish[] = {
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_finish, exe_path)),
         };
@@ -52,6 +57,7 @@ namespace mcdk::plugin_host {
             /* McpRegisterBefore     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false, true},
             /* McpRegisterFinish     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false, true},
             /* GameLaunchBefore      */ {sizeof(mcdk_ev_game_launch_before), kStrGameLaunchBefore, 2, true, false},
+            /* GameProcessCreate     */ {sizeof(mcdk_ev_game_process_create), kStrGameProcessCreate, 3, true, true},
             /* GameLaunchFinish      */ {sizeof(mcdk_ev_game_launch_finish), kStrGameLaunchFinish, 1, false, false},
             /* GameExit              */ {sizeof(mcdk_ev_game_exit), nullptr, 0, false, false},
             /* GameStateChanged      */ {sizeof(mcdk_ev_game_state), nullptr, 0, false, false},
@@ -152,6 +158,7 @@ namespace mcdk::plugin_host {
             {EventId::McpRegisterBefore, MCDK_EVENT_MCP_REGISTER_BEFORE},
             {EventId::McpRegisterFinish, MCDK_EVENT_MCP_REGISTER_FINISH},
             {EventId::GameLaunchBefore, MCDK_EVENT_GAME_LAUNCH_BEFORE},
+            {EventId::GameProcessCreate, MCDK_EVENT_GAME_PROCESS_CREATE},
             {EventId::GameLaunchFinish, MCDK_EVENT_GAME_LAUNCH_FINISH},
             {EventId::GameExit, MCDK_EVENT_GAME_EXIT},
             {EventId::GameStateChanged, MCDK_EVENT_GAME_STATE_CHANGED},
@@ -397,6 +404,34 @@ namespace mcdk::plugin_host {
             enqueue(id, payload, payloadSize);
         }
         return vetoed;
+    }
+
+    SyncVerdict dispatchRawUntil(
+        EventId                      id,
+        const void*                  payload,
+        std::uint32_t                payloadSize,
+        const std::function<bool()>& settled
+    ) {
+        SyncVerdict verdict;
+        if (!payloadSizeMatches(id, payloadSize)) {
+            return verdict;
+        }
+        std::vector<Subscription*> taken;
+        acquire(id, Want::Sync, taken);
+        const auto event = makeEvent(id, payload, payloadSize);
+        for (auto* subscription : taken) {
+            if (!subscription->alive.load(std::memory_order_acquire)) {
+                continue;
+            }
+            const auto result = subscription->handler(&event, subscription->user);
+            // 先看 settled：交回了进程却因异常被记成 CONTINUE 时，也不能让下一个插件再起一个。
+            if (settled() || result == MCDK_EVENT_VETO || result == MCDK_EVENT_STOP) {
+                verdict = {result, subscription->owner};
+                break;
+            }
+        }
+        release(taken);
+        return verdict;
     }
 
     mcdk_handle subscribeEvent(

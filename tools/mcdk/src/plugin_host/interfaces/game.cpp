@@ -9,6 +9,7 @@
 #include <mcdk/ipc_code_execution.hpp>
 #include <mcdk/plugin/abi/iface/game.h>
 #include <mcdk/plugin_host/guard.hpp>
+#include <mcdk/plugin_host/process_request.hpp>
 
 #ifdef _WIN32
 #include <mcdevtool/style.h>
@@ -262,6 +263,11 @@ namespace mcdk::plugin_host::detail {
             });
         }
 
+        mcdk_status MCDK_CALL
+        gameCommitProcess(mcdk_handle self, mcdk_handle request, uint32_t pid, uint32_t tid) noexcept {
+            return guard([&]() -> mcdk_status { return commitProcess(self, request, pid, tid); });
+        }
+
         constexpr mcdk_iface_game kTable = {
             /* struct_size    */ static_cast<uint32_t>(sizeof(mcdk_iface_game)),
             /* _reserved      */ 0u,
@@ -270,6 +276,7 @@ namespace mcdk::plugin_host::detail {
             /* image_get_info */ &gameImageGetInfo,
             /* image_copy     */ &gameImageCopy,
             /* image_release  */ &gameImageRelease,
+            /* commit_process */ &gameCommitProcess,
         };
 
     } // namespace

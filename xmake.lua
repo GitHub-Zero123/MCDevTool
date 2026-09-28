@@ -290,6 +290,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/plugin_host/guard.cpp",
             "tools/mcdk/src/plugin_host/host.cpp",
             "tools/mcdk/src/plugin_host/images.cpp",
+            "tools/mcdk/src/plugin_host/process_request.cpp",
             "tools/mcdk/src/plugin_host/registry.cpp",
             "tools/mcdk/src/plugin_host/session_binding.cpp",
             "tools/mcdk/src/plugin_host/interfaces/console.cpp",

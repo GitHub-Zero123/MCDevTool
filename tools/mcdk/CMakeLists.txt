@@ -81,6 +81,7 @@ add_library(mcdk_runtime STATIC
     src/plugin_host/event_bus.cpp
     src/plugin_host/guard.cpp
     src/plugin_host/images.cpp
+    src/plugin_host/process_request.cpp
     src/plugin_cli.cpp
     src/plugin_host/host.cpp
     src/plugin_host/registry.cpp

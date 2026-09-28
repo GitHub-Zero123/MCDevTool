@@ -94,6 +94,7 @@ main.cpp
 | `mcdk.pack.link.*` | `linkUserConfigModDirs()` 前后 |
 | `mcdk.world.deploy.*` | `deployWorldSource()` / `createUserLevel()` 前后 |
 | `mcdk.game.launch.*` | `launchGameExe()` 中创建游戏进程前后 |
+| `mcdk.game.process.create` | `launchGameExe()` 中调用 `CreateProcessW` 的位置；受理窗口是 `plugin_host::ProcessRequest` |
 | `mcdk.game.exit` | 游戏进程监视线程检出退出时 |
 | `mcdk.log.line` / `.error` | `createGameLogHandlers()` 产出的两个行处理器入口 |
 | `mcdk.ipc.client.*` | `DebugIPCServer::setClientCountChangedCallback` 的回调 |

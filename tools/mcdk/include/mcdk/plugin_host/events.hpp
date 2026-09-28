@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -20,6 +21,7 @@ namespace mcdk::plugin_host {
         McpRegisterBefore = 0,
         McpRegisterFinish,
         GameLaunchBefore,
+        GameProcessCreate,
         GameLaunchFinish,
         GameExit,
         GameStateChanged,
@@ -32,7 +34,7 @@ namespace mcdk::plugin_host {
 
     inline constexpr std::size_t kEventCount = static_cast<std::size_t>(EventId::Count);
 
-    // 唯一的热路径状态：9 个 uint32，一条 cache line 装得下，常驻 L1。
+    // 唯一的热路径状态：每个事件一个 uint32，一条 cache line 装得下，常驻 L1。
     // 只由 subscribe / unsubscribe 维护，禁止在别处直接改。
     extern std::array<std::atomic<std::uint32_t>, kEventCount> gSubscriberCount;
 
@@ -43,6 +45,20 @@ namespace mcdk::plugin_host {
     // 下面两个只在确有订阅者时才会被调用，因此可以随便做重活。
     void               dispatchRaw(EventId id, const void* payload, std::uint32_t payloadSize);
     [[nodiscard]] bool dispatchRawVetoable(EventId id, const void* payload, std::uint32_t payloadSize);
+
+    // 接管类事件的派发结果：谁以什么结论结束了派发。owner 为 0 表示无人表态。
+    struct SyncVerdict {
+        mcdk_event_result result = MCDK_EVENT_CONTINUE;
+        mcdk_handle       owner  = 0;
+    };
+
+    // 只派发 SYNC 订阅者。每个 handler 返回后问一次 settled，为真即停，结论记在该 handler 名下。
+    [[nodiscard]] SyncVerdict dispatchRawUntil(
+        EventId                      id,
+        const void*                  payload,
+        std::uint32_t                payloadSize,
+        const std::function<bool()>& settled
+    );
     // payload 工厂的临时字符串寄存处。
     // payload 里的 mcdk_str 是借用的，而工厂是个返回 payload 的 lambda——它内部
     class PayloadArena {
@@ -84,6 +100,18 @@ namespace mcdk::plugin_host {
         } else {
             auto payload = makePayload();
             return dispatchRawVetoable(id, &payload, static_cast<std::uint32_t>(sizeof(payload)));
+        }
+    }
+
+    template <class Settled, class Factory>
+    [[nodiscard]] SyncVerdict dispatchUntil(EventId id, Settled&& settled, Factory&& makePayload) {
+        if constexpr (std::is_invocable_v<Factory&, PayloadArena&>) {
+            PayloadArena arena;
+            auto         payload = makePayload(arena);
+            return dispatchRawUntil(id, &payload, static_cast<std::uint32_t>(sizeof(payload)), settled);
+        } else {
+            auto payload = makePayload();
+            return dispatchRawUntil(id, &payload, static_cast<std::uint32_t>(sizeof(payload)), settled);
         }
     }
 
@@ -135,11 +163,18 @@ namespace mcdk::plugin_host {
     (::mcdk::plugin_host::hasSubscribers(eventId) ? ::mcdk::plugin_host::dispatchVetoable((eventId), __VA_ARGS__)    \
                                                   : false)
 
+// 接管类事件。展开为 SyncVerdict；settled 只会在工厂执行之后被调用。
+#define MCDK_EMIT_UNTIL(eventId, settled, ...)                                                                        \
+    (::mcdk::plugin_host::hasSubscribers(eventId)                                                                     \
+         ? ::mcdk::plugin_host::dispatchUntil((eventId), (settled), __VA_ARGS__)                                      \
+         : ::mcdk::plugin_host::SyncVerdict{})
+
 #else
 
 // 插件系统在本次构建中被关闭。发射点必须在预处理阶段就完全消失，
 // 连订阅计数的那一次原子读也不留——这组宏就是 12-performance.md §6 里 A 组的定义。
 #define MCDK_EMIT(eventId, ...) ((void)0)
 #define MCDK_EMIT_VETOABLE(eventId, ...) (false)
+#define MCDK_EMIT_UNTIL(eventId, settled, ...) (::mcdk::plugin_host::SyncVerdict{})
 
 #endif

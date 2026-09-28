@@ -66,6 +66,36 @@ namespace mcdk {
             }
         };
 
+        // 发射线程：mcdk 启动线程。强制 Sync。
+        // 接管游戏进程的创建：自己起进程后 ctx.game().commitProcess(e.request, pid, tid)，
+        // 返回 Stop；失败返回 Veto。契约见 04-events.md §4.4，mcdk/plugin/process.hpp 替你守住它。
+        struct GameProcessCreate {
+            using Payload                 = mcdk_ev_game_process_create;
+            static constexpr auto abiName = MCDK_EVENT_GAME_PROCESS_CREATE;
+            mcdk_handle           request = 0;
+            // 借用：回调返回即失效。
+            std::string_view exePath;
+            std::string_view commandLine;
+            // "K=V\0K=V\0\0"，含结尾的两个 \0。
+            std::string_view environment;
+            // 可继承的 HANDLE，必须原样用作子进程的 std 句柄。
+            std::uint64_t stdInput  = 0;
+            std::uint64_t stdOutput = 0;
+            std::uint64_t stdError  = 0;
+
+            static GameProcessCreate from(const Payload& raw) {
+                return {
+                    raw.request,
+                    detail::toView(raw.exe_path),
+                    detail::toView(raw.command_line),
+                    detail::toView(raw.environment),
+                    raw.std_input,
+                    raw.std_output,
+                    raw.std_error,
+                };
+            }
+        };
+
         // 发射线程：mcdk 启动线程。
         struct GameLaunchFinish {
             using Payload                   = mcdk_ev_game_launch_finish;

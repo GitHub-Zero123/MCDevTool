@@ -211,6 +211,10 @@ typedef struct mcdk_iface_game {
                                         void* buffer, size_t capacity,
                                         size_t* out_written);
     void        MCDK_CALL (*image_release)(mcdk_handle self, mcdk_handle image);
+
+    /* 仅在 mcdk.game.process.create 回调内：交回插件自己创建的、挂起的游戏进程 */
+    mcdk_status MCDK_CALL (*commit_process)(mcdk_handle self, mcdk_handle request,
+                                            uint32_t pid, uint32_t tid);
 } mcdk_iface_game;
 ```
 
@@ -258,6 +262,21 @@ SDK 把这四步收成了一个 `ctx.game().capture()`，直接返回 `CapturedI
 **规范：`image_release` 必须被调用。** 宿主**应该**在 `MCDK_STAGE_SHUTDOWN` 时清理该插件遗留的全部图像句柄并就每个泄漏项打印警告——不能因为插件忘记 release 就让内存留到进程结束。
 
 非 Windows 平台上 `capture_window` 返回 `MCDK_ERR_NOT_SUPPORTED`。
+
+### 6.3 `commit_process`
+
+自定义启动器用的：插件在 `mcdk.game.process.create` 的回调里自己起进程，再用它把 pid 与主线程 tid
+交回宿主。完整契约与宿主的处理见 [04-events.md](04-events.md) §4.4。
+
+| 返回值 | 含义 |
+| --- | --- |
+| `MCDK_OK` | 宿主已打开该进程与线程，派发随即停止 |
+| `MCDK_ERR_INVALID_HANDLE` | `request` 不是当前窗口的（派发已结束，或根本不是这次的），或 `self` 失效 |
+| `MCDK_ERR_DUPLICATE` | 已有插件交回过 |
+| `MCDK_ERR_INVALID_ARGUMENT` | pid / tid 为 0、打不开，或 tid 不属于 pid |
+| `MCDK_ERR_NOT_SUPPORTED` | 非 Windows 平台 |
+
+它不受 §9 的阶段矩阵约束：发射时 RUNTIME 尚未到来，而它的有效期本就只是那一次派发。
 
 ## 7. `mcdk.log/1`
 
@@ -439,6 +458,8 @@ SDK 自动处理这一层：用户的 handler 直接 `return nlohmann::json{...}
 | `mcdk.mcp` 注册 | ✓ | — | — | — | — |
 | `mcdk.log` | — | — | — | ✓ | ✓ |
 | `mcdk.game` | — | — | — | ✓ | — |
+
+`mcdk.game.commit_process` 例外：只在 `mcdk.game.process.create` 的派发内有效，与阶段无关（§6.3）。
 
 线程约束汇总：
 
