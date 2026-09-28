@@ -53,6 +53,11 @@ target_compile_features(rpc_registry_test PRIVATE cxx_std_23)
 target_link_libraries(rpc_registry_test PRIVATE mcdk_core)
 add_test(NAME rpc-registry COMMAND rpc_registry_test)
 
+add_executable(log_classifier_test log_classifier_test.cpp)
+target_compile_features(log_classifier_test PRIVATE cxx_std_23)
+target_link_libraries(log_classifier_test PRIVATE mcdk_core)
+add_test(NAME log-classifier COMMAND log_classifier_test)
+
 add_executable(mcp_tool_registry_test mcp_tool_registry_test.cpp)
 target_compile_features(mcp_tool_registry_test PRIVATE cxx_std_23)
 target_link_libraries(mcp_tool_registry_test PRIVATE mcdk_runtime)

@@ -55,6 +55,7 @@ add_library(mcdk_core STATIC
     src/jsonui_reload_support.cpp
     src/level.cpp
     src/log_buffer.cpp
+    src/log_classifier.cpp
     src/mod_dir_config.cpp
     src/mod_register.cpp
     src/mc_input_mcp.cpp

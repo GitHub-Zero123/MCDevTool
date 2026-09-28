@@ -259,6 +259,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/jsonui_reload_support.cpp",
             "tools/mcdk/src/level.cpp",
             "tools/mcdk/src/log_buffer.cpp",
+            "tools/mcdk/src/log_classifier.cpp",
             "tools/mcdk/src/mc_input_mcp.cpp",
             "tools/mcdk/src/mc_profiler_mcp.cpp",
             "tools/mcdk/src/mod_dir_config.cpp",

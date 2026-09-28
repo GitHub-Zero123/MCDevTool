@@ -9,8 +9,8 @@
 
 #include <mcdk/console_output.hpp>
 #include <mcdk/log_buffer.hpp>
+#include <mcdk/log_classifier.hpp>
 #include <mcdk/plugin_host/events.hpp>
-#include <mcdk/utils.hpp>
 
 namespace {
     // 发射 mcdk.log.line / mcdk.log.error。
@@ -134,21 +134,24 @@ namespace mcdk::detail {
                     printColoredAtomic(text, color);
                 }
             };
-            if (line.find("[INFO][Developer]") != std::string::npos) {
+            switch (classifyLogLine(line)) {
+            case LogLineKind::Developer:
                 show(line, ConsoleColor::DarkGray);
                 return;
-            } else if (containsIgnoreCase(line, "SUC")) {
+            case LogLineKind::Success:
                 show(line, ConsoleColor::Green);
                 return;
-            } else if (containsIgnoreCase(line, "ERROR")) {
+            case LogLineKind::Error:
                 show(line, ConsoleColor::Red);
                 return;
-            } else if (containsIgnoreCase(line, "WARN")) {
+            case LogLineKind::Warn:
                 show(line, ConsoleColor::Yellow);
                 return;
-            } else if (containsIgnoreCase(line, "DEBUG")) {
+            case LogLineKind::Debug:
                 show(line, ConsoleColor::Cyan);
                 return;
+            case LogLineKind::Plain:
+                break;
             }
             show(line, ConsoleColor::Default);
             if (needLogBuffer) {
