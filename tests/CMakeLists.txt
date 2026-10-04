@@ -76,6 +76,17 @@ if(TARGET hello_plugin AND MCDK_ENABLE_PLUGINS)
     add_test(NAME plugin-host COMMAND plugin_host_test)
 endif()
 
+if(TARGET world_plugin AND MCDK_ENABLE_PLUGINS)
+    add_executable(plugin_editor_test plugin_editor_test.cpp)
+    target_compile_features(plugin_editor_test PRIVATE cxx_std_23)
+    target_link_libraries(plugin_editor_test PRIVATE mcdk_runtime)
+    add_dependencies(plugin_editor_test world_plugin)
+    target_compile_definitions(plugin_editor_test PRIVATE
+        MCDEV_TEST_WORLD_PLUGIN="$<TARGET_FILE:world_plugin>"
+    )
+    add_test(NAME plugin-editor COMMAND plugin_editor_test)
+endif()
+
 if(TARGET launcher_plugin AND MCDK_ENABLE_PLUGINS)
     add_executable(plugin_launcher_test plugin_launcher_test.cpp)
     target_compile_features(plugin_launcher_test PRIVATE cxx_std_23)

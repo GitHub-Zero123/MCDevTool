@@ -90,6 +90,7 @@ main.cpp
 | --- | --- |
 | `mcdk.mcp.register.*` | `McpToolRegistry` 封存前后（见 §2） |
 | `mcdk.rpc.register.*` | `RpcRegistry::seal()` 前后 |
+| `mcdk.world.resolve` | `startGame()` 中 CONFIG 阶段开始、处理存档之前；实现在 `plugin_host::resolveWorld` |
 | `mcdk.config.resolve.*` | `startGame()` 开头 |
 | `mcdk.pack.link.*` | `linkUserConfigModDirs()` 前后 |
 | `mcdk.world.deploy.*` | `deployWorldSource()` / `createUserLevel()` 前后 |

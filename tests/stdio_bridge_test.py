@@ -2,6 +2,7 @@
 """Verify the stdio proxy against a local fake MCP backend, without launching Minecraft."""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -178,6 +179,38 @@ def check_declared_tools(binary):
         # 清单里写的就是列出来的，不经任何改写。
         assert by_name[DECLARED_TOOL["name"]] == DECLARED_TOOL
         assert not any(name.startswith("off_") for name in by_name), "enable=false 的插件不该贡献工具"
+
+    # 编辑器经 MCDEV_PLUGINS 注入的插件：项目里没有 .mcdev.json 也要列出它的工具。
+    with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as editor:
+        plugin = Path(editor) / "editor-plugin"
+        plugin.mkdir()
+        (plugin / "plugin.json").write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "id": "com.demo.editor",
+                    "version": "1.0.0",
+                    "libraries": {PLATFORM_KEY: "demo.bin", PLATFORM_KEY + ".debug": "demo.bin"},
+                    "mcpTools": [DECLARED_TOOL],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        env["MCDEV_PLUGINS"] = json.dumps([{"enable": True, "path": plugin.as_posix()}])
+        completed = subprocess.run(
+            [binary, "--host", "127.0.0.1", "--port", "1", "--project", workspace],
+            input=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}) + "\n",
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+            check=True,
+            env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        tools = json.loads(completed.stdout.splitlines()[0])["result"]["tools"]
+        assert any(tool["name"] == DECLARED_TOOL["name"] for tool in tools), "MCDEV_PLUGINS 注入的工具没进 tools/list"
 
 
 if __name__ == "__main__":

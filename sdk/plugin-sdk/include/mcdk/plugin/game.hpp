@@ -27,6 +27,11 @@ namespace mcdk {
         double        regionBottom = 0.0;
     };
 
+    enum class WorldOverride {
+        Merge,  // 只改给出的键，其余沿用当前设置
+        Replace // 给出的键之外一律回到默认值
+    };
+
     struct CapturedImage {
         std::uint32_t             width  = 0;
         std::uint32_t             height = 0;
@@ -125,6 +130,21 @@ namespace mcdk {
                 return MCDK_ERR_NOT_SUPPORTED;
             }
             return mTable->commit_process(mSelf, request, pid, tid);
+        }
+
+        // 只能在 ev::WorldResolve 的回调里调用。settingsJson 是对象，键名与 .mcdev.json 相同。
+        // 失败的原因（未知键、目录名不合法……）紧接着用 ctx.lastHostError() 取。
+        [[nodiscard]] mcdk_status
+        overrideWorld(mcdk_handle request, std::string_view settingsJson, WorldOverride mode = WorldOverride::Merge) const {
+            if (!detail::ifaceHas(mTable, &mcdk_iface_game::override_world)) {
+                return MCDK_ERR_NOT_SUPPORTED;
+            }
+            return mTable->override_world(
+                mSelf,
+                request,
+                detail::toAbi(settingsJson),
+                mode == WorldOverride::Replace ? MCDK_WORLD_OVERRIDE_REPLACE : MCDK_WORLD_OVERRIDE_MERGE
+            );
         }
 
     private:

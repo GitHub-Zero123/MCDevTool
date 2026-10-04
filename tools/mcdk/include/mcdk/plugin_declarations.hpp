@@ -42,14 +42,19 @@ namespace mcdk::plugin_host::detail {
     // 「我明明写了插件却没生效」变成无从排查的问题。
     [[nodiscard]] std::vector<PluginDeclaration> parsePluginDeclarations(const nlohmann::json& root);
 
+    // 环境变量 MCDEV_PLUGINS：与 plugins 数组同格式的 JSON 数组，供定制版编辑器注入插件。
+    // 未设置或为空返回空；格式错误抛异常，理由同上。
+    [[nodiscard]] std::vector<PluginDeclaration> parseEnvPluginDeclarations();
+
     // 相对路径以 .mcdev.json 所在目录为基准，而非进程工作目录；
     // 以 ~/ 开头展开为用户主目录。见 docs/plugin-system/06-loading.md §2.2。
     [[nodiscard]] std::filesystem::path
     resolvePluginPath(const std::string& raw, const std::filesystem::path& baseDirectory);
 
-    // 项目里全部已启用插件在各自 plugin.json 的 mcpTools 中声明的工具。
-    // 读不到、格式不对、插件没装，都只是少几个工具，不报错——调用方多半是
-    // stdio bridge，它的职责是尽力列出，而不是替 mcdk 校验项目。
-    [[nodiscard]] std::vector<mcp::tool> declaredMcpTools(const std::filesystem::path& projectRoot);
+    // 项目里全部已启用插件（含 MCDEV_PLUGINS 注入的）在各自 plugin.json 的 mcpTools 中声明的工具。
+    // 读不到、格式不对、插件没装，都只是少几个工具，不抛——调用方多半是 stdio bridge，
+    // 它的职责是尽力列出。但跳过的原因要交给 problems，否则用户只看到「工具少了」。
+    [[nodiscard]] std::vector<mcp::tool>
+    declaredMcpTools(const std::filesystem::path& projectRoot, std::vector<std::string>* problems = nullptr);
 
 } // namespace mcdk::plugin_host::detail

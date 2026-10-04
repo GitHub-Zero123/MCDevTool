@@ -215,6 +215,10 @@ typedef struct mcdk_iface_game {
     /* 仅在 mcdk.game.process.create 回调内：交回插件自己创建的、挂起的游戏进程 */
     mcdk_status MCDK_CALL (*commit_process)(mcdk_handle self, mcdk_handle request,
                                             uint32_t pid, uint32_t tid);
+
+    /* 仅在 mcdk.world.resolve 回调内：改写存档设置；mode 见 mcdk_world_override_mode */
+    mcdk_status MCDK_CALL (*override_world)(mcdk_handle self, mcdk_handle request,
+                                            mcdk_str settings_json, uint32_t mode);
 } mcdk_iface_game;
 ```
 
@@ -277,6 +281,28 @@ SDK 把这四步收成了一个 `ctx.game().capture()`，直接返回 `CapturedI
 | `MCDK_ERR_NOT_SUPPORTED` | 非 Windows 平台 |
 
 它不受 §9 的阶段矩阵约束：发射时 RUNTIME 尚未到来，而它的有效期本就只是那一次派发。
+
+### 6.4 `override_world`
+
+改写存档设置，只能在 `mcdk.world.resolve` 的回调里调用。`settings_json` 的键、两种模式、校验规则与宿主的
+处理见 [04-events.md](04-events.md) §4.5。
+
+```c
+typedef uint32_t mcdk_world_override_mode;
+enum {
+    MCDK_WORLD_OVERRIDE_MERGE   = 0, /* 只改给出的键 */
+    MCDK_WORLD_OVERRIDE_REPLACE = 1  /* 给出的键之外回到默认值 */
+};
+```
+
+| 返回值 | 含义 |
+| --- | --- |
+| `MCDK_OK` | 已采纳，派发随即停止 |
+| `MCDK_ERR_INVALID_HANDLE` | `request` 不是当前窗口的，或 `self` 失效 |
+| `MCDK_ERR_DUPLICATE` | 已有插件改写过 |
+| `MCDK_ERR_INVALID_ARGUMENT` | 未知模式、不是对象、未知键、类型不对、地图目录无效、目录名不合法；原因见 `get_last_error` |
+
+与 `commit_process` 一样不受 §9 的阶段矩阵约束。
 
 ## 7. `mcdk.log/1`
 
@@ -459,7 +485,8 @@ SDK 自动处理这一层：用户的 handler 直接 `return nlohmann::json{...}
 | `mcdk.log` | — | — | — | ✓ | ✓ |
 | `mcdk.game` | — | — | — | ✓ | — |
 
-`mcdk.game.commit_process` 例外：只在 `mcdk.game.process.create` 的派发内有效，与阶段无关（§6.3）。
+`mcdk.game.commit_process` 与 `override_world` 例外：分别只在 `mcdk.game.process.create`、`mcdk.world.resolve`
+的派发内有效，与阶段无关（§6.3、§6.4）。
 
 线程约束汇总：
 

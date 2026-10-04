@@ -6,6 +6,7 @@
 #include <mcdk/level.hpp>
 #include <mcdk/mod_register.hpp>
 #include <mcdk/plugin_host/host.hpp>
+#include <mcdk/plugin_host/world_request.hpp>
 #include <mcdk/world_project.hpp>
 
 #include <filesystem>
@@ -24,8 +25,8 @@
 
 using mcdk::UserModDirConfig;
 
-void mcdk::startGame(const UserConfig& config) {
-    auto gameExePath = config.gameExecutablePath;
+void mcdk::startGame(const UserConfig& userConfig) {
+    auto gameExePath = userConfig.gameExecutablePath;
     if (!std::filesystem::is_regular_file(gameExePath)) {
         // 游戏 exe 路径无效，重新发现并选择版本
         if (mcdk::updateGamePath(gameExePath)) {
@@ -40,6 +41,21 @@ void mcdk::startGame(const UserConfig& config) {
     mcdk::plugin_host::instance().advance(MCDK_STAGE_CONFIG);
 
     auto _isSubprocessMode = mcdk::getEnvIsSubprocessMode();
+
+    // 插件可以改写存档设置（04-events.md §4.5）。子进程模式不处理存档，也就不问。
+    // 没人改写时不拷贝配置。
+    std::optional<UserConfig> pluginWorldConfig;
+    if (!_isSubprocessMode) {
+        if (auto overridden = mcdk::plugin_host::resolveWorld(userConfig.world)) {
+            pluginWorldConfig        = userConfig;
+            pluginWorldConfig->world = std::move(overridden->world);
+            const auto& world        = pluginWorldConfig->world;
+            std::cout << "[MCDK] 插件 " << overridden->ownerId << " 改写了存档设置（"
+                      << (overridden->replaced ? "完全覆盖" : "按键覆盖") << "）：" << world.folderName
+                      << (world.reset ? "，每次重置" : "") << "\n";
+        }
+    }
+    const UserConfig& config = pluginWorldConfig ? *pluginWorldConfig : userConfig;
 
     if (!_isSubprocessMode) {
         MCDevTool::cleanRuntimePacks();

@@ -516,7 +516,13 @@ namespace {
                     tools.push_back(tool.to_json());
                 }
                 for (const auto& root : projectRoots_) {
-                    for (const auto& tool : mcdk::plugin_host::detail::declaredMcpTools(root)) {
+                    std::vector<std::string> problems;
+                    const auto               declared = mcdk::plugin_host::detail::declaredMcpTools(root, &problems);
+                    // stdout 是协议通道；stderr 会进 MCP 客户端的日志面板。
+                    for (const auto& problem : problems) {
+                        std::cerr << "[mcdk_stdio_bridge] 插件工具未列出：" << problem << std::endl;
+                    }
+                    for (const auto& tool : declared) {
                         // 内置工具先占名；多个项目声明同名工具时先列出的胜出，
                         // 与 mcdk 里注册表「禁止后来者覆盖」的规则一致。
                         if (std::find(seen.begin(), seen.end(), tool.name) == seen.end()) {

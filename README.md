@@ -267,6 +267,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 ## C++ 插件
 插件可以在自己的 `plugin.json` 里声明 MCP 工具，这类工具在 mcdk 没启动时也能被 MCP 客户端列出（见 [tools/mcdk_stdio_bridge/README.md](tools/mcdk_stdio_bridge/README.md)）。
 
+定制版编辑器可在拉起 mcdk 时用环境变量 `MCDEV_PLUGINS` 注入自己的插件（格式与 `plugins` 数组相同），不必改动项目的 `.mcdev.json`，见 [docs/plugin-system/06-loading.md](docs/plugin-system/06-loading.md) §2.4。
+
 开发插件见 [docs/plugin-system/](docs/plugin-system/)，SDK 与示例在 [sdk/plugin-sdk/](sdk/plugin-sdk/)。
 
 ## 玩法地图工程

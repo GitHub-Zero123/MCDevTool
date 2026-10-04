@@ -59,6 +59,16 @@ typedef struct mcdk_ev_mcp_register {
     uint32_t tool_count; /* before: 已有内置工具数；finish: 最终总数 */
 } mcdk_ev_mcp_register;
 
+/*
+ * mcdk.world.resolve —— 强制 SYNC，可否决。插件可在此改写存档设置，见 04-events.md §4.5。
+ */
+typedef struct mcdk_ev_world_resolve {
+    uint32_t    struct_size;
+    uint32_t    _reserved;
+    mcdk_handle request;    /* override_world 的凭据，仅本次派发内有效 */
+    mcdk_str    world_json; /* 借用；当前存档设置，键名与 .mcdev.json 相同 */
+} mcdk_ev_world_resolve;
+
 /* mcdk.game.launch.before —— 可否决 */
 typedef struct mcdk_ev_game_launch_before {
     uint32_t struct_size;
@@ -129,6 +139,7 @@ typedef struct mcdk_ev_game_state {
  */
 #define MCDK_EVENT_MCP_REGISTER_BEFORE "mcdk.mcp.register.before"
 #define MCDK_EVENT_MCP_REGISTER_FINISH "mcdk.mcp.register.finish"
+#define MCDK_EVENT_WORLD_RESOLVE "mcdk.world.resolve"
 #define MCDK_EVENT_GAME_LAUNCH_BEFORE "mcdk.game.launch.before"
 #define MCDK_EVENT_GAME_PROCESS_CREATE "mcdk.game.process.create"
 #define MCDK_EVENT_GAME_LAUNCH_FINISH "mcdk.game.launch.finish"

@@ -15,6 +15,10 @@
 
 由此，插件清单中的 `permissions` 字段（见 §3）**仅用于在用户添加插件时向其展示**，运行期不做拦截。
 
+唯一的另一个来源是环境变量 `MCDEV_PLUGINS`（§2.4），留给拉起 mcdk 的那个程序——通常是定制版编辑器。
+它没有破坏上面的性质：仍然是逐条写明的路径，不扫描目录；能设置 mcdk 环境变量的程序，本来就决定了
+跑哪个 mcdk、在哪个目录跑，信任边界不会因此后移。注入的插件在启动时逐条打印，用户看得见。
+
 ## 2. `.mcdev.json` 中的声明
 
 在现有 `.mcdev.json` 顶层新增 `plugins` 数组，顺序即声明顺序：
@@ -66,6 +70,27 @@
 ### 2.3 `id` 的用途
 
 `id` 是**防替换**手段，不是安全边界：填写后宿主会与清单中的 `id` 比对，防止 `path` 指向的内容被换成另一个插件（例如目录被重用、符号链接被改指）。不填则不校验。
+
+### 2.4 `MCDEV_PLUGINS`：由启动方注入（规范）
+
+定制版编辑器要带上自己的插件，又不该去改用户项目里的 `.mcdev.json`。它在拉起 mcdk 时设置：
+
+```text
+MCDEV_PLUGINS=[{"enable":true,"path":"D:/MyEditor/plugins/editor-core","config":{"port":9000}}]
+```
+
+- 值是 JSON 数组，**每一项与 `plugins` 数组的条目格式完全相同**，包括 `enable` 默认为 `false`、`path` 必填。
+- 追加在 `.mcdev.json` 的声明之后，再整体按 `priority` 稳定排序：同优先级时项目声明在前。
+- 相对路径与 `.mcdev.json` 相同，以项目目录为基准。编辑器多半知道自己的安装目录，**应该**写绝对路径。
+- 未设置或为空白时等于没有。**不是合法 JSON 或条目格式错误时 mcdk 直接报错退出**，理由与 `plugins` 相同：
+  静默跳过会让「明明注入了却没生效」无从排查。
+- 启动时打印 `[MCDK] 外部插件（MCDEV_PLUGINS）：…`。
+- 不选命令行参数，是因为 mcdk 带任何参数都会进入 `mcdk plugin …` 这类子命令模式；而 `MCDEV_*`
+  本来就是编辑器向 mcdk 传参的通道（`MCDEV_IS_PLUGIN_ENV`、`MCDEV_HOST_PORT` 等），且 mcdk 给游戏
+  构造环境时会剔掉所有 `MCDEV_*`，不会漏进游戏进程。
+- `mcdk_stdio_bridge` 同样读取它：编辑器用同一个变量拉起 bridge，注入插件在 `plugin.json` 里声明的 MCP
+  工具也会出现在 `tools/list` 里。
+- `mcdk plugin …` 命令只管 `.mcdev.json`，不显示也不修改这里的插件。
 
 ## 3. `plugin.json` 清单
 
@@ -133,7 +158,7 @@
 ## 4. 加载流程（规范）
 
 ```text
-1. 解析 .mcdev.json 的 plugins 数组，保留 enable == true 的条目
+1. 解析 .mcdev.json 的 plugins 数组，追加 MCDEV_PLUGINS（§2.4），按 priority 稳定排序，保留 enable == true 的条目
 2. 逐条解析 plugin.json（或读取直指的动态库路径）
 3. 校验 id（若声明）
 4. 校验 abi.major 是否等于宿主；abi.minor 是否 <= 宿主

@@ -178,9 +178,23 @@ int main() {
         );
         write(root / "plugins" / "off" / "plugin.json", manifestWith("com.demo.off", R"([{"name":"off_tool","inputSchema":{"type":"object"}}])"));
 
-        const auto tools = ph::detail::declaredMcpTools(root);
+        std::vector<std::string> problems;
+        const auto               tools = ph::detail::declaredMcpTools(root, &problems);
         passed &= expect(tools.size() == 1, "只收已启用插件的工具");
         passed &= expect(!tools.empty() && tools.front().name == "demo_echo", "收到的是 demo_echo");
+        passed &= expect(
+            problems.size() == 1 && problems.front().find("plugins/missing") != std::string::npos,
+            "已启用却不存在的插件要报出路径，禁用的不报"
+        );
+
+        // plugins 条目写坏了：工具一个都列不出，但原因必须带出来，而不是静默变空。
+        write(root / ".mcdev.json", R"({"plugins":[{"enable":true}]})");
+        problems.clear();
+        passed &= expect(ph::detail::declaredMcpTools(root, &problems).empty(), "条目写坏时列不出工具");
+        passed &= expect(
+            problems.size() == 1 && problems.front().find("缺少 path") != std::string::npos,
+            "解析异常的原文被交给调用方"
+        );
 
         // 路径不存在的声明只是少几个工具，不该让整个清单查询失败——
         // 调用方是 stdio bridge，它的职责是尽力列出。

@@ -25,6 +25,7 @@ STAGE_REGISTER
   ├─ mcdk.rpc.register.before
   └─ mcdk.rpc.register.finish
 STAGE_CONFIG
+  ├─ mcdk.world.resolve         *  ← 可改写存档设置，见 §4.5
   ├─ mcdk.config.resolve.before    ← 可改 UserConfig
   └─ mcdk.config.resolve.finish
 STAGE_WORLD
@@ -113,6 +114,7 @@ v1 列标注该事件是否在首版实现。事件的取舍与 [05-interfaces.m
 | --- | :-: | --- | --- | --- | --- |
 | `mcdk.mcp.register.before` | ✓ | 主线程 | 否 | SYNC（强制） | **MCP 工具注册窗口开启。** 插件在此调用 `mcdk.mcp` 绑定或注册工具 |
 | `mcdk.mcp.register.finish` | ✓ | 主线程 | 否 | SYNC（强制） | **MCP 工具注册完成、注册表已封存。** payload 携带最终工具数，可用于自检与日志 |
+| `mcdk.world.resolve` | ✓ | 主线程 | 是 | SYNC（强制） | **即将准备存档。** 插件可改写存档设置，见 §4.5 |
 | `mcdk.game.launch.before` | ✓ | 主线程 | 是 | SYNC | **游戏启动前。** 否决则不启动。见 §4.1 |
 | `mcdk.game.process.create` | ✓ | 主线程 | 是 | SYNC（强制） | **即将创建游戏进程。** 插件可接管创建，见 §4.4 |
 | `mcdk.game.launch.finish` | ✓ | 主线程 | 否 | SYNC | **游戏进程已创建。** payload 携带 pid |
@@ -253,6 +255,51 @@ payload 保持 `const`，结果经宿主句柄 `request` 加 `commit_process` �
 `request` 只在本次派发内有效，派发结束后 commit 一律返回 `MCDK_ERR_INVALID_HANDLE`。
 `commit_process` 不受阶段矩阵约束（发射时 RUNTIME 尚未到来），它的有效期就是这个窗口。
 
+### 4.5 `mcdk.world.resolve`：改写存档设置（规范）
+
+典型用途：定制版编辑器（经 `MCDEV_PLUGINS` 注入插件，见 [06-loading.md](06-loading.md) §2.4）把游戏
+引到编辑器专用的存档，而不改用户 `.mcdev.json` 里的那个。
+
+发射点在 `startGame()` 里 CONFIG 阶段刚开始、处理存档之前：删旧存档、部署地图、写 `level.dat`、
+写自动进入存档的配置都在它之后，用的都是改写后的设置；插件读到的 `mcdk.info` 与 Host Bridge 的会话
+信息也一样。子进程模式（`MCDEV_IS_SUBPROCESS_MODE`）不处理存档，不发此事件。
+
+payload 的 `world_json` 是当前设置，插件调 `mcdk.game.override_world(request, settings_json, mode)` 改写：
+
+- `settings_json` 是 JSON 对象，**键名与 `.mcdev.json` 完全相同**：`world_name`、`world_folder_name`、
+  `world_source_path`、`reset_world`、`auto_join_game`、`world_seed`、`world_type`、`game_mode`、
+  `enable_cheats`、`keep_inventory`、`do_weather_cycle`、`do_daylight_cycle`、`experiment_options`。
+- `MCDK_WORLD_OVERRIDE_MERGE`（按键覆盖）：只改给出的键，其余沿用用户的设置。
+- `MCDK_WORLD_OVERRIDE_REPLACE`（完全覆盖）：给出的键之外一律回到默认值，用户的存档设置一概不继承。
+
+两种模式解析时用的是同一份代码（`applyWorldConfig`），`.mcdev.json` 以后新增的存档键插件自动可用。
+
+#### 校验
+
+以下情况 `override_world` 返回 `MCDK_ERR_INVALID_ARGUMENT`，原因可用 `get_last_error`（SDK 的
+`ctx.lastHostError()`）取到，宿主不做任何改动：
+
+- 不是 JSON 对象，或含有上面列表之外的键（防 `reset_wrold` 这类拼写错误被静默忽略）；
+- 值的类型不对；
+- `world_source_path` 指向的目录不含 `level.dat`；
+- **`world_folder_name` 不是单层目录名**：空、`.`、`..`、含 `/ \ : * ? " < > |` 或控制字符、以点或空格结尾。
+  `reset_world` 会整个删掉这个目录，放过 `..` 就等于允许插件删任意目录。
+
+#### 宿主的处理
+
+与 `mcdk.game.process.create`（§4.4）同一套规则：**第一个改写成功的插件生效，派发随即停止**，之后再改写
+返回 `MCDK_ERR_DUPLICATE`。两个插件都想决定进哪个存档本身就是冲突，「各改各的键」会让谁覆盖谁说不清。
+
+| 插件的行为 | 宿主的反应 |
+| --- | --- |
+| 改写成功 | 立即停止派发，按改写后的设置继续，并打印「插件 X 改写了存档设置（按键覆盖 / 完全覆盖）：目录名」 |
+| 返回 `CONTINUE`，未改写 | 交给下一个 handler；都没改写则沿用原设置 |
+| 返回 `STOP`，未改写 | 沿用原设置，后面的插件不再收到 |
+| 返回 `VETO`，未改写 | 启动中止并点名该插件。适用于「进不了编辑器存档就别启动」 |
+
+`settings_json` 走 JSON 而不是逐字段的 C 结构体：只在启动时调用一次，没有性能顾虑；「只改一部分」
+是 JSON 天然的表达；存档键还会继续增加，结构体每加一个字段都是一次 ABI 追加。
+
 ## 5. payload 定义
 
 每个事件 payload 是独立 POD 结构体，同样遵循 `struct_size` 追加规则（见 [02-abi-contract.md](02-abi-contract.md) §5.8）。
@@ -264,6 +311,13 @@ typedef struct mcdk_ev_mcp_register {
     uint32_t struct_size;
     uint32_t tool_count;       /* before: 已有内置工具数；finish: 最终工具总数 */
 } mcdk_ev_mcp_register;
+
+typedef struct mcdk_ev_world_resolve {
+    uint32_t    struct_size;
+    uint32_t    _reserved;
+    mcdk_handle request;          /* override_world 的凭据，仅本次派发内有效 */
+    mcdk_str    world_json;       /* 借用；当前存档设置，键名与 .mcdev.json 相同 */
+} mcdk_ev_world_resolve;
 
 typedef struct mcdk_ev_game_launch_before {
     uint32_t struct_size;
@@ -312,7 +366,7 @@ typedef struct mcdk_ev_ipc_client {
 } mcdk_ev_ipc_client;
 ```
 
-§4 中标为 v1 的十一个事件共用八个 payload 结构体：以上七个，外加 `game.state_changed` 的 `mcdk_ev_game_state`（`mcp.register.before/finish` 共用 `mcdk_ev_mcp_register`，`log.line/error` 共用 `mcdk_ev_log_line`，`ipc.client.connected/disconnected` 共用 `mcdk_ev_ipc_client`）。全部登记在 [13-registry.md](13-registry.md)。
+§4 中标为 v1 的十二个事件共用九个 payload 结构体：以上八个，外加 `game.state_changed` 的 `mcdk_ev_game_state`（`mcp.register.before/finish` 共用 `mcdk_ev_mcp_register`，`log.line/error` 共用 `mcdk_ev_log_line`，`ipc.client.connected/disconnected` 共用 `mcdk_ev_ipc_client`）。全部登记在 [13-registry.md](13-registry.md)。
 
 上表中标注为非 v1 的事件，其 payload 结构体在 v1 阶段**不定义**——按 [02-abi-contract.md](02-abi-contract.md) §5.9，一旦定义就只能追加不能改，过早固化没有实现依据的布局是最容易留下历史包袱的做法。
 

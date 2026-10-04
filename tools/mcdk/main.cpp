@@ -2,9 +2,12 @@
 #include <mcdk/config.hpp>
 #include <mcdk/console_output.hpp>
 #include <mcdk/env.hpp>
+#include <mcdk/plugin_declarations.hpp>
 #include <mcdk/plugin_host/host.hpp>
 
+#include <algorithm>
 #include <filesystem>
+#include <string>
 
 #include <cstdio>
 #include <exception>
@@ -65,8 +68,21 @@ int main(int argc, char* argv[]) {
 
         // 插件只从 .mcdev.json 的 plugins 声明加载，宿主不扫描任何目录。
         // 相对路径以 .mcdev.json 所在目录（即当前工作目录）为基准。
-        auto& pluginHost = mcdk::plugin_host::instance();
-        pluginHost.loadDeclared(config.plugins, std::filesystem::current_path());
+        auto& pluginHost   = mcdk::plugin_host::instance();
+        auto  declarations = config.plugins;
+        // 定制版编辑器经 MCDEV_PLUGINS 注入的插件，追加在项目声明之后，同样按 priority 排。
+        if (auto external = mcdk::plugin_host::detail::parseEnvPluginDeclarations(); !external.empty()) {
+            std::string paths;
+            for (const auto& declaration : external) {
+                paths += (paths.empty() ? "" : ", ") + declaration.path;
+            }
+            mcdk::printColoredAtomic("[MCDK] 外部插件（MCDEV_PLUGINS）：" + paths, mcdk::ConsoleColor::Cyan);
+            declarations.insert(declarations.end(), external.begin(), external.end());
+            std::stable_sort(declarations.begin(), declarations.end(), [](const auto& left, const auto& right) {
+                return left.priority < right.priority;
+            });
+        }
+        pluginHost.loadDeclared(declarations, std::filesystem::current_path());
         // 无论 startGame 怎么退出——正常结束、被插件否决、或中途抛异常——插件都必须
         // 走完终结流程。正常路径上 launchGameExe 已经做过，Host::shutdown 幂等，
         const PluginScope pluginScope;

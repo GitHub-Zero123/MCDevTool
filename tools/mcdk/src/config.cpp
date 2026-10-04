@@ -66,30 +66,17 @@ namespace mcdk {
             };
         }
 
-        void parseLevelConfig(const Json& root, WorldProjectConfig& world) {
-            auto& level           = world.level;
-            level.worldType       = static_cast<uint32_t>(root.value("world_type", 1));
-            level.gameMode        = static_cast<uint32_t>(root.value("game_mode", 1));
-            level.enableCheats    = root.value("enable_cheats", true);
-            level.keepInventory   = root.value("keep_inventory", true);
-            level.doWeatherCycle  = root.value("do_weather_cycle", true);
-            level.doDaylightCycle = root.value("do_daylight_cycle", true);
+        constexpr std::string_view kWorldKeys[] = {
+            "world_name",     "world_folder_name", "world_source_path", "reset_world",      "auto_join_game",
+            "world_seed",     "world_type",        "game_mode",         "enable_cheats",    "keep_inventory",
+            "do_weather_cycle", "do_daylight_cycle", "experiment_options",
+        };
 
-            if (const auto seed = root.find("world_seed"); seed != root.end() && !seed->is_null()) {
-                level.seed = seed->get<uint64_t>();
+        template <class T>
+        void readIfPresent(const Json& source, const char* key, T& target) {
+            if (const auto found = source.find(key); found != source.end()) {
+                target = found->get<T>();
             }
-
-            const auto experiments = root.find("experiment_options");
-            if (experiments == root.end() || !experiments->is_object()) {
-                return;
-            }
-            auto& options                      = level.experimentsOptions;
-            options.enable                     = true;
-            options.dataDrivenBiomes           = experiments->value("data_driven_biomes", false);
-            options.upcomingCreatorFeatures    = experiments->value("upcoming_creator_features", false);
-            options.experimentalCreatorCameras = experiments->value("experimental_creator_cameras", false);
-            options.gametest                   = experiments->value("gametest", false);
-            options.deferredTechnicalPreview   = experiments->value("deferred_technical_preview", false);
         }
 
         void parseDebugOptions(const Json& root, DebugModOptions& options) {
@@ -172,12 +159,7 @@ namespace mcdk {
             config.gameExecutablePath = std::filesystem::u8path(root.value("game_executable_path", ""));
             config.modDirectories     = parseModDirectories(root.value("included_mod_dirs", Json::array({"./"})));
 
-            config.world.name       = root.value("world_name", "MC_DEV_WORLD");
-            config.world.folderName = root.value("world_folder_name", "MC_DEV_WORLD");
-            config.world.source     = parseWorldSource(root);
-            config.world.reset      = root.value("reset_world", false);
-            config.world.autoJoin   = root.value("auto_join_game", true);
-            parseLevelConfig(root, config.world);
+            applyWorldConfig(root, config.world);
 
             config.player.name = root.value("user_name", "developer");
             if (const auto skin = root.find("skin_info"); skin != root.end() && skin->is_object()) {
@@ -252,6 +234,84 @@ namespace mcdk {
             return std::move(*result);
         }
     } // namespace
+
+    bool isWorldConfigKey(std::string_view key) noexcept {
+        return std::find(std::begin(kWorldKeys), std::end(kWorldKeys), key) != std::end(kWorldKeys);
+    }
+
+    void applyWorldConfig(const Json& source, WorldProjectConfig& world) {
+        readIfPresent(source, "world_name", world.name);
+        readIfPresent(source, "world_folder_name", world.folderName);
+        if (source.contains("world_source_path")) {
+            world.source = parseWorldSource(source);
+        }
+        readIfPresent(source, "reset_world", world.reset);
+        readIfPresent(source, "auto_join_game", world.autoJoin);
+
+        auto& level = world.level;
+        readIfPresent(source, "world_type", level.worldType);
+        readIfPresent(source, "game_mode", level.gameMode);
+        readIfPresent(source, "enable_cheats", level.enableCheats);
+        readIfPresent(source, "keep_inventory", level.keepInventory);
+        readIfPresent(source, "do_weather_cycle", level.doWeatherCycle);
+        readIfPresent(source, "do_daylight_cycle", level.doDaylightCycle);
+        if (const auto seed = source.find("world_seed"); seed != source.end()) {
+            level.seed = seed->is_null() ? std::nullopt : std::optional<uint64_t>(seed->get<uint64_t>());
+        }
+
+        const auto experiments = source.find("experiment_options");
+        if (experiments == source.end()) {
+            return;
+        }
+        // 给了对象就整体启用并逐项取值；给 null 或其他值就是关闭。
+        auto& options = level.experimentsOptions;
+        options       = {};
+        if (experiments->is_object()) {
+            options.enable                     = true;
+            options.dataDrivenBiomes           = experiments->value("data_driven_biomes", false);
+            options.upcomingCreatorFeatures    = experiments->value("upcoming_creator_features", false);
+            options.experimentalCreatorCameras = experiments->value("experimental_creator_cameras", false);
+            options.gametest                   = experiments->value("gametest", false);
+            options.deferredTechnicalPreview   = experiments->value("deferred_technical_preview", false);
+        }
+    }
+
+    Json worldConfigToJson(const WorldProjectConfig& world) {
+        Json source = "auto";
+        if (world.source.mode == WorldSourceConfig::Mode::Disabled) {
+            source = nullptr;
+        } else if (world.source.mode == WorldSourceConfig::Mode::Path) {
+            source = MCDevTool::Utils::pathToGenericUtf8(world.source.path);
+        }
+
+        const auto& level       = world.level;
+        const auto& experiments = level.experimentsOptions;
+        Json        options     = nullptr;
+        if (experiments.enable) {
+            options = {
+                {"data_driven_biomes", experiments.dataDrivenBiomes},
+                {"upcoming_creator_features", experiments.upcomingCreatorFeatures},
+                {"experimental_creator_cameras", experiments.experimentalCreatorCameras},
+                {"gametest", experiments.gametest},
+                {"deferred_technical_preview", experiments.deferredTechnicalPreview},
+            };
+        }
+        return {
+            {"world_name", world.name},
+            {"world_folder_name", world.folderName},
+            {"world_source_path", std::move(source)},
+            {"reset_world", world.reset},
+            {"auto_join_game", world.autoJoin},
+            {"world_seed", level.seed ? Json(*level.seed) : Json(nullptr)},
+            {"world_type", level.worldType},
+            {"game_mode", level.gameMode},
+            {"enable_cheats", level.enableCheats},
+            {"keep_inventory", level.keepInventory},
+            {"do_weather_cycle", level.doWeatherCycle},
+            {"do_daylight_cycle", level.doDaylightCycle},
+            {"experiment_options", std::move(options)},
+        };
+    }
 
     std::optional<std::filesystem::path> selectGameExePath(const std::vector<std::filesystem::path>& paths) {
         if (paths.empty()) {

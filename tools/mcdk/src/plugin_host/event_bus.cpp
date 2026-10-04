@@ -25,6 +25,9 @@ namespace mcdk::plugin_host {
         constexpr std::size_t kMaxQueuedEvents = 4096;
         // payload 布局表
         // QUEUED 派发必须深拷贝：发射方的字符串存储在 MCDK_EMIT 所在作用域
+        constexpr std::uint16_t kStrWorldResolve[] = {
+            static_cast<std::uint16_t>(offsetof(mcdk_ev_world_resolve, world_json)),
+        };
         constexpr std::uint16_t kStrGameLaunchBefore[] = {
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, exe_path)),
             static_cast<std::uint16_t>(offsetof(mcdk_ev_game_launch_before, dev_config_path)),
@@ -56,6 +59,7 @@ namespace mcdk::plugin_host {
         constexpr EventTraits kTraits[] = {
             /* McpRegisterBefore     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false, true},
             /* McpRegisterFinish     */ {sizeof(mcdk_ev_mcp_register), nullptr, 0, false, true},
+            /* WorldResolve          */ {sizeof(mcdk_ev_world_resolve), kStrWorldResolve, 1, true, true},
             /* GameLaunchBefore      */ {sizeof(mcdk_ev_game_launch_before), kStrGameLaunchBefore, 2, true, false},
             /* GameProcessCreate     */ {sizeof(mcdk_ev_game_process_create), kStrGameProcessCreate, 3, true, true},
             /* GameLaunchFinish      */ {sizeof(mcdk_ev_game_launch_finish), kStrGameLaunchFinish, 1, false, false},
@@ -157,6 +161,7 @@ namespace mcdk::plugin_host {
         constexpr NameEntry kNames[] = {
             {EventId::McpRegisterBefore, MCDK_EVENT_MCP_REGISTER_BEFORE},
             {EventId::McpRegisterFinish, MCDK_EVENT_MCP_REGISTER_FINISH},
+            {EventId::WorldResolve, MCDK_EVENT_WORLD_RESOLVE},
             {EventId::GameLaunchBefore, MCDK_EVENT_GAME_LAUNCH_BEFORE},
             {EventId::GameProcessCreate, MCDK_EVENT_GAME_PROCESS_CREATE},
             {EventId::GameLaunchFinish, MCDK_EVENT_GAME_LAUNCH_FINISH},

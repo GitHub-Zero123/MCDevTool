@@ -51,6 +51,16 @@ namespace mcdk {
         // 同一个插件二进制可以声明多次、各带不同 config，据此表现出不同行为。
         [[nodiscard]] std::string_view configJson() const noexcept { return mConfigJson; }
 
+        // 宿主在本线程上最近一次调用失败的原因。紧跟在返回错误码的那次调用之后取。
+        [[nodiscard]] std::string lastHostError() const {
+            if (!detail::ifaceHas(mCore, &mcdk_iface_core::get_last_error)) {
+                return {};
+            }
+            mcdk_str raw{};
+            mCore->get_last_error(mSelf, &raw);
+            return detail::toString(raw);
+        }
+
         // 由 SDK 的入口胶水调用，插件不应直接使用。
         void bindHost(const mcdk_host_info& host) {
             mSelf        = host.self;

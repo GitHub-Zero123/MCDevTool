@@ -54,6 +54,18 @@ namespace mcdk {
             static McpRegisterFinish from(const Payload& raw) { return {raw.tool_count}; }
         };
 
+        // 发射线程：mcdk 启动线程。强制 Sync。
+        // 改写存档设置：ctx.game().overrideWorld(e.request, json, mode) 后返回 Stop。
+        // Veto 中止启动。契约见 04-events.md §4.5。
+        struct WorldResolve {
+            using Payload                 = mcdk_ev_world_resolve;
+            static constexpr auto abiName = MCDK_EVENT_WORLD_RESOLVE;
+            mcdk_handle           request = 0;
+            // 当前存档设置，键名与 .mcdev.json 相同。借用：回调返回即失效。
+            std::string_view    worldJson;
+            static WorldResolve from(const Payload& raw) { return {raw.request, detail::toView(raw.world_json)}; }
+        };
+
         // 发射线程：mcdk 启动线程。可否决——返回 Veto 则游戏不启动。
         struct GameLaunchBefore {
             using Payload                 = mcdk_ev_game_launch_before;

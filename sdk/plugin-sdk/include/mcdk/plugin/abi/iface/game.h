@@ -25,6 +25,12 @@ enum {
     MCDK_IMAGE_JPEG = 0
 };
 
+typedef uint32_t mcdk_world_override_mode;
+enum {
+    MCDK_WORLD_OVERRIDE_MERGE   = 0, /* 只改给出的键，其余沿用当前设置 */
+    MCDK_WORLD_OVERRIDE_REPLACE = 1  /* 给出的键之外一律回到默认值 */
+};
+
 typedef struct mcdk_capture_options {
     uint32_t struct_size;
     /* 等比缩放高度上限，不放大小窗口；0 = 宿主默认（480）。 */
@@ -100,6 +106,19 @@ typedef struct mcdk_iface_game {
      * 别的插件已交回过返回 MCDK_ERR_DUPLICATE；tid 不属于 pid 返回 MCDK_ERR_INVALID_ARGUMENT。
      */
     mcdk_status(MCDK_CALL* commit_process)(mcdk_handle self, mcdk_handle request, uint32_t pid, uint32_t tid);
+
+    /*
+     * 只能在 mcdk.world.resolve 的回调里调用：改写存档设置。settings_json 是对象，
+     * 键名与 .mcdev.json 相同；mode 见 mcdk_world_override_mode。
+     * 别的插件已改写过返回 MCDK_ERR_DUPLICATE；未知键、类型不对、目录名不合法返回
+     * MCDK_ERR_INVALID_ARGUMENT，原因见 get_last_error。
+     */
+    mcdk_status(MCDK_CALL* override_world)(
+        mcdk_handle self,
+        mcdk_handle request,
+        mcdk_str    settings_json,
+        uint32_t    mode
+    );
 } mcdk_iface_game;
 
 #ifdef __cplusplus

@@ -5,6 +5,8 @@
 #include <string_view>
 #include <vector>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <mcdk/settings.hpp>
 
 namespace mcdk {
@@ -15,6 +17,13 @@ namespace mcdk {
     [[nodiscard]] UserConfig createDefaultConfig();
     [[nodiscard]] UserConfig parseUserConfig(std::string_view jsonText);
     [[nodiscard]] UserConfig userParseConfig();
+
+    // 存档相关的键（world_name、reset_world、game_mode……），.mcdev.json 与插件改写共用。
+    [[nodiscard]] bool isWorldConfigKey(std::string_view key) noexcept;
+    // 只改 source 里出现的存档键，其余保持 world 原值。类型不对时抛异常。
+    void applyWorldConfig(const nlohmann::json& source, WorldProjectConfig& world);
+    // 全部存档键的当前值。
+    [[nodiscard]] nlohmann::json worldConfigToJson(const WorldProjectConfig& world);
 
     [[nodiscard]] bool updateGamePath(std::filesystem::path& path);
     void               tryUpdateUserGamePath(const std::filesystem::path& newPath);

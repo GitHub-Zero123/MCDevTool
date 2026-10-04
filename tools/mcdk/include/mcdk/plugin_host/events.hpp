@@ -20,6 +20,7 @@ namespace mcdk::plugin_host {
     enum class EventId : std::uint32_t {
         McpRegisterBefore = 0,
         McpRegisterFinish,
+        WorldResolve,
         GameLaunchBefore,
         GameProcessCreate,
         GameLaunchFinish,

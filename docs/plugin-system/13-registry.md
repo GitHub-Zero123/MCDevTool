@@ -87,6 +87,7 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `image_copy` | 1.0 | 可用 | 拷入调用方缓冲 |
 | `image_release` | 1.0 | 可用 | 释放图像句柄；插件终结时宿主兜底回收并告警 |
 | `commit_process` | 1.0 | 可用 | 在 `mcdk.game.process.create` 内交回插件创建的挂起进程，见 [04](04-events.md) §4.4 |
+| `override_world` | 1.0 | 可用 | 在 `mcdk.world.resolve` 内改写存档设置（按键覆盖 / 完全覆盖），见 [04](04-events.md) §4.5 |
 
 ### 3.5 `mcdk.log/1`
 
@@ -113,7 +114,7 @@ CI **双向**校验（见 [09-compatibility.md](09-compatibility.md) §5）：
 | `emit` | 1.0 | 计划 | 插件自定义事件。当前对内置 `mcdk.*` 事件返回 `MCDK_ERR_NOT_SUPPORTED`，待自定义事件命名空间开放 |
 | ~~`post_main`~~ | 1.0 | 已移除 | v1 发布前移除，见 [04-events.md](04-events.md) §4.0。表尾空位不占号，将来可重新追加 |
 
-v1 合计 **23 个 ABI 函数，六张接口表，全部可用**（`post_main` 移除，`get_ipc_clients`、`bind_tool`、`commit_process` 新增）。
+v1 合计 **24 个 ABI 函数，六张接口表，全部可用**（`post_main` 移除，`get_ipc_clients`、`bind_tool`、`commit_process`、`override_world` 新增）。
 
 阶段窗口（[05-interfaces.md](05-interfaces.md) §9）由宿主 shim 实际强制执行，
 不在窗口内调用返回 `MCDK_ERR_WRONG_STAGE`——这一条不能只写在文档里：
@@ -127,6 +128,7 @@ v1 合计 **23 个 ABI 函数，六张接口表，全部可用**（`post_main` �
 | --- | --- | --- | --- | :-: |
 | `mcdk.mcp.register.before` | 1.0 | 可用 | `mcdk_ev_mcp_register` | 否 |
 | `mcdk.mcp.register.finish` | 1.0 | 可用 | `mcdk_ev_mcp_register` | 否 |
+| `mcdk.world.resolve` | 1.0 | 可用 | `mcdk_ev_world_resolve` | 是 |
 | `mcdk.game.launch.before` | 1.0 | 可用 | `mcdk_ev_game_launch_before` | 是 |
 | `mcdk.game.process.create` | 1.0 | 可用 | `mcdk_ev_game_process_create` | 是 |
 | `mcdk.game.launch.finish` | 1.0 | 可用 | `mcdk_ev_game_launch_finish` | 否 |
@@ -137,10 +139,10 @@ v1 合计 **23 个 ABI 函数，六张接口表，全部可用**（`post_main` �
 | `mcdk.ipc.client.connected` | 1.0 | 可用 | `mcdk_ev_ipc_client` | 否 |
 | `mcdk.ipc.client.disconnected` | 1.0 | 可用 | `mcdk_ev_ipc_client` | 否 |
 
-v1 合计 **11 个事件、8 个 payload 结构体**，全部已接上发射点（位置见
+v1 合计 **12 个事件、9 个 payload 结构体**，全部已接上发射点（位置见
 [08-host-integration.md](08-host-integration.md) §5）。
 
-含 `mcdk_str` 字段的 payload（`game_launch_before` / `game_process_create` / `game_launch_finish` / `log_line`）在
+含 `mcdk_str` 字段的 payload（`world_resolve` / `game_launch_before` / `game_process_create` / `game_launch_finish` / `log_line`）在
 `QUEUED` / `MAIN` 投递时必须**真正深拷贝**：字符串字节要跟结构体一起打包，memcpy
 结构体只会复制指针。各事件的 `mcdk_str` 字段偏移登记在 `event_bus.cpp` 的 `kTraits`
 表中，**新增带字符串的事件时必须同步填写**；漏填会被发射时的 payload 尺寸校验拦住。
@@ -177,6 +179,7 @@ v1 合计 **11 个事件、8 个 payload 结构体**，全部已接上发射点�
 | `mcdk_log_channel` | 1.0 | 0..1 | 2 |
 | `mcdk_log_order` | 1.0 | 0..1 | 2 |
 | `mcdk_image_format` | 1.0 | 0 | 1 |
+| `mcdk_world_override_mode` | 1.0 | 0..1 | 2 |
 | `mcdk_mcp_annotation` | 1.0 | 位 0..3 | 位 4 |
 
 "下一个可用值"一列存在的意义是：新增常量时直接取用并更新该列，避免两个并行分支各自选了同一个数值、合并后静默冲突。
@@ -185,4 +188,4 @@ v1 合计 **11 个事件、8 个 payload 结构体**，全部已接上发射点�
 
 | ABI 版本 | 日期 | 变更 |
 | --- | --- | --- |
-| 1.0 | 未发布 | 初版：23 个 ABI 函数、11 个事件、6 张接口表 |
+| 1.0 | 未发布 | 初版：24 个 ABI 函数、12 个事件、6 张接口表 |

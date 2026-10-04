@@ -171,8 +171,9 @@ mcdk::PluginIdentity identity(mcdk::Context& context) override {
 | `examples/01-hello/` | 最小插件：注册、打日志、读 config |
 | `examples/02-loader/` | 加载器模式：一个 DLL 充当其他插件的宿主，见 §5 |
 | `examples/03-launcher/` | 自定义游戏启动器：接管进程创建，追加参数与环境变量，见 §7 |
-| `examples/04-mcp-tool/` | 注册一个 MCP 工具并调用游戏内 Python（计划） |
-| `examples/05-hotreload/` | 注册自定义 watcher（待 `mcdk.hotreload` 开放） |
+| `examples/04-world/` | 把游戏引到编辑器专用存档：`ev::WorldResolve` + `overrideWorld`，见 §8 |
+| `examples/05-mcp-tool/` | 注册一个 MCP 工具并调用游戏内 Python（计划） |
+| `examples/06-hotreload/` | 注册自定义 watcher（待 `mcdk.hotreload` 开放） |
 | `templates/plugin-template/` | 供用户复制的起步工程，含 `CMakeLists.txt` 与 `plugin.json` |
 
 ## 7. 自定义游戏启动器
@@ -216,3 +217,32 @@ return status == MCDK_OK ? mcdk::EventResult::Stop : mcdk::EventResult::Veto;
 
 该头文件只在 Windows 上可用，且会引入 `<windows.h>`，所以 `plugin.hpp` 不包含它，按需自取。
 完整示例见 `examples/03-launcher/`，回归测试见 `tests/plugin_launcher_test.cpp`。
+
+## 8. 定制版编辑器
+
+编辑器要两样东西：带上自己的插件，以及让游戏进编辑器专用的存档。都不需要碰用户的 `.mcdev.json`。
+
+**带上插件**：拉起 mcdk 时设置环境变量 `MCDEV_PLUGINS`，值与 `.mcdev.json` 的 `plugins` 数组同格式，
+见 [06-loading.md](06-loading.md) §2.4。
+
+**改写存档**：
+
+```cpp
+ctx.events().on<mcdk::ev::WorldResolve>([&](const auto& e) {
+    const auto status = ctx.game().overrideWorld(
+        e.request,
+        R"({"world_folder_name":"EDITOR_WORLD","reset_world":true})",
+        mcdk::WorldOverride::Merge                          // 或 Replace：没给的键回到默认值
+    );
+    if (status != MCDK_OK) {
+        ctx.console().error(ctx.lastHostError());           // 未知键、目录名不合法……
+        return mcdk::EventResult::Veto;                     // 进不了编辑器存档就别启动
+    }
+    return mcdk::EventResult::Stop;
+});
+```
+
+`e.worldJson` 是当前设置，可据此决定改不改。完整规则见 [04-events.md](04-events.md) §4.5；示例见
+`examples/04-world/`，回归测试见 `tests/plugin_editor_test.cpp`——它正是经 `MCDEV_PLUGINS` 加载这个示例的。
+
+`ctx.lastHostError()` 取的是宿主在本线程上最近一次失败的原因，任何返回错误码的调用之后都可以用。
