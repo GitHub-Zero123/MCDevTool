@@ -42,8 +42,25 @@ namespace MCDevTool::Style {
         }
     }
 
+    struct DpiScope {
+        DPI_AWARENESS_CONTEXT previous = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+        DpiScope()                           = default;
+        DpiScope(const DpiScope&)            = delete;
+        DpiScope& operator=(const DpiScope&) = delete;
+
+        ~DpiScope() {
+            if (previous != nullptr) SetThreadDpiAwarenessContext(previous);
+        }
+    };
+
     // 应用样式到指定窗口句柄
     static void _applyStyleToMinecraftWindow(HWND hwnd, const StyleConfig& config) {
+        // 样式线程默认沿用进程的 DPI 感知，非 100% 缩放下读写的窗口坐标和尺寸会被系统按缩放比换算，
+        // AdjustWindowRectEx 也只按 96 DPI 算边框，固定大小后客户区会偏大几个像素（200% 下设 1280x720
+        // 实际得到 1286x727）。这里临时切到每显示器 DPI 感知，读到和设置的都是物理像素。
+        DpiScope dpiScope;
+
         // 基础状态
         HWND insertAfter = nullptr;
         UINT baseFlags   = SWP_NOACTIVATE;
@@ -57,23 +74,6 @@ namespace MCDevTool::Style {
             w = rect.right - rect.left;
             h = rect.bottom - rect.top;
         }
-
-        // 获取 DPI，用于把“物理像素”配置转换成 Win32 所需单位
-        UINT dpi = 96;
-        if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
-            using GetDpiForWindow_t = UINT(WINAPI*)(HWND);
-            auto pGetDpiForWindow   = reinterpret_cast<GetDpiForWindow_t>(GetProcAddress(user32, "GetDpiForWindow"));
-            if (pGetDpiForWindow && IsWindow(hwnd)) {
-                dpi = pGetDpiForWindow(hwnd);
-            } else {
-                using GetDpiForSystem_t = UINT(WINAPI*)();
-                auto pGetDpiForSystem = reinterpret_cast<GetDpiForSystem_t>(GetProcAddress(user32, "GetDpiForSystem"));
-                if (pGetDpiForSystem) {
-                    dpi = pGetDpiForSystem();
-                }
-            }
-        }
-        const double dpiScale = dpi > 0 ? static_cast<double>(dpi) / 96.0 : 1.0;
 
         // 置顶控制
         if (config.alwaysOnTop) {
@@ -119,22 +119,24 @@ namespace MCDevTool::Style {
             SetLayeredWindowAttributes(hwnd, 0, static_cast<BYTE>(config.windowOpacity.value()), LWA_ALPHA);
         }
 
-        // 固定大小：配置视为“客户区物理像素”，按 DPI 反推需要设置的窗口外框尺寸
+        // 固定大小：配置视为“客户区物理像素”，按窗口所在显示器的 DPI 算出窗口外框尺寸
         if (config.fixedSize.has_value()) {
-            const auto& size = config.fixedSize.value();
-            // 物理客户区 -> 逻辑客户区
-            int clientLogicalW = static_cast<int>(size.width / dpiScale + 0.5);
-            int clientLogicalH = static_cast<int>(size.height / dpiScale + 0.5);
-
-            LONG style   = GetWindowLongW(hwnd, GWL_STYLE);
-            LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
-            RECT rc      = {0, 0, clientLogicalW, clientLogicalH};
-            if (AdjustWindowRectEx(&rc, static_cast<DWORD>(style), FALSE, static_cast<DWORD>(exStyle))) {
+            const auto& size    = config.fixedSize.value();
+            LONG        style   = GetWindowLongW(hwnd, GWL_STYLE);
+            LONG        exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            RECT        rc      = {0, 0, size.width, size.height};
+            if (AdjustWindowRectExForDpi(
+                    &rc,
+                    static_cast<DWORD>(style),
+                    FALSE,
+                    static_cast<DWORD>(exStyle),
+                    GetDpiForWindow(hwnd)
+                )) {
                 targetW = rc.right - rc.left;
                 targetH = rc.bottom - rc.top;
             } else {
-                targetW = clientLogicalW;
-                targetH = clientLogicalH;
+                targetW = size.width;
+                targetH = size.height;
             }
             needSize = true;
         }

@@ -31,6 +31,11 @@ if(WIN32)
     add_executable(window_input_test window_input_test.cpp)
     target_compile_features(window_input_test PRIVATE cxx_std_23)
     target_link_libraries(window_input_test PRIVATE mcdevtool)
+
+    # 会弹出测试窗口，按需手动运行；要在非 100% 缩放下跑才有意义。
+    add_executable(window_style_test window_style_test.cpp)
+    target_compile_features(window_style_test PRIVATE cxx_std_23)
+    target_link_libraries(window_style_test PRIVATE mcdevtool)
 endif()
 
 add_executable(hot_reload_filter_test hot_reload_filter_test.cpp)
