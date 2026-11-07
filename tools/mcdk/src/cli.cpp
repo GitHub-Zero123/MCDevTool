@@ -7,7 +7,6 @@
 #include <mcdk/mcp_tool_help.hpp>
 #include <mcdk/plugin_declarations.hpp>
 #include <mcdk/session_file.hpp>
-#include <mcdk/world_project.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -27,7 +26,7 @@
 #include <vector>
 
 #include <CLI11.hpp>
-#include <mcdevtool/env.h>
+#include <mcdevtool/game_discovery.h>
 #include <mcdevtool/utils.h>
 #include <nlohmann/json.hpp>
 
@@ -412,7 +411,7 @@ namespace {
         std::vector<mcdk::SessionRecord> targets;
         if (all) {
             targets = mcdk::listSessionRecords(fs::current_path());
-            std::erase_if(targets, [](const auto& record) { return record.state == mcdk::SessionStateExited; });
+            std::erase_if(targets, [](const auto& record) { return !mcdk::isSessionAlive(record); });
         } else {
             targets.push_back(resolveSession(options.session));
         }
@@ -423,7 +422,7 @@ namespace {
             }
         }
 
-        // 等到 mcdk 进程结束，此时端口和存档链接都已释放，同名会话可以马上重开。
+        // 等到 mcdk 进程结束，此时端口已释放，同名会话可以马上重开。
         const auto deadline = Clock::now() + std::chrono::seconds(options.timeoutSeconds);
         auto       stopped  = Json::array();
         for (const auto& target : targets) {
@@ -438,13 +437,6 @@ namespace {
                 current = mcdk::readSessionRecord(path).value_or(current);
             }
             stopped.push_back(sessionToJson(current));
-            // mcdk 被强杀时来不及清理，存档里的链接由这里补摘。
-            if (current.state != mcdk::SessionStateExited && current.isolated) {
-                mcdk::removeWorldPackLinks(
-                    MCDevTool::getMinecraftWorldsPath() / fs::u8path(current.worldFolderName)
-                );
-                fs::remove(path);
-            }
         }
         printJson(stopped);
         return ExitOk;

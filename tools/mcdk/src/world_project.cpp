@@ -280,30 +280,21 @@ namespace mcdk {
         }
     }
 
-    void removeWorldPackLinks(const fs::path& worldPath) {
-        const auto recordPath = worldPath / WorldPackLinkRecord;
-        if (!fs::is_regular_file(recordPath)) {
-            return;
-        }
-        nlohmann::json entries;
-        {
-            std::ifstream input(recordPath, std::ios::binary);
-            entries = nlohmann::json::parse(input, nullptr, false);
-        }
-        for (const auto& entry : entries.is_array() ? entries : nlohmann::json::array()) {
-            if (!entry.is_string()) {
-                continue;
-            }
-            const auto relative = fs::u8path(entry.get<std::string>()).lexically_normal();
-            if (relative.is_relative() && !relative.empty() && *relative.begin() != "..") {
-                fs::remove_all(worldPath / relative);
-            }
-        }
-        fs::remove(recordPath);
-    }
-
     MCDevTool::RuntimePackRoots prepareWorldPackRoots(const fs::path& worldPath) {
-        removeWorldPackLinks(worldPath);
+        const auto recordPath = worldPath / WorldPackLinkRecord;
+        if (fs::is_regular_file(recordPath)) {
+            std::ifstream input(recordPath, std::ios::binary);
+            const auto    entries = nlohmann::json::parse(input, nullptr, false);
+            for (const auto& entry : entries.is_array() ? entries : nlohmann::json::array()) {
+                if (!entry.is_string()) {
+                    continue;
+                }
+                const auto relative = fs::u8path(entry.get<std::string>()).lexically_normal();
+                if (relative.is_relative() && !relative.empty() && *relative.begin() != "..") {
+                    fs::remove_all(worldPath / relative);
+                }
+            }
+        }
         return {worldPath / "behavior_packs", worldPath / "resource_packs"};
     }
 

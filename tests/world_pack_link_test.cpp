@@ -66,25 +66,6 @@ namespace {
         require(fs::is_regular_file(mapPack / "keep.txt"), "unrecorded pack is untouched");
     }
 
-    void testRemovingLinksLeavesNothingToFollow(const fs::path& root) {
-        const auto source = root / "removal_source";
-        const auto world  = root / "removal_world";
-        writePack(source, "33333333-0000-4000-8000-000000000001", "data");
-        fs::create_directories(world);
-
-        const auto packs = MCDevTool::linkSourceAddonToRuntimePacks(source, mcdk::prepareWorldPackRoots(world));
-        mcdk::recordWorldPackLinks(world, packs);
-        require(isJunction(world / "behavior_packs" / "33333333000040008000000000000001"), "link exists at runtime");
-
-        mcdk::removeWorldPackLinks(world);
-        require(!fs::exists(world / "behavior_packs" / "33333333000040008000000000000001"), "link is gone");
-        require(!fs::exists(world / ".mcdk_pack_links.json"), "record is gone");
-        require(fs::is_regular_file(source / "keep.txt"), "source survives");
-
-        // 重复调用是 stop 和退出清理同时发生时的情况。
-        mcdk::removeWorldPackLinks(world);
-    }
-
     void testBrokenRecordsAreHarmless(const fs::path& root) {
         const auto world   = root / "broken";
         const auto outside = root / "outside.txt";
@@ -113,7 +94,6 @@ int main() {
         fs::create_directories(root);
         testLinksLandInsideTheWorld(root);
         testRelinkRemovesOnlyRecordedEntries(root);
-        testRemovingLinksLeavesNothingToFollow(root);
         testBrokenRecordsAreHarmless(root);
         testGlobalRootsAreUnchanged();
         fs::remove_all(root);

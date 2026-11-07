@@ -94,16 +94,11 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 | 取值 | 位置 | 说明 |
 | --- | --- | --- |
 | `global`（默认） | `games/com.netease/behavior_packs`、`resource_packs` | 与之前的行为一致。每次启动先清空这两个目录，同时只适合运行一个普通实例 |
-| `world` | 存档内的 `behavior_packs`、`resource_packs` | 不碰全局目录。链接只在游戏运行期间存在，游戏退出时摘掉 |
+| `world` | 存档内的 `behavior_packs`、`resource_packs` | 不碰全局目录。链接保留在存档里，记录在 `.mcdk_pack_links.json`，下次启动时重建 |
 
 联机调试的子进程模式不做任何链接，依赖主实例的全局包，所以主实例要保持 `global`。
 
-**注意：** 实测在游戏界面里删除存档时，游戏会顺着目录联接把源码一起删掉。所以 `world` 模式只在运行期保留链接，游戏退出后存档里不再有联接，可以正常删除。
-
-仍需当心两种情况：
-
-- **游戏运行期间：** 不要回到主菜单删除当前存档。
-- **mcdk 被强杀后：** 链接来不及摘除，`mcdk ps` 显示 `lost`。先运行 `mcdk stop --session 名称` 补摘，再动这个存档。
+**警告：不要在游戏界面里删除 `world` 模式的存档。** 这类存档里始终有指向源码的目录联接，实测游戏删除存档时会顺着联接把源码一起删掉。这个问题目前没有防护，隔离会话的存档（`<world_folder_name>__<会话名>`）都属于这一类。需要重建存档时用 `reset_world`，mcdk 只会摘掉链接。
 
 ## 会话命令
 
@@ -114,7 +109,7 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 | `mcdk ps` | 列出本项目的会话 |
 | `mcdk wait [--state ready\|exited] [--timeout 秒]` | 等待进入存档或退出。默认等 `ready`，超时 120 秒。会话还没启动时会继续等 |
 | `mcdk call <工具> [--args JSON] [--args-file FILE] [--output FILE] [--timeout 秒]` | 调用工具。截图等大结果用 `--output` 写入文件 |
-| `mcdk stop [--all] [--timeout 秒]` | 结束游戏并等 mcdk 退出。返回后端口和存档链接都已释放，可以马上重开同名会话。对 `lost` 会话会补摘存档链接并删除记录 |
+| `mcdk stop [--all] [--timeout 秒]` | 结束游戏并等 mcdk 退出。返回后端口已释放，可以马上重开同名会话 |
 
 `stop` 直接结束游戏进程，不走正常保存流程。原因见下文的“退出码”。
 

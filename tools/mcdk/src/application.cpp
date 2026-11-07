@@ -43,19 +43,6 @@ namespace {
             }
         }
     };
-
-    // 游戏一退出就摘掉存档里的链接。
-    struct WorldPackLinkScope {
-        std::filesystem::path world;
-
-        ~WorldPackLinkScope() {
-            try {
-                mcdk::removeWorldPackLinks(world);
-            } catch (const std::exception& exception) {
-                std::cerr << "[ERROR] 存档链接清理失败，请勿在游戏内删除该存档: " << exception.what() << '\n';
-            }
-        }
-    };
 } // namespace
 
 mcdk::GameRunResult mcdk::runGame(const UserConfig& config) {
@@ -183,11 +170,8 @@ mcdk::GameRunResult mcdk::startGame(const UserConfig& userConfig) {
     }
 
     // 存档可能刚被重置，存档级链接要等它就绪后再建。
-    std::optional<WorldPackLinkScope> worldPackLinks;
     if (linkToWorld) {
-        const auto roots = mcdk::prepareWorldPackRoots(worldsPath);
-        worldPackLinks.emplace(worldsPath);
-        linkPacks(roots);
+        linkPacks(mcdk::prepareWorldPackRoots(worldsPath));
         mcdk::recordWorldPackLinks(worldsPath, linkedPacks);
     }
     // 地图包只补充热更新所需的源码路径，不参与全局链接或世界包清单合并。
