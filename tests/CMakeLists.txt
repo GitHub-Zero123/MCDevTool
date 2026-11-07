@@ -85,6 +85,26 @@ if(WIN32)
     add_test(NAME window-post-input COMMAND window_post_input_test)
 endif()
 
+add_executable(lane_layout_test lane_layout_test.cpp)
+target_compile_features(lane_layout_test PRIVATE cxx_std_23)
+target_link_libraries(lane_layout_test PRIVATE mcdk_core)
+add_test(NAME lane-layout COMMAND lane_layout_test)
+
+if(TARGET mcdev-lane-shim)
+    add_executable(lane_probe lane_probe.cpp)
+    target_link_libraries(lane_probe PRIVATE shell32 ole32)
+
+    add_executable(lane_injection_test lane_injection_test.cpp)
+    target_compile_features(lane_injection_test PRIVATE cxx_std_23)
+    target_link_libraries(lane_injection_test PRIVATE mcdk_core shell32 ole32)
+    target_compile_definitions(lane_injection_test PRIVATE
+        MCDK_LANE_SHIM_PATH=L"$<TARGET_FILE:mcdev-lane-shim>"
+        MCDK_LANE_PROBE_PATH=L"$<TARGET_FILE:lane_probe>"
+    )
+    add_dependencies(lane_injection_test mcdev-lane-shim lane_probe)
+    add_test(NAME lane-injection COMMAND lane_injection_test)
+endif()
+
 add_executable(rpc_registry_test rpc_registry_test.cpp)
 target_compile_features(rpc_registry_test PRIVATE cxx_std_23)
 target_link_libraries(rpc_registry_test PRIVATE mcdk_core)

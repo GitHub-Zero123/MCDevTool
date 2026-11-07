@@ -78,6 +78,8 @@ includes("libs/nbt")
 -- （components/profiler/tracy-bridge，需要抓取 Tracy 与 Capstone）。
 -- mcdev_profiler_core 只是运行时按需加载那个 DLL 的加载器，缺少 DLL 时性能分析
 -- 会在运行时报告不可用，其余功能不受影响。需要该组件请使用 CMake 构建。
+-- Lane shim（components/lane/shim，需要抓取 MinHook）同样只由 CMake 构建；
+-- 缺少 mcdev-lane-shim.dll 时 mcdk run --session 会拒绝启动，其余功能不受影响。
 
 target("mcp")
     set_kind("static")
@@ -261,6 +263,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/mc_input_mcp.cpp",
             "tools/mcdk/src/mc_profiler_mcp.cpp",
             "tools/mcdk/src/mod_dir_config.cpp",
+            "tools/mcdk/src/lane.cpp",
             "tools/mcdk/src/session_file.cpp",
             "tools/mcdk/src/mod_register.cpp",
             "tools/mcdk/src/reload_code.cpp",
@@ -269,6 +272,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/utils.cpp",
             "tools/mcdk/src/world_project.cpp"
         )
+        add_includedirs("components/lane/shim/include", {public = true})
         add_includedirs("tools/mcdk/include", {public = true})
         add_deps("mcdevtool", "mcdev_profiler_core", "mcdk_mcp_tools", "mcdk_plugin_manifest", "mcp", "mcdev_mod_resource")
     target_end()
@@ -456,6 +460,13 @@ if has_config("build_test") then
             set_languages("c++23")
             add_files("tests/window_post_input_test.cpp")
             add_deps("mcdevtool")
+        target_end()
+
+        target("lane_layout_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/lane_layout_test.cpp")
+            add_deps("mcdk_core")
         target_end()
 
         target("mcp_tool_help_test")

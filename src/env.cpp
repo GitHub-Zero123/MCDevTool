@@ -2,6 +2,7 @@
 #include "mcdevtool/utils.h"
 #include <algorithm>
 #include <cstdlib>
+#include <string_view>
 #include <utility> // std::move
 #include <iostream>
 
@@ -11,24 +12,111 @@
 #include <windows.h>
 #include <winioctl.h>
 
+// 只有 MSVC STL 的 remove_all 保证不进入 junction，其他 STL（MinGW 的 libstdc++ 等）走自己的实现。
+// 依据见 docs/junction-removal.md。
+#ifdef _MSVC_STL_VERSION
+bool MCDevTool::isLink(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto      type = std::filesystem::symlink_status(path, error).type();
+    return !error && (type == std::filesystem::file_type::junction || type == std::filesystem::file_type::symlink);
+}
+
+void MCDevTool::removeAllNoFollow(const std::filesystem::path& path, std::error_code& error) noexcept {
+    std::filesystem::remove_all(path, error);
+}
+#else
+namespace {
+    // 不跟随链接读取条目本身的属性和 reparse tag；条目不存在时返回 false 且不置错误。
+    bool queryEntry(const std::filesystem::path& path, FILE_ATTRIBUTE_TAG_INFO& info, std::error_code& error) {
+        const HANDLE handle = CreateFileW(
+            path.c_str(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            nullptr
+        );
+        if (handle == INVALID_HANDLE_VALUE) {
+            const DWORD code = GetLastError();
+            if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) {
+                error.assign(static_cast<int>(code), std::system_category());
+            }
+            return false;
+        }
+        const BOOL ok = GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &info, sizeof(info));
+        const DWORD code = GetLastError();
+        CloseHandle(handle);
+        if (!ok) {
+            error.assign(static_cast<int>(code), std::system_category());
+        }
+        return ok == TRUE;
+    }
+
+    // 名称代理类 reparse point（junction、符号链接等）才算链接；OneDrive 占位目录等不算。
+    bool isLinkInfo(const FILE_ATTRIBUTE_TAG_INFO& info) {
+        return (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && IsReparseTagNameSurrogate(info.ReparseTag);
+    }
+
+    void setLastError(std::error_code& error) {
+        error.assign(static_cast<int>(GetLastError()), std::system_category());
+    }
+} // namespace
+
+bool MCDevTool::isLink(const std::filesystem::path& path) {
+    FILE_ATTRIBUTE_TAG_INFO info{};
+    std::error_code         error;
+    return queryEntry(path, info, error) && isLinkInfo(info);
+}
+
+void MCDevTool::removeAllNoFollow(const std::filesystem::path& path, std::error_code& error) noexcept {
+    error.clear();
+    FILE_ATTRIBUTE_TAG_INFO info{};
+    if (!queryEntry(path, info, error)) {
+        return;
+    }
+    const bool directory = (info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    const bool link      = isLinkInfo(info);
+    if (directory && !link) {
+        WIN32_FIND_DATAW data;
+        const HANDLE     find = FindFirstFileExW(
+            (path / L"*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH
+        );
+        if (find == INVALID_HANDLE_VALUE) {
+            setLastError(error);
+            return;
+        }
+        do {
+            const std::wstring_view name = data.cFileName;
+            if (name == L"." || name == L"..") {
+                continue;
+            }
+            removeAllNoFollow(path / data.cFileName, error);
+        } while (!error && FindNextFileW(find, &data));
+        if (!error && GetLastError() != ERROR_NO_MORE_FILES) {
+            setLastError(error);
+        }
+        FindClose(find);
+        if (error) {
+            return;
+        }
+    }
+    // 只读属性会挡住删除；链接上的属性改动会落到目标上，所以链接不碰。
+    if (!link && (info.FileAttributes & FILE_ATTRIBUTE_READONLY)) {
+        SetFileAttributesW(path.c_str(), info.FileAttributes & ~FILE_ATTRIBUTE_READONLY);
+    }
+    // 对 junction / 目录符号链接，RemoveDirectoryW 只删链接本身。
+    if (!(directory ? RemoveDirectoryW(path.c_str()) : DeleteFileW(path.c_str()))) {
+        setLastError(error);
+    }
+}
+#endif
+
 // 软链接目录
 bool MCDevTool::createDirectoryJunction(const std::filesystem::path& target, const std::filesystem::path& link) {
-    // 默认以WIN32 MSVC STL为标准
-    // 其他实现可能不遵守 MSVC 的 remove_all 语义，误判 junction 为普通目录而递归删除源目录内容。
     std::filesystem::create_directories(link.parent_path());
-    // link 从第二次运行起通常已是上一轮的 junction，target 是用户真实源目录：这里必须只摘
-    // 链接，绝不能递归进去。MSVC 下安全，靠两层（都是实现定义行为，换 STL 必须重验）：
-    //   - remove_all 先直接删、只在 ERROR_DIRECTORY_NOT_EMPTY 时才递归，而 RemoveDirectoryW
-    //     对 junction "无论目标是否为空都只删链接"，第一步即成功
-    //     https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-removedirectoryw
-    //   - 真走到递归时，MSVC 把 junction 归为 file_type::junction 而非 directory，进不去
-    // 标准所谓的 "Symlinks are not followed" 在这里帮不上忙：它只覆盖实现判定为 symlink 的
-    // 东西，而 MSVC 的 is_symlink(junction) 恒为 false（见
-    // https://en.cppreference.com/w/cpp/filesystem/remove ）。同理别用 is_symlink 加防护，
-    // 要判断请用 symlink_status().type() == file_type::junction 或 FILE_ATTRIBUTE_REPARSE_POINT。
-    if (std::filesystem::exists(link)) {
-        std::filesystem::remove_all(link);
-    }
+    // link 从第二次运行起通常是上一轮的 junction，只能摘链接，不能删进用户源目录。
+    removeAllNoFollow(link);
     std::filesystem::create_directory(link);
 
     HANDLE h = CreateFileW(
@@ -93,7 +181,25 @@ bool MCDevTool::createDirectoryJunction(const std::filesystem::path& target, con
 bool MCDevTool::createDirectoryJunction(const std::filesystem::path&, const std::filesystem::path&) {
     return false;
 }
+
+bool MCDevTool::isLink(const std::filesystem::path& path) {
+    std::error_code error;
+    return std::filesystem::is_symlink(std::filesystem::symlink_status(path, error));
+}
+
+// POSIX 下标准保证 remove_all 不跟随符号链接。
+void MCDevTool::removeAllNoFollow(const std::filesystem::path& path, std::error_code& error) noexcept {
+    std::filesystem::remove_all(path, error);
+}
 #endif
+
+void MCDevTool::removeAllNoFollow(const std::filesystem::path& path) {
+    std::error_code error;
+    removeAllNoFollow(path, error);
+    if (error) {
+        throw std::filesystem::filesystem_error("removeAllNoFollow", path, error);
+    }
+}
 
 static void normalizeUUIDString(std::string& uuidStr) {
     uuidStr.erase(std::remove(uuidStr.begin(), uuidStr.end(), '-'), uuidStr.end());
@@ -112,6 +218,8 @@ namespace MCDevTool {
         }
         return appDataCachePath;
     }
+
+    void setAppDataPathOverride(const std::filesystem::path& path) { appDataCachePath = path; }
 
     // 获取MinecraftPE_Netease数据目录
     std::filesystem::path getMinecraftDataPath() { return getAppDataPath() / "MinecraftPE_Netease"; }
@@ -136,22 +244,19 @@ namespace MCDevTool {
 
     RuntimePackRoots getGlobalPackRoots() { return {getBehaviorPacksPath(), getResourcePacksPath()}; }
 
-    // 清理运行时行为包目录
-    // 删的是父目录，底下挂着 junction，所以真会走进 remove_all 的递归分支，靠的是
-    // file_type::junction != directory 这一层。依据见 createDirectoryJunction 处。
+    // 清理运行时行为包目录（底下挂着指向源码的 junction）
     void cleanRuntimeBehaviorPacks() {
         auto runtimeBPPath = getBehaviorPacksPath();
         if (std::filesystem::is_directory(runtimeBPPath)) {
-            std::filesystem::remove_all(runtimeBPPath);
+            removeAllNoFollow(runtimeBPPath);
         }
     }
 
-    // 清理运行时资源包目录
-    // 与 cleanRuntimeBehaviorPacks 同理。
+    // 清理运行时资源包目录（底下挂着指向源码的 junction）
     void cleanRuntimeResourcePacks() {
         auto runtimeRPPath = getResourcePacksPath();
         if (std::filesystem::is_directory(runtimeRPPath)) {
-            std::filesystem::remove_all(runtimeRPPath);
+            removeAllNoFollow(runtimeRPPath);
         }
     }
 

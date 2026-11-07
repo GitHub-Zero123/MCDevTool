@@ -68,7 +68,7 @@ namespace mcdk {
                 if (entry.is_directory() && MCDevTool::Addon::parsePackInfo(entry.path())) {
                     if (!MCDevTool::createDirectoryJunction(entry.path(), targetEntry)) {
                         std::error_code error;
-                        fs::remove_all(targetEntry, error);
+                        MCDevTool::removeAllNoFollow(targetEntry, error);
                         copyWorldEntry(entry.path(), targetEntry);
                         std::cerr << "玩法地图包目录链接创建失败，已回退为复制："
                                   << MCDevTool::Utils::pathToUtf8(entry.path().filename()) << '\n';
@@ -229,7 +229,7 @@ namespace mcdk {
         }
 
         std::error_code error;
-        fs::remove_all(worldPath, error);
+        MCDevTool::removeAllNoFollow(worldPath, error);
         if (error) {
             throw std::runtime_error("无法清理旧的运行时世界目录：" + MCDevTool::Utils::pathToGenericUtf8(worldPath));
         }
@@ -291,7 +291,7 @@ namespace mcdk {
                 }
                 const auto relative = fs::u8path(entry.get<std::string>()).lexically_normal();
                 if (relative.is_relative() && !relative.empty() && *relative.begin() != "..") {
-                    fs::remove_all(worldPath / relative);
+                    MCDevTool::removeAllNoFollow(worldPath / relative);
                 }
             }
         }

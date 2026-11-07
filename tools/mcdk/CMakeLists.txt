@@ -12,6 +12,18 @@ else()
     message(STATUS "mcdk native profiler component is unavailable on this platform (requires Windows x64)")
 endif()
 
+# Lane shim：注入游戏进程的 DLL，随 mcdk 一起构建并放在 mcdk.exe 旁边。
+set(_mcdk_lane_supported OFF)
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(_mcdk_lane_supported ON)
+    add_subdirectory(
+        "${CMAKE_CURRENT_LIST_DIR}/../../components/lane/shim"
+        "${CMAKE_CURRENT_BINARY_DIR}/lane-shim-build"
+    )
+else()
+    message(STATUS "mcdk lane shim is unavailable on this platform (requires Windows x64)")
+endif()
+
 add_library(mcdev_profiler_core STATIC
     src/performance/native_bridge_loader.cpp
     src/performance/profiler_runtime_owner.cpp
@@ -60,6 +72,7 @@ add_library(mcdk_core STATIC
     src/log_buffer.cpp
     src/log_classifier.cpp
     src/mod_dir_config.cpp
+    src/lane.cpp
     src/session_file.cpp
     src/mod_register.cpp
     src/mc_input_mcp.cpp
@@ -124,6 +137,23 @@ install(TARGETS mcdk
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT mcdk-core
 )
+
+if(_mcdk_lane_supported)
+    target_link_libraries(mcdk_core PUBLIC mcdev-lane-protocol)
+    set_target_properties(mcdev-lane-shim PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:mcdk>"
+    )
+    add_custom_target(mcdk_lane_component
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:mcdk>/licenses/lane"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_PROPERTY:mcdev-lane-shim,MCDEV_MINHOOK_LICENSE_FILE>"
+            "$<TARGET_FILE_DIR:mcdk>/licenses/lane/LICENSE-MinHook.txt"
+        DEPENDS mcdev-lane-shim
+        COMMENT "Synchronizing the lane shim license beside mcdk"
+        VERBATIM
+    )
+    add_dependencies(mcdk mcdk_lane_component)
+endif()
 
 if(_mcdk_native_profiler_supported)
     set_target_properties(mcdev-tracy-bridge PROPERTIES

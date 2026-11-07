@@ -9,6 +9,7 @@
 #include <mcdevtool/level.h>
 #include <mcdevtool/style.h>
 
+#include <mcdk/lane.hpp>
 #include <mcdk/mod_dir_config.hpp>
 #include <mcdk/plugin_declarations.hpp>
 
@@ -97,6 +98,10 @@ namespace mcdk {
         std::string sessionName;
         // mcdk 退出时带走游戏，避免留下无人管理的进程。
         bool killGameWithMcdk = false;
+        // 设置后游戏的 AppData 指向 laneRoot，见 mcdk/lane.hpp。
+        std::optional<lane::Level> laneLevel;
+        std::filesystem::path      laneRoot;  // 工程里的 Lane 目录
+        std::filesystem::path      laneEntry; // 游戏实际使用的入口，见 lane::gameEntry
     };
 
     struct UserConfig {

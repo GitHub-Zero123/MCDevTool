@@ -294,6 +294,8 @@ mcdk stop --session a
 
 用 `mcdk --help` 查看命令和工具，`mcdk help <命令或工具>` 查看详情，完整说明见 [docs/cli.md](docs/cli.md)。不带参数的 `mcdk` 行为不变。
 
+隔离会话运行在 [Lane](docs/lane.md) 里：游戏的数据根目录指向工程内 `.mcdev/lanes/<会话名>`，可选只隔离包目录、隔离包和存档、或隔离整个数据目录，多开时各实例的存档与包互不冲突。
+
 ## MCP客户端配置
 
 启用 `mcp_server_config.enabled` 后，mcdk 会随游戏进程启动一个标准 MCP Server。它适合接入 Roo Code、Copilot、Claude Desktop 等 MCP 客户端，让 AI 在开发期直接使用结构化工具观察和操作游戏。

@@ -30,9 +30,7 @@ namespace mcdk {
         auto uuidWithoutDashes = info.uuid;
         std::erase(uuidWithoutDashes, '-');
         const auto target = outputDirectory / uuidWithoutDashes;
-        if (std::filesystem::exists(target)) {
-            std::filesystem::remove_all(target);
-        }
+        removeAllNoFollow(target);
 
         for (const auto& [resourceName, resourceData] : INCLUDE_MOD_RES::resourceMap) {
             const auto resourcePath = target / std::filesystem::u8path(resourceName);

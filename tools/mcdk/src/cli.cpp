@@ -2,6 +2,7 @@
 
 #include <mcdk/application.hpp>
 #include <mcdk/config.hpp>
+#include <mcdk/lane.hpp>
 #include <mcdk/mcp_http_client.hpp>
 #include <mcdk/mcp_tool_definitions.hpp>
 #include <mcdk/mcp_tool_help.hpp>
@@ -26,7 +27,7 @@
 #include <vector>
 
 #include <CLI11.hpp>
-#include <mcdevtool/game_discovery.h>
+#include <mcdevtool/env.h>
 #include <mcdevtool/utils.h>
 #include <nlohmann/json.hpp>
 
@@ -64,6 +65,26 @@ namespace {
                                   "  6  等待超时\n"
                                   "  7  工具调用返回错误";
 
+    constexpr auto LaneHelp =
+        "隔离会话（--session）使用 Lane：\n"
+        "  mcdk 在游戏入口点之前注入 mcdev-lane-shim.dll，让游戏取到的 AppData 指向 Lane 目录。\n"
+        "  这不是沙盒，游戏仍能访问其他路径；它只决定游戏把数据读写在哪里。\n"
+        "  shim 没装上时游戏会被直接结束，不会在未隔离的状态下运行。\n"
+        "  游戏经由 AppData 旁的入口联接 mcdk-lane-<会话名>-<哈希> 访问 Lane 目录：游戏按真实 Roaming\n"
+        "  的路径层数推算模组的模块名，入口与 Roaming 同级才能对上。数据本身仍在 Lane 目录里。\n"
+        "\n"
+        "级别（--lane，默认 worlds）：\n"
+        "  addons  只独享包目录。存档、设置、日志通过目录联接共享真实数据，存档名带 __<会话名> 后缀\n"
+        "  worlds  独享包目录和存档，各会话可以使用同名存档互不冲突。设置、日志仍共享\n"
+        "  full    整个数据目录独享，从空白开始，不读写你的真实设置\n"
+        "\n"
+        "Lane 目录（--lane-root）：\n"
+        "  默认 <project>/.mcdev/lanes/<会话名>，并自动生成 .mcdev/lanes/.gitignore。\n"
+        "  建议放在对应的工程或 worktree 目录下，让数据跟着代码走；不要放进系统临时目录。\n"
+        "  addons、worlds 级别里有指向真实游戏数据的目录联接，删除 Lane 请用 mcdk lane remove，\n"
+        "  不要手动删除，部分工具（如 Windows PowerShell 5.1 的 Remove-Item -Recurse）会顺着联接删到真实数据。\n"
+        "\n";
+
     constexpr auto DefaultSessionName = "default";
     constexpr auto PollInterval       = std::chrono::milliseconds(200);
 
@@ -73,7 +94,25 @@ namespace {
         std::string              session;
         std::vector<std::string> overrides;
         bool                     detach = false;
+        std::string              lane;
+        std::string              laneRoot;
+        fs::path                 laneRootPath; // 已按调用者目录解析
     };
+
+    // 只建自己的 .gitignore，不碰上层已有的。
+    void ensureIgnored(const fs::path& directory) {
+        fs::create_directories(directory);
+        const auto ignore = directory / ".gitignore";
+        if (!fs::exists(ignore)) {
+            std::ofstream(ignore, std::ios::binary) << "*\n";
+        }
+    }
+
+    // Lane 目录；--lane-root 未给时用工程里的默认位置。
+    fs::path laneRootFor(const RunOptions& options) {
+        return options.laneRootPath.empty() ? mcdk::lane::defaultRoot(fs::current_path(), options.session)
+                                            : options.laneRootPath;
+    }
 
     struct SessionOptions {
         std::string project;
@@ -144,9 +183,19 @@ namespace {
         config.automation.sessionName      = options.session.empty() ? DefaultSessionName : options.session;
 
         if (!options.session.empty()) {
-            // 隔离会话：包、存档、端口都归自己，其他实例不受影响。
-            config.packLinkMode        = mcdk::PackLinkMode::World;
-            config.world.folderName   += "__" + options.session;
+            // 隔离会话：数据目录按 Lane 级别隔离，端口和输入也归自己。
+            const auto level = mcdk::lane::parseLevel(options.lane.empty() ? "worlds" : options.lane);
+            if (!level) {
+                throw std::runtime_error("--lane 只能是 addons、worlds 或 full：" + options.lane);
+            }
+            config.automation.laneLevel = *level;
+            config.automation.laneRoot  = laneRootFor(options);
+            // 包只链接到 Lane 自己的包目录，存档里不放任何联接，不受配置影响。
+            config.packLinkMode = mcdk::PackLinkMode::Global;
+            // addons 级别的存档目录与其他实例共享，用会话名区分。
+            if (*level == mcdk::lane::Level::Addons) {
+                config.world.folderName += "__" + options.session;
+            }
             config.mcpServer.enabled   = true;
             config.mcpServer.preferPostInput = true;
             const bool portSpecified   = std::ranges::any_of(options.overrides, [](std::string_view expression) {
@@ -177,6 +226,16 @@ namespace {
         mcdk::UserConfig config;
         try {
             config = loadRunConfig(options, configPath);
+            if (config.automation.laneLevel) {
+                const auto& laneRoot = config.automation.laneRoot;
+                ensureIgnored(options.laneRootPath.empty() ? laneRoot.parent_path() : laneRoot);
+                const auto realAppData = MCDevTool::getAppDataPath();
+                mcdk::lane::prepare(realAppData, laneRoot, *config.automation.laneLevel);
+                config.automation.laneEntry = mcdk::lane::gameEntry(realAppData, laneRoot, options.session);
+                mcdk::lane::linkGameEntry(config.automation.laneEntry, laneRoot);
+                // 之后 mcdk 计算的包目录、存档目录也走同一个入口，和游戏看到的路径一致。
+                MCDevTool::setAppDataPathOverride(config.automation.laneEntry);
+            }
         } catch (const std::exception& exception) {
             std::cerr << "[ERROR] " << exception.what() << '\n';
             return ExitConfig;
@@ -236,6 +295,12 @@ namespace {
         }
         for (const auto& expression : options.overrides) {
             command += L" --set " + quoteArgument(CLI::widen(expression));
+        }
+        if (!options.lane.empty()) {
+            command += L" --lane " + quoteArgument(CLI::widen(options.lane));
+        }
+        if (!options.laneRootPath.empty()) {
+            command += L" --lane-root " + quoteArgument(options.laneRootPath.wstring());
         }
 
         SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
@@ -338,15 +403,21 @@ namespace {
     void terminateGame(const mcdk::SessionRecord&) { throw std::runtime_error("当前平台不支持 stop"); }
 #endif
 
-    int runCommand(const RunOptions& options) {
+    int runCommand(RunOptions options) {
         fs::path configPath;
         try {
             if (!options.session.empty() && !mcdk::isValidSessionName(options.session)) {
                 throw std::runtime_error("会话名只能包含字母、数字、_ 和 -：" + options.session);
             }
-            // --config 的相对路径相对调用者所在目录，要赶在切到 --project 之前解析。
+            if (options.session.empty() && (!options.lane.empty() || !options.laneRoot.empty())) {
+                throw std::runtime_error("--lane 和 --lane-root 需要配合 --session 使用");
+            }
+            // --config 等相对路径相对调用者所在目录，要赶在切到 --project 之前解析。
             if (!options.config.empty()) {
                 configPath = fs::absolute(fs::u8path(options.config));
+            }
+            if (!options.laneRoot.empty()) {
+                options.laneRootPath = fs::absolute(fs::u8path(options.laneRoot));
             }
             enterProject(options.project);
             if (configPath.empty()) {
@@ -439,6 +510,24 @@ namespace {
             stopped.push_back(sessionToJson(current));
         }
         printJson(stopped);
+        return ExitOk;
+    }
+
+    int laneRemoveCommand(const SessionOptions& options, const std::string& rootOption) {
+        const auto custom = rootOption.empty() ? fs::path{} : fs::absolute(fs::u8path(rootOption));
+        enterProject(options.project);
+        const auto record = mcdk::readSessionRecord(mcdk::sessionRecordPath(fs::current_path(), options.session));
+        if (record && mcdk::isSessionAlive(*record)) {
+            throw std::runtime_error("会话仍在运行，先 mcdk stop --session " + options.session);
+        }
+        const auto root = custom.empty() ? mcdk::lane::defaultRoot(fs::current_path(), options.session) : custom;
+        if (!fs::exists(root)) {
+            std::cerr << "[ERROR] Lane 不存在：" << MCDevTool::Utils::pathToGenericUtf8(root) << '\n';
+            return ExitConfig;
+        }
+        mcdk::lane::unlinkGameEntry(mcdk::lane::gameEntry(MCDevTool::getAppDataPath(), root, options.session));
+        mcdk::lane::remove(root);
+        printJson(Json{{"removed", MCDevTool::Utils::pathToGenericUtf8(root)}});
         return ExitOk;
     }
 
@@ -604,7 +693,21 @@ namespace mcdk::cli {
         run->add_option("--session", runOptions.session, "隔离会话名：独立的包、存档和 MCP 端口，可多开")
             ->type_name("NAME");
         run->add_flag("--detach", runOptions.detach, "后台运行，游戏进程创建后打印会话信息并返回");
-        run->footer(ExitCodeHelp);
+        run->add_option("--lane", runOptions.lane, "Lane 级别：addons、worlds（默认）、full，需要 --session")
+            ->type_name("LEVEL");
+        run->add_option("--lane-root", runOptions.laneRoot, "Lane 目录，默认 <project>/.mcdev/lanes/<会话名>")
+            ->type_name("DIR");
+        run->footer(std::string(LaneHelp) + ExitCodeHelp);
+
+        SessionOptions laneOptions;
+        std::string    laneRemoveRoot;
+        auto*          laneCommand = app.add_subcommand("lane", "管理 Lane 目录");
+        laneCommand->require_subcommand(1);
+        auto* laneRemove = laneCommand->add_subcommand("remove", "删除 Lane：联接只摘链接，不会删到真实游戏数据");
+        addProjectOption(laneRemove, laneOptions.project);
+        laneRemove->add_option("--session", laneOptions.session, "会话名")->type_name("NAME")->required();
+        laneRemove->add_option("--lane-root", laneRemoveRoot, "Lane 目录，默认 <project>/.mcdev/lanes/<会话名>")
+            ->type_name("DIR");
 
         SessionOptions psOptions;
         auto*          ps = app.add_subcommand("ps", "列出会话");
@@ -660,6 +763,9 @@ namespace mcdk::cli {
             }
             if (stop->parsed()) {
                 return stopCommand(stopOptions, stopAll);
+            }
+            if (laneRemove->parsed()) {
+                return laneRemoveCommand(laneOptions, laneRemoveRoot);
             }
             return callCommand(callOptions, callTool, callArguments, callArgumentsFile, callOutput);
         } catch (const CLI::ParseError& error) {

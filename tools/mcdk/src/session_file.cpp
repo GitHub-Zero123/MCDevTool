@@ -75,7 +75,8 @@ namespace mcdk {
             {"worldFolderName", record.worldFolderName},
             {"mcpHost", record.mcpHost},
             {"mcpPort", record.mcpPort},
-            {"isolated", record.isolated},
+            {"lane", record.lane},
+            {"laneRoot", record.laneRoot},
         };
         if (record.exitCode) {
             json["exitCode"] = *record.exitCode;
@@ -122,7 +123,8 @@ namespace mcdk {
         record.worldFolderName = json.value("worldFolderName", "");
         record.mcpHost         = json.value("mcpHost", "");
         record.mcpPort         = json.value("mcpPort", 0);
-        record.isolated        = json.value("isolated", false);
+        record.lane            = json.value("lane", "");
+        record.laneRoot        = json.value("laneRoot", "");
         if (const auto exitCode = json.find("exitCode"); exitCode != json.end()) {
             record.exitCode = exitCode->get<std::uint32_t>();
         }

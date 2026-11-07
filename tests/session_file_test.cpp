@@ -32,7 +32,8 @@ namespace {
             .worldFolderName = "世界__a",
             .mcpHost         = "127.0.0.1",
             .mcpPort         = 19140,
-            .isolated        = true,
+            .lane            = "worlds",
+            .laneRoot        = "D:/项目/.mcdev/lanes/a",
         };
     }
 
@@ -51,7 +52,8 @@ namespace {
         const auto record = mcdk::readSessionRecord(path);
         require(record.has_value(), "record is readable");
         require(record->worldFolderName == "世界__a", "utf-8 survives");
-        require(record->mcpPort == 19140 && record->isolated && !record->exitCode, "fields survive");
+        require(record->mcpPort == 19140 && record->lane == "worlds" && !record->exitCode, "fields survive");
+        require(record->laneRoot == "D:/项目/.mcdev/lanes/a", "lane root survives");
         require(!mcdk::readSessionRecord(project / "missing.json"), "missing record");
 
         std::ofstream(project / "broken.json", std::ios::binary) << "{ nope";

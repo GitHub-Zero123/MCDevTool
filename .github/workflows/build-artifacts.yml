@@ -97,6 +97,13 @@ jobs:
           Copy-Item $mcdk.FullName package/mcdk.exe
           Copy-Item $bridge.FullName package/mcdk_stdio_bridge.exe
 
+          # 隔离会话依赖 Lane shim，它和许可证都生成在 mcdk.exe 旁边。
+          $lane = Join-Path $mcdk.DirectoryName "mcdev-lane-shim.dll"
+          if (-not (Test-Path $lane)) { throw "mcdev-lane-shim.dll not found" }
+          Copy-Item $lane package/
+          New-Item -ItemType Directory -Force -Path package/licenses/lane | Out-Null
+          Copy-Item (Join-Path $mcdk.DirectoryName "licenses/lane/*") package/licenses/lane/
+
           Compress-Archive -Path package/* -DestinationPath "dist/${{ matrix.artifact }}.zip" -Force
 
       - name: Upload artifact

@@ -52,6 +52,7 @@
 #include <mcdk/mc_profiler_mcp.hpp>
 #include <mcdk/runtime/game_lifecycle.hpp>
 #include <mcdk/runtime/session.hpp>
+#include <mcdk/lane.hpp>
 #include <mcdk/session_file.hpp>
 #include <mcdk/shader_reload_support.hpp>
 #include <mcdk/style_processor.hpp>
@@ -67,6 +68,10 @@
 #include <mcdevtool/level.h>
 #include <mcdevtool/style.h>
 #include <nlohmann/json.hpp>
+
+#ifdef _WIN32
+#include <mcdev_lane_shim.h>
+#endif
 
 #include "game_process/logging.hpp"
 #include "game_process/platform.hpp"
@@ -141,6 +146,15 @@ mcdk::GameRunResult mcdk::launchGameExe(
         modDirList != nullptr ? UserModDirConfig::toHotReloadListString(*modDirList) : "[]"
     );
     environment.set(GameEnvironmentVariables::LogProtocol, useSafaiaLogs ? L"1" : L"0");
+    const auto& laneLevel = userConfig.automation.laneLevel;
+    if (laneLevel) {
+        environment.set(MCDEV_LANE_ROOT_ENV, userConfig.automation.laneEntry.wstring());
+        if (const wchar_t* trace = _wgetenv(L"MCDEV_LANE_TRACE"); trace != nullptr && *trace != L'\0') {
+            environment.set(L"MCDEV_LANE_TRACE", trace);
+        }
+        // 游戏的 Python 层与原生层看到同一个 AppData。
+        environment.set(L"APPDATA", userConfig.automation.laneEntry.wstring());
+    }
     auto hotReloadDirs =
         modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList) : std::vector<std::filesystem::path>();
     const bool enableResourceHotReload =
@@ -228,7 +242,9 @@ mcdk::GameRunResult mcdk::launchGameExe(
                    .worldFolderName = userConfig.world.folderName,
                    .mcpHost         = mcpServerConfig.enabled ? mcpServerConfig.serverIp : std::string{},
                    .mcpPort         = mcpServerConfig.enabled ? mcpServerConfig.serverPort : 0,
-                   .isolated        = userConfig.packLinkMode == mcdk::PackLinkMode::World,
+                   .lane            = laneLevel ? std::string(mcdk::lane::levelName(*laneLevel)) : std::string{},
+                   .laneRoot        = laneLevel ? MCDevTool::Utils::pathToGenericUtf8(userConfig.automation.laneRoot)
+                                                : std::string{},
             }
         );
     }
@@ -960,7 +976,8 @@ mcdk::GameRunResult mcdk::launchGameExe(
                 : "插件 " + owner + " 截停了游戏进程创建却没有交回进程（commit_process），启动中止"
         );
     } else {
-        const DWORD creationFlags = CREATE_UNICODE_ENVIRONMENT | (useSafaiaLogs ? CREATE_SUSPENDED : 0);
+        const DWORD creationFlags =
+            CREATE_UNICODE_ENVIRONMENT | (useSafaiaLogs || laneLevel ? CREATE_SUSPENDED : 0);
         if (!CreateProcessW(
                 nullptr,
                 cmdUtf16.data(),
@@ -995,10 +1012,20 @@ mcdk::GameRunResult mcdk::launchGameExe(
     }
 
     // 插件交回的进程一律是挂起的，与 Safaia 模式共用「先就绪、再恢复」这一步。
-    const bool                         startedSuspended = committed.has_value() || useSafaiaLogs;
+    const bool startedSuspended = committed.has_value() || useSafaiaLogs || laneLevel.has_value();
     std::unique_ptr<SafaiaLogReceiver> safaiaReceiver;
     if (startedSuspended) {
         try {
+            // Lane shim 必须赶在游戏入口点之前加载，所以在恢复主线程前排队。
+            std::optional<mcdk::lane::ShimInjection> laneShim;
+            if (laneLevel) {
+                laneShim.emplace(
+                    processHandle.get(),
+                    primaryThreadHandle.get(),
+                    pid,
+                    mcdk::lane::shimPath(currentExecutableDirectory())
+                );
+            }
             if (useSafaiaLogs) {
                 safaiaReceiver = std::make_unique<SafaiaLogReceiver>(pid);
                 if (const auto error = safaiaReceiver->start()) {
@@ -1020,6 +1047,14 @@ mcdk::GameRunResult mcdk::launchGameExe(
                 throw std::runtime_error(
                     "插件 " + committed->ownerId + " 交回的进程挂起计数为 " + std::to_string(previousCount)
                     + "，不符合接管契约（须以 CREATE_SUSPENDED 创建且只挂起一次），启动中止"
+                );
+            }
+            if (laneShim) {
+                laneShim->waitArmed(std::chrono::seconds(15));
+                printColoredAtomic(
+                    "[MCDK] Lane " + std::string(mcdk::lane::levelName(*laneLevel)) + "："
+                        + MCDevTool::Utils::pathToGenericUtf8(userConfig.automation.laneRoot),
+                    ConsoleColor::Cyan
                 );
             }
         } catch (...) {

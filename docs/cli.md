@@ -42,7 +42,7 @@ mcdk help execute_code
 ## `mcdk run`
 
 ```bash
-mcdk run [--project DIR] [--config FILE] [--set KEY=VALUE]... [--session NAME] [--detach]
+mcdk run [--project DIR] [--config FILE] [--set KEY=VALUE]... [--session NAME] [--lane LEVEL] [--lane-root DIR] [--detach]
 ```
 
 | 参数 | 说明 |
@@ -51,6 +51,8 @@ mcdk run [--project DIR] [--config FILE] [--set KEY=VALUE]... [--session NAME] [
 | `--config` | 要读取的配置文件，默认 `<project>/.mcdev.json`。相对路径相对调用者所在目录 |
 | `--set` | 覆写配置项，可重复，按出现顺序生效 |
 | `--session` | 隔离会话名，只能包含字母、数字、`_` 和 `-`。不指定时会话名为 `default`，且不隔离 |
+| `--lane` | Lane 级别：`addons`、`worlds`（默认）、`full`，需要 `--session` |
+| `--lane-root` | Lane 目录，默认 `<project>/.mcdev/lanes/<会话名>` |
 | `--detach` | 后台运行：游戏进程创建后打印会话信息并返回，输出写入 `.mcdev/sessions/<名称>.log` |
 
 `--config` 只决定读哪个文件，不改变相对路径的基准。这样放在别处的测试配置里，`"./"` 仍然指项目目录。配置文件不存在时直接失败，不会创建。
@@ -74,11 +76,13 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 
 `--session NAME` 在配置之上做这几件事：
 
-- `pack_link_mode` 改为 `world`，不碰全局包目录。
-- 存档目录变成 `<world_folder_name>__NAME`。
+- 在 [Lane](lane.md) 里运行：游戏的数据根目录指向这个会话自己的目录，按 `--lane` 级别决定独享包目录、存档还是整个数据目录。
+- 包只链接到 Lane 的包目录，存档里不放任何联接，配置里的 `pack_link_mode` 不生效。
+- `addons` 级别的存档与真实目录共享，存档目录变成 `<world_folder_name>__NAME`；`worlds`、`full` 级别沿用原名。
 - 启用 MCP，并分配一个空闲端口。用 `--set mcp_server_config.server_port=...` 可以指定端口。
+- `mc_input` 默认使用后台投递。
 
-隔离会话之间互不影响，同 UUID 的包也能并存，比如同一项目的两个 worktree。无参 `mcdk` 和不带 `--session` 的 `run` 仍会清理全局包目录，但影响不到隔离会话。
+隔离会话之间互不影响，同 UUID 的包也能并存，比如同一项目的两个 worktree。无参 `mcdk` 和不带 `--session` 的 `run` 仍使用真实的全局包目录，影响不到隔离会话。机制、目录布局和删除方式见 [lane.md](lane.md)。
 
 ### 与无参启动的差异
 
@@ -96,9 +100,9 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 | `global`（默认） | `games/com.netease/behavior_packs`、`resource_packs` | 与之前的行为一致。每次启动先清空这两个目录，同时只适合运行一个普通实例 |
 | `world` | 存档内的 `behavior_packs`、`resource_packs` | 不碰全局目录。链接保留在存档里，记录在 `.mcdk_pack_links.json`，下次启动时重建 |
 
-联机调试的子进程模式不做任何链接，依赖主实例的全局包，所以主实例要保持 `global`。
+联机调试的子进程模式不做任何链接，依赖主实例的全局包，所以主实例要保持 `global`。隔离会话不使用这个配置项，见上文。
 
-**警告：不要在游戏界面里删除 `world` 模式的存档。** 这类存档里始终有指向源码的目录联接，实测游戏删除存档时会顺着联接把源码一起删掉。这个问题目前没有防护，隔离会话的存档（`<world_folder_name>__<会话名>`）都属于这一类。需要重建存档时用 `reset_world`，mcdk 只会摘掉链接。
+**警告：不要在游戏界面里删除 `world` 模式的存档。** 这类存档里始终有指向源码的目录联接，实测游戏删除存档时会顺着联接把源码一起删掉。需要重建存档时用 `reset_world`，mcdk 只会摘掉链接。需要隔离时请改用 Lane，它不在存档里放联接。
 
 ## 会话命令
 
@@ -110,6 +114,7 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 | `mcdk wait [--state ready\|exited] [--timeout 秒]` | 等待进入存档或退出。默认等 `ready`，超时 120 秒。会话还没启动时会继续等 |
 | `mcdk call <工具> [--args JSON] [--args-file FILE] [--output FILE] [--timeout 秒]` | 调用工具。截图等大结果用 `--output` 写入文件 |
 | `mcdk stop [--all] [--timeout 秒]` | 结束游戏并等 mcdk 退出。返回后端口已释放，可以马上重开同名会话 |
+| `mcdk lane remove --session NAME [--lane-root DIR]` | 删除会话的 Lane 目录和入口联接。遇到联接只摘链接，不会删到真实游戏数据。会话仍在运行时拒绝 |
 
 `stop` 直接结束游戏进程，不走正常保存流程。原因见下文的“退出码”。
 
@@ -166,6 +171,7 @@ CLI 不替代 MCP，两者共用同一份工具定义和同一个服务。MCP �
 ## 已知限制
 
 - `mc_input` 的后台投递限制见下文“后台输入”。
-- `%APPDATA%` 下的游戏设置仍由所有实例共享。
+- `addons`、`worlds` 级别的 Lane 仍与真实目录共享游戏设置和日志；需要完全独立请用 `full`。
 - 不带 `--session` 的 `run` 不要同时运行多个：全局包清理发生在 MCP 端口检查之前。
-- 隔离会话的存档不会自动删除。
+- Lane 不会自动删除，用 `mcdk lane remove` 清理。
+- Lane 依赖 `mcdev-lane-shim.dll`，只有 CMake 会构建它；缺少时隔离会话拒绝启动。

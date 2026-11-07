@@ -149,7 +149,7 @@ mcdk::GameRunResult mcdk::startGame(const UserConfig& userConfig) {
             std::cout << "已从玩法地图源码部署运行时世界数据。\n";
         }
     } else if (!std::filesystem::is_directory(worldsPath) || resetWorld) {
-        std::filesystem::remove_all(worldsPath);
+        MCDevTool::removeAllNoFollow(worldsPath);
         if (resetWorld) {
             std::cout << "已删除旧世界数据，正在创建新世界...\n";
         }

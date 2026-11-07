@@ -29,7 +29,8 @@ namespace mcdk {
         std::string                  worldFolderName;
         std::string                  mcpHost;
         int                          mcpPort = 0;
-        bool                         isolated = false;
+        std::string                  lane; // Lane 级别，空表示没有隔离
+        std::string                  laneRoot;
         std::optional<std::uint32_t> exitCode;
     };
 
