@@ -1,4 +1,6 @@
 #include <mcdk/host_bridge.hpp>
+#include <mcdk/runtime/game_lifecycle.hpp>
+#include <mcdk/version.hpp>
 
 #include <array>
 #include <atomic>
@@ -7,6 +9,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -148,6 +151,15 @@ int main() {
             !initialize["params"]["capabilities"].value("debugCapabilityEnabled", true),
             "initialize debug capability"
         ));
+        // 状态取自追踪器，不是 provider——这里两者故意分歧，钉住取值来源。
+        record(expect(
+            initialize["params"]["session"].value("state", "") == "game_ready",
+            "initialize state comes from the lifecycle tracker"
+        ));
+        record(expect(
+            initialize["params"]["mcdk"].value("version", "") == std::string(mcdk::kVersion),
+            "initialize reports the mcdk version"
+        ));
         record(sendFrame(
             client,
             {{"jsonrpc", "2.0"}, {"id", initialize["id"]}, {"result", {{"protocolVersion", 1}}}}
@@ -238,6 +250,10 @@ int main() {
         .worldFolderName        = "test-world",
         .worldRuntimePath       = std::filesystem::current_path() / "test-world",
     });
+    auto       lifecycle   = std::make_shared<mcdk::runtime::GameLifecycleTracker>();
+    lifecycle->setDebugCapabilityEnabled(true);
+    const bool enteredWorld = lifecycle->onIpcClientCountChanged(1).has_value();
+    bridge.setGameLifecycle(lifecycle);
     bridge.start();
 
     host.join();
@@ -245,7 +261,7 @@ int main() {
     closesocket(listener);
     WSACleanup();
 
-    return environmentCachePassed && hostPassed.load() && handlerCalls.load() == 0 ? 0 : 1;
+    return environmentCachePassed && enteredWorld && hostPassed.load() && handlerCalls.load() == 0 ? 0 : 1;
 }
 #else
 int main() { return 0; }

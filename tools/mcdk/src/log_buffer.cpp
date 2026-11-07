@@ -60,4 +60,9 @@ namespace mcdk {
         return result;
     }
 
+    std::size_t LogBuffer::size() const {
+        std::lock_guard lock(mMutex);
+        return mBuffer.size();
+    }
+
 } // namespace mcdk

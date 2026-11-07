@@ -1,0 +1,128 @@
+/*
+ * MCDK 插件 ABI —— mcdk.game/1
+ * 纯 C99。约束见 ../core.h 顶部说明。
+ */
+#ifndef MCDK_PLUGIN_ABI_IFACE_GAME_H
+#define MCDK_PLUGIN_ABI_IFACE_GAME_H
+
+#include "../core.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define MCDK_IFACE_GAME_NAME    "mcdk.game"
+#define MCDK_IFACE_GAME_VERSION 1u
+
+typedef uint32_t mcdk_side;
+enum {
+    MCDK_SIDE_SERVER = 0,
+    MCDK_SIDE_CLIENT = 1
+};
+
+typedef uint32_t mcdk_image_format;
+enum {
+    MCDK_IMAGE_JPEG = 0
+};
+
+typedef uint32_t mcdk_world_override_mode;
+enum {
+    MCDK_WORLD_OVERRIDE_MERGE   = 0, /* 只改给出的键，其余沿用当前设置 */
+    MCDK_WORLD_OVERRIDE_REPLACE = 1  /* 给出的键之外一律回到默认值 */
+};
+
+typedef struct mcdk_capture_options {
+    uint32_t struct_size;
+    /* 等比缩放高度上限，不放大小窗口；0 = 宿主默认（480）。 */
+    uint32_t max_height;
+    /*
+     * 客户区内的截取范围，归一化到 0.0~1.0：(0,0) 左上、(1,1) 右下，与 mc_input
+     * 的坐标系同构。四个值全为 0 表示整块客户区。
+    */
+    double region_left;
+    double region_top;
+    double region_right;
+    double region_bottom;
+} mcdk_capture_options;
+
+typedef struct mcdk_image_info {
+    uint32_t struct_size;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format; /* mcdk_image_format */
+    size_t   byte_size;
+} mcdk_image_info;
+
+typedef struct mcdk_iface_game {
+    uint32_t struct_size;
+    uint32_t _reserved;
+
+    /*
+     * 在游戏进程里执行 Python 并取回返回值，阻塞至游戏返回或超时。
+     * out_result_json 借用，指向宿主线程局部缓冲，必须立即拷贝。
+    */
+    mcdk_status(MCDK_CALL* execute_python)(
+        mcdk_handle self,
+        mcdk_str    code,
+        mcdk_side   side,
+        uint32_t    timeout_ms,
+        mcdk_str*   out_result_json
+    );
+
+    /*
+     * 截取游戏窗口，输出 JPEG。宿主持有图像，插件拷走后必须 release。
+     * 采用宿主持有句柄而非共享分配器，是为了让边界上不出现任何分配器穿越
+    */
+    mcdk_status(MCDK_CALL* capture_window)(
+        mcdk_handle                 self,
+        const mcdk_capture_options* options,
+        mcdk_handle*                out_image
+    );
+
+    mcdk_status(MCDK_CALL* image_get_info)(mcdk_handle self, mcdk_handle image, mcdk_image_info* out_info);
+
+    /*
+     * 拷入调用方缓冲。capacity 小于 byte_size 时不写入任何数据，
+     * 回填所需长度到 out_written 并返回 MCDK_ERR_BUFFER_TOO_SMALL。
+    */
+    mcdk_status(MCDK_CALL* image_copy)(
+        mcdk_handle self,
+        mcdk_handle image,
+        void*       buffer,
+        size_t      capacity,
+        size_t*     out_written
+    );
+
+    /*
+     * 释放图像句柄。必须被调用。
+     * 宿主会在 MCDK_STAGE_SHUTDOWN 清理遗留图像并告警。
+    */
+    void(MCDK_CALL* image_release)(mcdk_handle self, mcdk_handle image);
+
+    /*
+     * 只能在 mcdk.game.process.create 的回调里调用：交回插件自己创建的游戏进程。
+     * 进程必须以 CREATE_SUSPENDED 创建且只挂起一次，由宿主恢复。宿主另开句柄，
+     * 插件自己的 hProcess / hThread 照常关闭。
+     * 别的插件已交回过返回 MCDK_ERR_DUPLICATE；tid 不属于 pid 返回 MCDK_ERR_INVALID_ARGUMENT。
+     */
+    mcdk_status(MCDK_CALL* commit_process)(mcdk_handle self, mcdk_handle request, uint32_t pid, uint32_t tid);
+
+    /*
+     * 只能在 mcdk.world.resolve 的回调里调用：改写存档设置。settings_json 是对象，
+     * 键名与 .mcdev.json 相同；mode 见 mcdk_world_override_mode。
+     * 别的插件已改写过返回 MCDK_ERR_DUPLICATE；未知键、类型不对、目录名不合法返回
+     * MCDK_ERR_INVALID_ARGUMENT，原因见 get_last_error。
+     */
+    mcdk_status(MCDK_CALL* override_world)(
+        mcdk_handle self,
+        mcdk_handle request,
+        mcdk_str    settings_json,
+        uint32_t    mode
+    );
+} mcdk_iface_game;
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
+
+#endif /* MCDK_PLUGIN_ABI_IFACE_GAME_H */

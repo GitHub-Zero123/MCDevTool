@@ -43,8 +43,15 @@
 #include <mcdk/mod_register.hpp>
 #include <mcdk/particle_reload_support.hpp>
 #include <mcdk/performance/profiler_runtime_owner.hpp>
+#include <mcdk/plugin/abi/iface/info.h>
+#include <mcdk/plugin_host/events.hpp>
+#include <mcdk/plugin_host/session_binding.hpp>
+#include <mcdk/plugin_host/host.hpp>
+#include <mcdk/plugin_host/process_request.hpp>
 #include <mcdk/performance/profiler_service_factory.hpp>
 #include <mcdk/mc_profiler_mcp.hpp>
+#include <mcdk/runtime/game_lifecycle.hpp>
+#include <mcdk/runtime/session.hpp>
 #include <mcdk/shader_reload_support.hpp>
 #include <mcdk/style_processor.hpp>
 #include <mcdk/utils.hpp>
@@ -66,6 +73,7 @@
 using mcdk::printColoredAtomic;
 using mcdk::UserModDirConfig;
 using mcdk::UserStyleProcessor;
+using mcdk::detail::convertUtf16ToUtf8;
 using mcdk::detail::convertUtf8ToUtf16;
 using mcdk::detail::createGameLogHandlers;
 using mcdk::detail::currentExecutableDirectory;
@@ -77,6 +85,37 @@ using ConsoleColor = mcdk::ConsoleColor;
 
 #ifdef _WIN32
 // 启动游戏可执行文件
+namespace mcdk {
+
+    // runtime 枚举 → ABI 取值。与 interfaces/info.cpp 里那份必须一致。
+    [[nodiscard]] static std::uint32_t toAbiGameState(runtime::GameLifecycleState state) noexcept {
+        switch (state) {
+        case runtime::GameLifecycleState::Loading:
+            return MCDK_GAME_LOADING;
+        case runtime::GameLifecycleState::Menu:
+            return MCDK_GAME_MENU;
+        case runtime::GameLifecycleState::InWorld:
+            return MCDK_GAME_IN_WORLD;
+        case runtime::GameLifecycleState::Exited:
+            return MCDK_GAME_EXITED;
+        case runtime::GameLifecycleState::Unavailable:
+        default:
+            return MCDK_GAME_UNAVAILABLE;
+        }
+    }
+
+    static void emitGameStateChanged(const runtime::GameLifecycleTransition& transition) {
+        MCDK_EMIT(plugin_host::EventId::GameStateChanged, [&transition] {
+            mcdk_ev_game_state payload{};
+            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+            payload.from        = toAbiGameState(transition.from);
+            payload.to          = toAbiGameState(transition.to);
+            return payload;
+        });
+    }
+
+} // namespace mcdk
+
 void mcdk::launchGameExe(
     const std::filesystem::path&                   exePath,
     std::string_view                               config,
@@ -84,14 +123,14 @@ void mcdk::launchGameExe(
     const std::vector<UserModDirConfig>*           modDirList,
     const std::vector<MCDevTool::Addon::PackInfo>* linkedPacks
 ) {
-    const bool  autoHotReload          = userConfig.hotReload.mods;
-    const bool  autoHotReloadUi        = userConfig.hotReload.ui;
-    const bool  autoHotReloadShaders   = userConfig.hotReload.shaders;
-    const bool  autoHotReloadMaterials = userConfig.hotReload.materials;
-    const bool  autoHotReloadParticles = userConfig.hotReload.particles;
-    const bool  useSafaiaLogs          = userConfig.logProtocol == GameLogProtocol::Safaia;
-    const auto& mcpServerConfig        = userConfig.mcpServer;
-    auto        hostBridgeConfig       = mcdk::getEnvHostBridgeConfig();
+    const bool             autoHotReload          = userConfig.hotReload.mods;
+    const bool             autoHotReloadUi        = userConfig.hotReload.ui;
+    const bool             autoHotReloadShaders   = userConfig.hotReload.shaders;
+    const bool             autoHotReloadMaterials = userConfig.hotReload.materials;
+    const bool             autoHotReloadParticles = userConfig.hotReload.particles;
+    const bool             useSafaiaLogs          = userConfig.logProtocol == GameLogProtocol::Safaia;
+    const auto&            mcpServerConfig        = userConfig.mcpServer;
+    auto                   hostBridgeConfig       = mcdk::getEnvHostBridgeConfig();
     GameEnvironmentBuilder environment;
 
     // The embedded Python Mod reads all launch-specific data from this child environment.
@@ -101,7 +140,7 @@ void mcdk::launchGameExe(
         modDirList != nullptr ? UserModDirConfig::toHotReloadListString(*modDirList) : "[]"
     );
     environment.set(GameEnvironmentVariables::LogProtocol, useSafaiaLogs ? L"1" : L"0");
-    auto        hotReloadDirs =
+    auto hotReloadDirs =
         modDirList != nullptr ? UserModDirConfig::toPathList(*modDirList) : std::vector<std::filesystem::path>();
     const bool enableResourceHotReload =
         autoHotReloadUi || autoHotReloadShaders || autoHotReloadMaterials || autoHotReloadParticles;
@@ -109,18 +148,18 @@ void mcdk::launchGameExe(
         enableResourceHotReload && modDirList != nullptr && linkedPacks != nullptr
             ? UserModDirConfig::collectHotReloadResourcePackPaths(*modDirList, *linkedPacks)
             : std::vector<std::filesystem::path>();
-    auto hotReloadUiDirs         = autoHotReloadUi
-                                     ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "ui")
-                                     : std::vector<std::filesystem::path>();
-    auto hotReloadShaderDirs     = autoHotReloadShaders
-                                     ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "shaders")
-                                     : std::vector<std::filesystem::path>();
-    auto hotReloadMaterialDirs   = autoHotReloadMaterials
-                                     ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "materials")
-                                     : std::vector<std::filesystem::path>();
-    auto hotReloadParticleDirs   = autoHotReloadParticles
-                                     ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "particles")
-                                     : std::vector<std::filesystem::path>();
+    auto hotReloadUiDirs     = autoHotReloadUi
+                                 ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "ui")
+                                 : std::vector<std::filesystem::path>();
+    auto hotReloadShaderDirs = autoHotReloadShaders
+                                 ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "shaders")
+                                 : std::vector<std::filesystem::path>();
+    auto hotReloadMaterialDirs =
+        autoHotReloadMaterials ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "materials")
+                               : std::vector<std::filesystem::path>();
+    auto hotReloadParticleDirs =
+        autoHotReloadParticles ? UserModDirConfig::collectResourceSubdirPaths(hotReloadResourcePackDirs, "particles")
+                               : std::vector<std::filesystem::path>();
     bool enablePyHotReload       = autoHotReload && !hotReloadDirs.empty();
     bool enableUiHotReload       = autoHotReloadUi && !hotReloadUiDirs.empty();
     bool enableShaderHotReload   = autoHotReloadShaders && !hotReloadShaderDirs.empty();
@@ -128,54 +167,81 @@ void mcdk::launchGameExe(
     bool enableParticleHotReload = autoHotReloadParticles && !hotReloadParticleDirs.empty();
     bool enableAnyHotReload = enablePyHotReload || enableUiHotReload || enableShaderHotReload || enableMaterialHotReload
                            || enableParticleHotReload;
-    bool  enableIPC     = mcpServerConfig.enabled || enableAnyHotReload || hostBridgeConfig.enabled;
-    bool  needLogBuffer = false;
+    bool enableIPC     = mcpServerConfig.enabled || enableAnyHotReload || hostBridgeConfig.enabled;
+    bool needLogBuffer = false;
 
-    auto ipcServer = MCDevTool::Debug::createDebugServer();
-    auto logBuffer = std::make_shared<mcdk::LogBuffer>(1000, 250);
-    auto errBuffer = std::make_shared<mcdk::LogBuffer>(1000, 400);
-    auto profilerGamePid = std::make_shared<std::atomic<std::uint32_t>>(0);
-    auto profilerRuntime = std::make_shared<mcdk::performance::ProfilerRuntimeOwner>(
-        [ipcServer, profilerGamePid, storageRoot = std::filesystem::current_path() / ".mcdev" / "profiles"] {
-            return mcdk::performance::createProfilerService({
-                .executeCode = [ipcServer](
-                    std::string code,
-                    mcdk::performance::ProfileTarget side,
-                    std::chrono::milliseconds timeout
-                ) -> std::expected<nlohmann::json, mcdk::performance::GameExecutionError> {
-                    if (!ipcServer || ipcServer->getClientCount() == 0) {
-                        return std::unexpected(mcdk::performance::GameExecutionError{
-                            .code = "GAME_WORLD_NOT_READY",
-                            .message = "Minecraft has not entered a world or the debug IPC is unavailable.",
-                            .retryable = true,
-                        });
-                    }
-                    const bool isClient = side != mcdk::performance::ProfileTarget::Server;
-                    auto value = mcdk::ipc_code_execution::requestCodeReturnValueJson(
-                        ipcServer,
-                        std::move(code),
-                        isClient,
-                        static_cast<std::uint32_t>(std::clamp<std::int64_t>(timeout.count(), 1, 120000))
-                    );
-                    if (value.is_object() && value.contains("error") && !value.contains("reason")) {
-                        return std::unexpected(mcdk::performance::GameExecutionError{
-                            .code = "GAME_EXECUTION_FAILED",
-                            .message = value.value("error", "Game IPC execution failed."),
-                            .retryable = true,
-                        });
-                    }
-                    return value;
-                },
-                .currentGameProcessId = [profilerGamePid] {
-                    return profilerGamePid->load(std::memory_order_acquire);
-                },
-                .storageRoot = storageRoot,
-                .executableDirectory = currentExecutableDirectory(),
-                .memoryIdleTimeout = std::chrono::minutes(20),
-            });
+    // 游戏启动前的唯一否决点。刻意放在所有子系统搭起来之前：此处返回不需要
+    // 拆卸任何东西。零插件时这整段是一次原子读加一次分支。
+    {
+        // 路径转 UTF-8 写在工厂里，只在确有订阅者时执行；arena 负责让那串
+        // 活过整个 dispatch（见 events.hpp 的 PayloadArena）。
+        const bool vetoed = MCDK_EMIT_VETOABLE(mcdk::plugin_host::EventId::GameLaunchBefore, [&](auto& arena) {
+            mcdk_ev_game_launch_before payload{};
+            payload.struct_size         = static_cast<std::uint32_t>(sizeof(payload));
+            payload.exe_path            = arena.hold(MCDevTool::Utils::pathToGenericUtf8(exePath));
+            payload.dev_config_path.ptr = config.data();
+            payload.dev_config_path.len = config.size();
+            return payload;
+        });
+        if (vetoed) {
+            printColoredAtomic("[MCDK] 游戏启动被插件否决", ConsoleColor::Yellow);
+            return;
+        }
+    }
+
+    // 运行期子系统集中由 mcdk::runtime::Session 持有，便于插件宿主统一访问。
+    // 详见 docs/plugin-system/08-host-integration.md。
+    mcdk::runtime::Session session(
+        userConfig,
+        std::move(hostBridgeConfig),
+        {
+            .executableDirectory = currentExecutableDirectory(),
+            .profileStorageRoot  = std::filesystem::current_path() / ".mcdev" / "profiles",
         }
     );
-    auto mcpServer = mcdk::MCPServer(mcpServerConfig);
+
+    // 沿用原有局部名字引用 session 的成员，函数其余部分无需改动。
+    auto& ipcServer          = session.ipcServer();
+    auto& logBuffer          = session.logBuffer();
+    auto& errBuffer          = session.errBuffer();
+    auto& profilerGamePid    = session.profilerGamePid();
+    auto& profilerRuntime    = session.profilerRuntime();
+    auto& mcpServer          = session.mcpServer();
+    auto& pyReloadTask       = session.pyReloadTask();
+    auto& uiReloadTask       = session.uiReloadTask();
+    auto& shaderReloadTask   = session.shaderReloadTask();
+    auto& materialReloadTask = session.materialReloadTask();
+    auto& particleReloadTask = session.particleReloadTask();
+    auto& styleProcessor     = session.styleProcessor();
+    auto& hostBridgeTask     = session.hostBridgeTask();
+    // 把运行期子系统接给插件接口层。尽早做：插件在 mcdk.mcp.register.before
+    // 里就可能要读 mcdk.info，而那个事件就在几十行之后。此刻游戏进程还没创建，
+    if (!mcdk::plugin_host::instance().empty()) {
+        mcdk::plugin_host::SessionBinding binding;
+        binding.facts.mcdkPid    = GetCurrentProcessId();
+        binding.facts.mcpPort    = static_cast<std::uint16_t>(mcpServerConfig.serverPort);
+        binding.facts.mcpEnabled = mcpServerConfig.enabled;
+        binding.facts.mcpIp      = mcpServerConfig.serverIp;
+        binding.facts.gameExePath      = MCDevTool::Utils::pathToGenericUtf8(exePath);
+        binding.facts.projectRoot      = MCDevTool::Utils::pathToGenericUtf8(std::filesystem::current_path());
+        binding.facts.worldName        = userConfig.world.name;
+        binding.facts.worldFolderName  = userConfig.world.folderName;
+        binding.facts.worldRuntimePath = MCDevTool::Utils::pathToGenericUtf8(
+            MCDevTool::getMinecraftWorldsPath() / std::filesystem::u8path(userConfig.world.folderName)
+        );
+        // startGame 已计算过同一值；此处重复探测仅发生在单次启动流程中。
+        if (const auto worldSource = mcdk::resolveWorldSourcePath(userConfig.world.source)) {
+            binding.facts.worldSourcePath = MCDevTool::Utils::pathToGenericUtf8(*worldSource);
+        }
+        binding.gamePid         = profilerGamePid;
+        binding.ipcServer       = ipcServer;
+        binding.logBuffer       = logBuffer;
+        binding.errBuffer       = errBuffer;
+        binding.mcpToolRegistry = session.mcpToolRegistry();
+        binding.gameLifecycle   = session.gameLifecycle();
+        mcdk::plugin_host::bindSession(std::move(binding));
+    }
+
     if (mcpServerConfig.enabled) {
         // 若启用MCP服务器将自动启用IPC调试功能
         enableIPC     = true;
@@ -232,9 +298,8 @@ void mcdk::launchGameExe(
                 }
 
                 // Reuse the response DOM parsed for IPC id routing and avoid parsing large return values twice.
-                auto response = result.responseValue
-                              ? std::move(*result.responseValue)
-                              : nlohmann::json::parse(result.responseJson, nullptr, false);
+                auto response = result.responseValue ? std::move(*result.responseValue)
+                                                     : nlohmann::json::parse(result.responseJson, nullptr, false);
                 if (response.is_discarded() || !response.is_object()) {
                     return makeTextResult(true, "Code execution returned invalid JSON: " + result.responseJson);
                 }
@@ -297,17 +362,47 @@ void mcdk::launchGameExe(
             }
             return MCDevTool::Style::triggerMinecraftUiReloadShortcut(pid);
         });
+        // 内置工具先进注册表，各自占住名字，重名的插件工具才能被检出。
+        mcpServer.registerBuiltinTools();
+
+        // 清单声明的插件工具先占位，插件在窗口里给它们补 handler。
+        const auto& toolRegistry = mcpServer.toolRegistry();
+        mcdk::plugin_host::instance().declareMcpTools(*toolRegistry);
+
+        // 插件的注册窗口。before 之后插件可以补充工具，start() 内部会封存注册表。
+        MCDK_EMIT(mcdk::plugin_host::EventId::McpRegisterBefore, [&] {
+            mcdk_ev_mcp_register payload{};
+            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+            payload.tool_count  = static_cast<std::uint32_t>(toolRegistry->size());
+            return payload;
+        });
+
+        // 声明了却没人实现的工具会被发布成一个只会报错的占位，AI 调到才发现。
+        // 宁可在这里直说。
+        if (const auto unbound = toolRegistry->unboundTools(); !unbound.empty()) {
+            std::string names;
+            for (const auto& name : unbound) {
+                names += (names.empty() ? "" : "、") + name;
+            }
+            printColoredAtomic(
+                "[MCDK] plugin.json 声明了以下工具但没有插件实现它们：" + names,
+                ConsoleColor::Red
+            );
+        }
+
         // Publish the MCP server only after every buffer and callback has been configured.
         mcpServer.start();
+
+        // 注册表此时已封存，工具清单不再变化。
+        MCDK_EMIT(mcdk::plugin_host::EventId::McpRegisterFinish, [&] {
+            mcdk_ev_mcp_register payload{};
+            payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+            payload.tool_count  = static_cast<std::uint32_t>(toolRegistry->size());
+            return payload;
+        });
     }
-    mcdk::PyReloadWatcherTask       pyReloadTask;
-    mcdk::UiReloadWatcherTask       uiReloadTask;
-    mcdk::ShaderReloadWatcherTask   shaderReloadTask;
-    mcdk::MaterialReloadWatcherTask materialReloadTask;
-    mcdk::ParticleReloadWatcherTask particleReloadTask;
-    mcdk::UserStyleProcessor        styleProcessor(0, userConfig.windowStyle);
-    mcdk::HostBridgeTask            hostBridgeTask(std::move(hostBridgeConfig));
-    const bool                      debugCapabilityEnabled = userConfig.includeDebugMod && enableIPC;
+    const bool debugCapabilityEnabled = userConfig.includeDebugMod && enableIPC;
+    session.gameLifecycle()->setDebugCapabilityEnabled(debugCapabilityEnabled);
 
     auto mustBindHostMethod = [](std::expected<void, mcdk::RpcBindError> result) {
         if (!result) {
@@ -315,18 +410,22 @@ void mcdk::launchGameExe(
         }
     };
     auto invalidHostParams = [](std::string detail) -> mcdk::RpcResult {
-        return std::unexpected(mcdk::RpcError{
-            .code    = -32602,
-            .message = "Invalid params",
-            .data    = {{"code", "INVALID_PARAMS"}, {"detail", std::move(detail)}},
-        });
+        return std::unexpected(
+            mcdk::RpcError{
+                .code    = -32602,
+                .message = "Invalid params",
+                .data    = {{"code", "INVALID_PARAMS"}, {"detail", std::move(detail)}},
+            }
+        );
     };
     auto gameWorldNotReady = []() -> mcdk::RpcResult {
-        return std::unexpected(mcdk::RpcError{
-            .code    = -32011,
-            .message = "Minecraft has not entered a world",
-            .data    = {{"code", "GAME_WORLD_NOT_READY"}, {"retryable", true}},
-        });
+        return std::unexpected(
+            mcdk::RpcError{
+                .code    = -32011,
+                .message = "Minecraft has not entered a world",
+                .data    = {{"code", "GAME_WORLD_NOT_READY"}, {"retryable", true}},
+            }
+        );
     };
 
     mcdk::RpcMethodOptions ipcStatusOptions;
@@ -338,19 +437,22 @@ void mcdk::launchGameExe(
         {
             .name         = "game/ipc/is-ready",
             .paramsSchema = {{"type", "object"}},
-            .resultSchema = {
-                {"type", "object"},
-                {"required", {"ready", "debugCapabilityEnabled", "clientCount"}},
-            },
+            .resultSchema =
+                {
+                    {"type", "object"},
+                    {"required", {"ready", "debugCapabilityEnabled", "clientCount"}},
+                },
         },
         ipcStatusOptions,
         [ipcServer, debugCapabilityEnabled](const mcdk::RpcContext&, const nlohmann::json& params) -> mcdk::RpcResult {
             if (!params.is_object()) {
-                return std::unexpected(mcdk::RpcError{
-                    .code    = -32602,
-                    .message = "Invalid params",
-                    .data    = {{"code", "INVALID_PARAMS"}, {"detail", "params must be an object"}},
-                });
+                return std::unexpected(
+                    mcdk::RpcError{
+                        .code    = -32602,
+                        .message = "Invalid params",
+                        .data    = {{"code", "INVALID_PARAMS"}, {"detail", "params must be an object"}},
+                    }
+                );
             }
             const auto clientCount = ipcServer->getClientCount();
             return nlohmann::json{
@@ -371,18 +473,17 @@ void mcdk::launchGameExe(
     mustBindHostMethod(hostBridgeTask.registry().bindRaw(
         {
             .name = "game/code/execute",
-            .paramsSchema = {
-                {"type", "object"},
-                {"required", {"code"}},
-                {"properties", {{"code", {{"type", "string"}}}, {"isClient", {{"type", "boolean"}}}}},
-            },
+            .paramsSchema =
+                {
+                    {"type", "object"},
+                    {"required", {"code"}},
+                    {"properties", {{"code", {{"type", "string"}}}, {"isClient", {{"type", "boolean"}}}}},
+                },
             .resultSchema = nullptr,
         },
         gameMethodOptions,
-        [ipcServer, invalidHostParams, gameWorldNotReady](
-            const mcdk::RpcContext& context,
-            const nlohmann::json&   params
-        ) -> mcdk::RpcResult {
+        [ipcServer, invalidHostParams, gameWorldNotReady](const mcdk::RpcContext& context, const nlohmann::json& params)
+            -> mcdk::RpcResult {
             if (!params.is_object() || !params.contains("code") || !params["code"].is_string()) {
                 return invalidHostParams("code must be a string");
             }
@@ -399,64 +500,68 @@ void mcdk::launchGameExe(
                 return nlohmann::json{{"accepted", true}};
             }
 
-            auto ipcResult = ipcServer->requestJsonValue(
-                "execute_code",
-                {{"code", code}, {"is_client", isClient}},
-                10000
-            );
+            auto ipcResult =
+                ipcServer->requestJsonValue("execute_code", {{"code", code}, {"is_client", isClient}}, 10000);
             if (!ipcResult.success) {
                 if (ipcResult.timeout) {
-                    return std::unexpected(mcdk::RpcError{
-                        .code    = -32014,
-                        .message = "Game IPC handler timed out",
-                        .data    = {{"code", "HANDLER_TIMEOUT"}},
-                    });
+                    return std::unexpected(
+                        mcdk::RpcError{
+                            .code    = -32014,
+                            .message = "Game IPC handler timed out",
+                            .data    = {{"code", "HANDLER_TIMEOUT"}},
+                        }
+                    );
                 }
                 return gameWorldNotReady();
             }
 
-            auto response = ipcResult.responseValue
-                          ? std::move(*ipcResult.responseValue)
-                          : nlohmann::json::parse(ipcResult.responseJson, nullptr, false);
+            auto response = ipcResult.responseValue ? std::move(*ipcResult.responseValue)
+                                                    : nlohmann::json::parse(ipcResult.responseJson, nullptr, false);
             if (response.is_discarded() || !response.is_object()) {
-                return std::unexpected(mcdk::RpcError{
-                    .code    = -32603,
-                    .message = "Game IPC returned invalid JSON",
-                    .data    = {{"code", "INTERNAL_ERROR"}},
-                });
+                return std::unexpected(
+                    mcdk::RpcError{
+                        .code    = -32603,
+                        .message = "Game IPC returned invalid JSON",
+                        .data    = {{"code", "INTERNAL_ERROR"}},
+                    }
+                );
             }
             if (!response.value("ok", false)) {
-                std::string message  = "Python code execution failed";
-                std::string gameCode = "execute_code_error";
+                std::string message   = "Python code execution failed";
+                std::string gameCode  = "execute_code_error";
                 const auto  gameError = response.find("error");
                 if (gameError != response.end() && gameError->is_object()) {
                     message  = gameError->value("message", message);
                     gameCode = gameError->value("code", gameCode);
                 }
-                return std::unexpected(mcdk::RpcError{
-                    .code    = -32100,
-                    .message = std::move(message),
-                    .data    = {
-                        {"code", "PYTHON_EXECUTION_FAILED"},
-                        {"gameCode", std::move(gameCode)},
-                        {"side", isClient ? "client" : "server"},
-                    },
-                });
+                return std::unexpected(
+                    mcdk::RpcError{
+                        .code    = -32100,
+                        .message = std::move(message),
+                        .data    = {
+                            {"code", "PYTHON_EXECUTION_FAILED"},
+                            {"gameCode", std::move(gameCode)},
+                            {"side", isClient ? "client" : "server"},
+                        },
+                    }
+                );
             }
 
             auto result = response.find("result");
             if (result == response.end() || !result->is_object() || !result->contains("return_value")) {
-                return std::unexpected(mcdk::RpcError{
-                    .code    = -32603,
-                    .message = "Game IPC response has no return value",
-                    .data    = {{"code", "INTERNAL_ERROR"}},
-                });
+                return std::unexpected(
+                    mcdk::RpcError{
+                        .code    = -32603,
+                        .message = "Game IPC response has no return value",
+                        .data    = {{"code", "INTERNAL_ERROR"}},
+                    }
+                );
             }
 
             auto cleanResult = std::move((*result)["return_value"]);
             if (cleanResult.is_string()) {
                 const auto& serialized = cleanResult.get_ref<const std::string&>();
-                auto nested = nlohmann::json::parse(serialized, nullptr, false);
+                auto        nested     = nlohmann::json::parse(serialized, nullptr, false);
                 if (!nested.is_discarded()) {
                     return nested;
                 }
@@ -468,10 +573,11 @@ void mcdk::launchGameExe(
     mustBindHostMethod(hostBridgeTask.registry().bindRaw(
         {
             .name = "game/reload",
-            .paramsSchema = {
-                {"type", "object"},
-                {"properties", {{"addons", {{"type", "boolean"}}}}},
-            },
+            .paramsSchema =
+                {
+                    {"type", "object"},
+                    {"properties", {{"addons", {{"type", "boolean"}}}}},
+                },
             .resultSchema = {{"type", "object"}},
         },
         gameMethodOptions,
@@ -669,6 +775,25 @@ void mcdk::launchGameExe(
     hostBridgeTask.setOutputCallback(printColoredAtomic);
 
     if (enableIPC) {
+        // 插件侧的 mcdk.ipc.client.*。DebugIPCServer 在 mcdevtool 层，不认识插件系统，
+        // 所以由它提供钩子、这里负责发事件。回调跑在 accept / 客户端读线程上。
+        ipcServer->setClientCountChangedCallback(
+            [tracker = session.gameLifecycle()](std::size_t clientCount, bool connected, unsigned short peerPort) {
+                const auto eventId = connected ? mcdk::plugin_host::EventId::IpcClientConnected
+                                               : mcdk::plugin_host::EventId::IpcClientDisconnected;
+                MCDK_EMIT(eventId, [clientCount, peerPort] {
+                    mcdk_ev_ipc_client payload{};
+                    payload.struct_size  = static_cast<std::uint32_t>(sizeof(payload));
+                    payload.client_count = static_cast<std::uint32_t>(clientCount);
+                    payload.port         = peerPort;
+                    return payload;
+                });
+                // 首次握手 / 最后一个客户端断开，都可能改变游戏生命周期状态。
+                if (const auto transition = tracker->onIpcClientCountChanged(clientCount)) {
+                    mcdk::emitGameStateChanged(*transition);
+                }
+            }
+        );
         ipcServer->start();
         const int port = ipcServer->getPort();
         printColoredAtomic("[MCDK] IPC Bridge listening on port " + std::to_string(port), ConsoleColor::Green);
@@ -727,17 +852,15 @@ void mcdk::launchGameExe(
 
     // Do not expose MCDK's terminal as Minecraft stdin. A Mod calling input()
     // would otherwise block the game thread while waiting for terminal input.
-    UniqueHandle nullInput(
-        CreateFileW(
-            L"NUL",
-            GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            &sa,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            nullptr
-        )
-    );
+    UniqueHandle nullInput(CreateFileW(
+        L"NUL",
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    ));
     if (nullInput.get() == INVALID_HANDLE_VALUE) {
         throw std::runtime_error("CreateFileW(NUL) failed");
     }
@@ -765,45 +888,97 @@ void mcdk::launchGameExe(
         );
     }
 
-    auto cmdUtf16 = convertUtf8ToUtf16(cmd);
+    auto cmdUtf16        = convertUtf8ToUtf16(cmd);
     auto gameEnvironment = std::move(environment).build();
-    const DWORD creationFlags = CREATE_UNICODE_ENVIRONMENT | (useSafaiaLogs ? CREATE_SUSPENDED : 0);
-    if (!CreateProcessW(
-            nullptr,
-            cmdUtf16.data(),
-            nullptr,
-            nullptr,
-            TRUE, // 继承句柄
-            creationFlags,
-            gameEnvironment.data(),
-            nullptr,
-            &si,
-            &pi
-        )) {
-        throw std::runtime_error("CreateProcessW failed");
-    }
 
-    UniqueHandle processHandle(pi.hProcess);
-    UniqueHandle primaryThreadHandle(pi.hThread);
+    // 插件可以在这里接管进程创建（04-events.md §4.4）。受理窗口在工厂里才开，
+    // 零插件时这里只有一次原子读。
+    std::optional<mcdk::plugin_host::ProcessRequest> processRequest;
+    const auto                                       processVerdict = MCDK_EMIT_UNTIL(
+        mcdk::plugin_host::EventId::GameProcessCreate,
+        [&] { return processRequest->settled(); },
+        [&](auto& arena) {
+            processRequest.emplace();
+            mcdk_ev_game_process_create payload{};
+            payload.struct_size      = static_cast<std::uint32_t>(sizeof(payload));
+            payload.request          = processRequest->handle();
+            payload.exe_path         = arena.hold(MCDevTool::Utils::pathToGenericUtf8(exePath));
+            payload.command_line.ptr = cmd.data();
+            payload.command_line.len = cmd.size();
+            payload.environment      = arena.hold(convertUtf16ToUtf8(gameEnvironment));
+            payload.std_input        = reinterpret_cast<std::uintptr_t>(si.hStdInput);
+            payload.std_output       = reinterpret_cast<std::uintptr_t>(si.hStdOutput);
+            payload.std_error        = reinterpret_cast<std::uintptr_t>(si.hStdError);
+            return payload;
+        }
+    );
+    auto committed = processRequest ? processRequest->take() : std::nullopt;
+
+    UniqueHandle processHandle;
+    UniqueHandle primaryThreadHandle;
+    DWORD        pid = 0;
+    if (committed) {
+        processHandle.reset(committed->process);
+        primaryThreadHandle.reset(committed->thread);
+        pid = committed->pid;
+        printColoredAtomic("[MCDK] 游戏进程由插件 " + committed->ownerId + " 创建", ConsoleColor::Cyan);
+    } else if (processVerdict.result != MCDK_EVENT_CONTINUE) {
+        const auto owner = mcdk::plugin_host::pluginIdOf(processVerdict.owner);
+        throw std::runtime_error(
+            processVerdict.result == MCDK_EVENT_VETO
+                ? "插件 " + owner + " 接管游戏进程创建失败，启动中止"
+                : "插件 " + owner + " 截停了游戏进程创建却没有交回进程（commit_process），启动中止"
+        );
+    } else {
+        const DWORD creationFlags = CREATE_UNICODE_ENVIRONMENT | (useSafaiaLogs ? CREATE_SUSPENDED : 0);
+        if (!CreateProcessW(
+                nullptr,
+                cmdUtf16.data(),
+                nullptr,
+                nullptr,
+                TRUE, // 继承句柄
+                creationFlags,
+                gameEnvironment.data(),
+                nullptr,
+                &si,
+                &pi
+            )) {
+            throw std::runtime_error("CreateProcessW failed");
+        }
+        processHandle.reset(pi.hProcess);
+        primaryThreadHandle.reset(pi.hThread);
+        pid = pi.dwProcessId;
+    }
     nullInput.reset();
     nullOutput.reset();
 
-    const DWORD pid = pi.dwProcessId;
+    // 插件交回的进程一律是挂起的，与 Safaia 模式共用「先就绪、再恢复」这一步。
+    const bool                         startedSuspended = committed.has_value() || useSafaiaLogs;
     std::unique_ptr<SafaiaLogReceiver> safaiaReceiver;
-    if (useSafaiaLogs) {
+    if (startedSuspended) {
         try {
-            safaiaReceiver = std::make_unique<SafaiaLogReceiver>(pid);
-            if (const auto error = safaiaReceiver->start()) {
-                throw std::system_error(error, "Failed to start the Safaia log receiver");
+            if (useSafaiaLogs) {
+                safaiaReceiver = std::make_unique<SafaiaLogReceiver>(pid);
+                if (const auto error = safaiaReceiver->start()) {
+                    throw std::system_error(error, "Failed to start the Safaia log receiver");
+                }
+                const auto endpoint = safaiaReceiver->localEndpoint();
+                printColoredAtomic(
+                    "[MCDK] Safaia log receiver listening on " + endpoint.address + ":"
+                        + std::to_string(endpoint.port),
+                    ConsoleColor::Cyan
+                );
             }
-            const auto endpoint = safaiaReceiver->localEndpoint();
-            printColoredAtomic(
-                "[MCDK] Safaia log receiver listening on " + endpoint.address + ":"
-                    + std::to_string(endpoint.port),
-                ConsoleColor::Cyan
-            );
-            if (ResumeThread(primaryThreadHandle.get()) == static_cast<DWORD>(-1)) {
-                throw std::runtime_error("ResumeThread failed for the Safaia game launch");
+            const DWORD previousCount = ResumeThread(primaryThreadHandle.get());
+            if (previousCount == static_cast<DWORD>(-1)) {
+                throw std::runtime_error("ResumeThread failed for the game launch");
+            }
+            // 恰好挂起一次才对：0 说明进程早已在跑，>1 说明恢复后仍然挂着。
+            if (committed && previousCount != 1) {
+                throw std::runtime_error(
+                    "插件 " + committed->ownerId + " 交回的进程挂起计数为 " + std::to_string(previousCount)
+                    + "，不符合接管契约（须以 CREATE_SUSPENDED 创建且只挂起一次），启动中止"
+                );
             }
         } catch (...) {
             if (safaiaReceiver) {
@@ -814,16 +989,26 @@ void mcdk::launchGameExe(
             throw;
         }
     }
-    profilerGamePid->store(pid, std::memory_order_release);
-    // 设置样式处理器PID
-    styleProcessor.setPid(pid);
-    mcpServer.setMinecraftProcessId(pid);
+    // 把进程 id 分发给 profiler、样式处理器与 MCP 服务
+    session.onGameProcessStarted(pid);
+
+    // 运行期子系统均已就绪、游戏进程已创建。
+    mcdk::plugin_host::instance().advance(MCDK_STAGE_RUNTIME);
+
+    MCDK_EMIT(mcdk::plugin_host::EventId::GameLaunchFinish, [&](auto& arena) {
+        mcdk_ev_game_launch_finish payload{};
+        payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+        payload.pid         = static_cast<std::uint32_t>(pid);
+        payload.exe_path    = arena.hold(MCDevTool::Utils::pathToGenericUtf8(exePath));
+        return payload;
+    });
 
     if (hostBridgeTask.enabled()) {
+        hostBridgeTask.setGameLifecycle(session.gameLifecycle());
         hostBridgeTask.setGameStateProvider([ipcServer, debugCapabilityEnabled] {
             return mcdk::HostBridgeGameState{
                 .debugCapabilityEnabled = debugCapabilityEnabled,
-                .gameIpcClientCount      = ipcServer->getClientCount(),
+                .gameIpcClientCount     = ipcServer->getClientCount(),
             };
         });
         hostBridgeTask.setSessionInfo({
@@ -834,9 +1019,9 @@ void mcdk::launchGameExe(
             .projectRoot            = std::filesystem::current_path(),
             .worldName              = userConfig.world.name,
             .worldFolderName        = userConfig.world.folderName,
-            .worldRuntimePath       = MCDevTool::getMinecraftWorldsPath()
-                                    / std::filesystem::u8path(userConfig.world.folderName),
-            .worldSourcePath        = mcdk::resolveWorldSourcePath(userConfig.world.source),
+            .worldRuntimePath =
+                MCDevTool::getMinecraftWorldsPath() / std::filesystem::u8path(userConfig.world.folderName),
+            .worldSourcePath = mcdk::resolveWorldSourcePath(userConfig.world.source),
         });
     }
     hostBridgeTask.start();
@@ -925,7 +1110,6 @@ void mcdk::launchGameExe(
         }
     }
     styleProcessor.start();
-
     // 等待子进程退出（子进程退出后会关闭写端，使 ReadFile 返回
     // ERROR_BROKEN_PIPE）
     if (safaiaReceiver) {
@@ -954,23 +1138,27 @@ void mcdk::launchGameExe(
     if (!GetExitCodeProcess(processHandle.get(), &minecraftExitCode)) {
         minecraftExitCode = static_cast<DWORD>(-1);
     }
-    hostBridgeTask.notifyMinecraftExited(minecraftExitCode);
-    profilerGamePid->store(0, std::memory_order_release);
+    if (const auto transition = session.gameLifecycle()->onMinecraftExited()) {
+        mcdk::emitGameStateChanged(*transition);
+    }
+    MCDK_EMIT(mcdk::plugin_host::EventId::GameExit, [&] {
+        mcdk_ev_game_exit payload{};
+        payload.struct_size = static_cast<std::uint32_t>(sizeof(payload));
+        payload.pid         = static_cast<std::uint32_t>(pid);
+        payload.exit_code   = static_cast<std::int32_t>(minecraftExitCode);
+        return payload;
+    });
 
-    // 停止热更新任务
-    pyReloadTask.safeExit();
-    uiReloadTask.safeExit();
-    shaderReloadTask.safeExit();
-    materialReloadTask.safeExit();
-    particleReloadTask.safeExit();
-    // Stop new MCP calls before tearing down the profiler runtime they invoke.
-    mcpServer.stop();
-    // Profiler cleanup must finish while the game IPC executor is still available.
-    profilerRuntime->shutdown();
-    ipcServer->safeExit();
-    hostBridgeTask.safeExit();
-    // 停止样式处理器
-    styleProcessor.safeExit();
+    // 先让插件收到 SHUTDOWN 并终结，再拆运行期子系统：插件的 onShutdown 里
+    // 可能还要用到它们。终结顺序见 docs/plugin-system/03-abi-reference.md §5。
+    mcdk::plugin_host::instance().advance(MCDK_STAGE_SHUTDOWN);
+    mcdk::plugin_host::instance().shutdown();
+
+    // 插件已经全部终结，把运行期子系统从接口层解绑，释放那几个 shared_ptr。
+    mcdk::plugin_host::unbindSession();
+
+    // 按依赖关系逆序停止全部子系统，顺序约束见 mcdk::runtime::Session::shutdown 的实现
+    session.shutdown(minecraftExitCode);
 
     // 等待读线程退出并关闭读端句柄
     pipeReaders.join();

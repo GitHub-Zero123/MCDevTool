@@ -20,12 +20,14 @@ namespace mcdk {
         [[nodiscard]] std::vector<std::string> getRange(std::size_t index, std::size_t endIndex);
         [[nodiscard]] std::vector<std::string> getRangeReversed(std::size_t index, std::size_t endIndex);
 
+        [[nodiscard]] std::size_t size() const;
+
     private:
         // A deque keeps batched front eviction O(k) without moving every retained log line.
         std::deque<std::string>  mBuffer;
         std::size_t              mCapacity;
         std::size_t              mClearBatchSize;
-        std::mutex               mMutex;
+        mutable std::mutex       mMutex;
     };
 
 } // namespace mcdk

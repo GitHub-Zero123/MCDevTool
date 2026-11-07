@@ -10,6 +10,7 @@
 #include <mcdevtool/style.h>
 
 #include <mcdk/mod_dir_config.hpp>
+#include <mcdk/plugin_declarations.hpp>
 
 namespace mcdk {
 
@@ -81,7 +82,6 @@ namespace mcdk {
         std::string serverIp   = "localhost";
         int         serverPort = 19133;
     };
-
     struct UserConfig {
         std::filesystem::path         gameExecutablePath;
         std::vector<UserModDirConfig> modDirectories;
@@ -96,6 +96,7 @@ namespace mcdk {
         NeteaseConfig                 netease;
         McpServerConfig               mcpServer;
         GameLogProtocol               logProtocol = GameLogProtocol::Stdio;
+        std::vector<PluginDeclaration> plugins;
     };
 
 } // namespace mcdk

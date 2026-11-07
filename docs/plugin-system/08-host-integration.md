@@ -1,0 +1,123 @@
+# 08 · 宿主侧集成与前置重构
+
+上级索引：[README.md](README.md)
+
+## 1. 前置 A：抽出 `mcdk::runtime::Session`
+
+> 已完成。实现位于 `tools/mcdk/include/mcdk/runtime/session.hpp` 与 `tools/mcdk/src/runtime/session.cpp`。
+
+`launchGameExe()` 现有 979 行，把 `ipcServer`、`logBuffer`、`errBuffer`、`mcpServer`、5 个 watcher task、`hostBridgeTask`、`profilerRuntime` 全部作为局部变量持有。接口 shim 无法访问这些对象，因而无从实现 `mcdk.game` 等接口。
+
+**必须**先抽出 `mcdk::runtime::Session`，持有上述全部运行期对象并提供访问器；`launchGameExe` 改为构造 `mcdk::runtime::Session` 并驱动它。接口 shim 一律通过 `host::sessionOf(self)` 取得会话再转发。
+
+不做这一步，后续每新增一个接口都要修改 `launchGameExe`。
+
+### 1.1 分批拆解建议
+
+979 行一次性搬完风险太高。按"谁依赖谁"分三批，每批独立可测、可单独提 PR：
+
+| 批次 | 对象 | 依赖 |
+| --- | --- | --- |
+| 一 | `logBuffer`、`errBuffer`、`profilerGamePid` | 无 |
+| 二 | `ipcServer`、`profilerRuntime`、`mcpServer` | 批一 |
+| 三 | 5 个 watcher task、`hostBridgeTask`、`styleProcessor` | 批一、批二、`UserConfig` |
+
+**第一个 PR 只做纯机械替换**：`mcdk::runtime::Session` 仅持有对象并提供访问器，不搬任何逻辑，`launchGameExe` 的函数体结构保持原样，局部变量换成 `session.xxx()`。这样 diff 全是改名，review 成本低，也不会掩盖行为变化。
+
+逻辑搬迁（例如把 `mcpServer` 的那一大串 `setXxxHandler` 绑定挪进 `mcdk::runtime::Session` 的成员函数）放在第二个 PR，届时已有 `session` 作为落脚点。
+
+完成判据：`launchGameExe` 只剩"构造 session → 配置 → 启动进程 → 等待 → 终结"的骨架，各子系统的装配细节都在 `mcdk::runtime::Session` 内部。
+
+## 2. 前置 B：MCP 工具动态注册表
+
+> 已完成。实现位于 `tools/mcdk/include/mcdk/runtime/mcp_tool_registry.hpp` 与
+> `tools/mcdk/src/runtime/mcp_tool_registry.cpp`，单元测试 `tests/mcp_tool_registry_test.cpp`。
+> `MCPServer::registerBuiltinTools()` 负责内置工具入表，`MCPServer::start()` 封存并按表发布。
+> 插件注册窗口的插入点已在 `launchGameExe` 中以注释标出，待 M4 事件总线落地后接上。
+
+当前 MCP 工具在 `mcp_tool_definitions.cpp` 中静态定义，通过 `MCPServer::setXxxHandler()` 逐个绑定，插件无法插入。
+
+**必须**按 `RpcRegistry` 的形态（含 `seal()`）新建 `McpToolRegistry`，把现有内置工具改为注册进该表。`mcdk.mcp` 接口即是对该表的薄封装。
+
+注册表的 handler 类型**必须**与 `mcp::tool_handler` 逐字一致。注意 `mcp::json` 是 `nlohmann::ordered_json` 而非 `nlohmann::json`，类型写错不会编译失败，只会在每次调用时多一层隐式转换。
+
+注册时序：
+
+```text
+McpToolRegistry 创建
+  → 注册全部内置工具
+  → 发射 mcdk.mcp.register.before    ← 插件在此注册
+  → registry.seal()
+  → 发射 mcdk.mcp.register.finish
+  → MCPServer 依据注册表 register_tool
+```
+
+`RpcRegistry` 已有 `seal()`，只需在其前后补发 `mcdk.rpc.register.before` / `.finish` 两个事件即可，无需重构。
+
+## 3. 阶段推进点
+
+| 阶段 | 触发位置 |
+| --- | --- |
+| `REGISTER` | `main.cpp`，`userParseConfig()` 之后、`startGame()` 之前 |
+| `CONFIG` | `startGame()` 开头，游戏路径校验之后 |
+| `WORLD` | `startGame()` 中 manifest 写盘之前 |
+| `RUNTIME` | `launchGameExe()` 中 `mcdk::runtime::Session` 构造完成、游戏进程启动之后 |
+| `SHUTDOWN` | `launchGameExe()` 返回前，逆序 |
+
+`SHUTDOWN` 之后的插件终结顺序是强规范，见 [03-abi-reference.md](03-abi-reference.md) §5——必须先断开事件派发并排空 in-flight 回调，再调 `on_unload`，顺序反了会把事件打进正在析构的插件对象。
+
+事件与阶段的时序见 [04-events.md](04-events.md) §2。
+
+## 4. 插件加载的接入点
+
+插件声明来自 `.mcdev.json`（见 [06-loading.md](06-loading.md)），因此加载必须发生在配置解析之后：
+
+```text
+main.cpp
+  userParseConfig()                    ← 解析 .mcdev.json，含 plugins 数组
+  PluginHost::loadDeclared(config)     ← 新增：按声明加载、校验、拓扑排序
+  PluginHost::advance(STAGE_REGISTER)
+  startGame(config)
+    PluginHost::advance(STAGE_CONFIG)
+    ...
+```
+
+`UserConfig` 需新增 `std::vector<PluginDeclaration> plugins` 字段，由 `config.cpp` 解析。**注意**：`.mcdev.json` 的解析发生在插件加载之前，因此插件**无法**影响自己的声明，这是刻意的。
+
+## 5. 事件发射点
+
+| 事件 | 发射位置 |
+| --- | --- |
+| `mcdk.mcp.register.*` | `McpToolRegistry` 封存前后（见 §2） |
+| `mcdk.rpc.register.*` | `RpcRegistry::seal()` 前后 |
+| `mcdk.world.resolve` | `startGame()` 中 CONFIG 阶段开始、处理存档之前；实现在 `plugin_host::resolveWorld` |
+| `mcdk.config.resolve.*` | `startGame()` 开头 |
+| `mcdk.pack.link.*` | `linkUserConfigModDirs()` 前后 |
+| `mcdk.world.deploy.*` | `deployWorldSource()` / `createUserLevel()` 前后 |
+| `mcdk.game.launch.*` | `launchGameExe()` 中创建游戏进程前后 |
+| `mcdk.game.process.create` | `launchGameExe()` 中调用 `CreateProcessW` 的位置；受理窗口是 `plugin_host::ProcessRequest` |
+| `mcdk.game.exit` | 游戏进程监视线程检出退出时 |
+| `mcdk.log.line` / `.error` | `createGameLogHandlers()` 产出的两个行处理器入口 |
+| `mcdk.ipc.client.*` | `DebugIPCServer::setClientCountChangedCallback` 的回调 |
+| `mcdk.hotreload.*` | `ConsoleWatcherTask::onFileChanged` / `onHotReloadTriggered` |
+| `mcdk.mcp.tool_call.*` | `McpToolRegistry` 分发入口 |
+| `mcdk.host_bridge.connected` | `HostBridgeTask` 连接建立回调 |
+
+### 5.1 两个发射点的位置说明
+
+**日志事件不在 `LogBuffer::add` 上。** 看上去那里才是「日志写入路径」，但 `handlers.output`
+对带 `[INFO][Developer]` / `SUC` / `ERROR` / `WARN` / `DEBUG` 的行都是打完就 `return`，根本不进
+`LogBuffer`。挂在 `add` 上的话插件会漏掉绝大多数行。所以发射点在两个行处理器的**入口**，
+语义是「游戏输出了一行」而非「某行进了缓冲区」。例外是 ` [INFO][Engine] ` 噪声行：mcdk 自己
+就丢弃它们，事件也不发。
+
+**IPC 事件要经过一层钩子。** `DebugIPCServer` 在 `mcdevtool` 库里，而 `plugin_host` 在
+`mcdk_runtime`，后者依赖前者——直接 include 会形成环依赖。因此 `DebugIPCServer` 只暴露
+`setClientCountChangedCallback`，由 `game_process.cpp`（在 `mcdk_runtime` 层）负责发事件。
+这也是§6 那条「低层不含业务逻辑」规约在发射点上的对应做法。
+
+## 6. shim 层规约
+
+**规范：`tools/mcdk/src/plugin_host/interfaces/` 下的每一个导出函数指针都必须经过 `host::guard`，没有例外。** 见 [02-abi-contract.md](02-abi-contract.md) §4.3，该规则由 CI 静态检查（见 [09-compatibility.md](09-compatibility.md) §5）。
+
+shim 层**禁止**包含业务逻辑，只做三件事：参数转换、调用 `mcdk::runtime::Session` 上的现有实现、结果转换。任何新的业务逻辑都应落在 `mcdk_core` / `mcdk_runtime` 中，以便非插件路径复用。

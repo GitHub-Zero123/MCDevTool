@@ -9,9 +9,34 @@
 
 #include <mcdk/console_output.hpp>
 #include <mcdk/log_buffer.hpp>
-#include <mcdk/utils.hpp>
+#include <mcdk/log_classifier.hpp>
+#include <mcdk/plugin_host/events.hpp>
 
 namespace {
+    // 发射 mcdk.log.line / mcdk.log.error。
+    // 这是整套事件里频率最高的两个，直接串在日志读取线程上，所以
+    [[nodiscard]] inline bool emitLogLine(
+        mcdk::plugin_host::EventId id,
+        std::uint32_t              channel,
+        const std::string&         line
+    ) {
+        return MCDK_EMIT_VETOABLE(id, [&] {
+            mcdk_ev_log_line payload{};
+            payload.struct_size  = static_cast<std::uint32_t>(sizeof(payload));
+            payload.channel      = channel;
+            payload.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::system_clock::now().time_since_epoch()
+            )
+                                       .count();
+            payload.text.ptr = line.data();
+            payload.text.len = line.size();
+            return payload;
+        });
+    }
+
+    constexpr std::uint32_t kLogChannelStdout = 0;
+    constexpr std::uint32_t kLogChannelStderr = 1;
+
     template<typename ProcessLine>
     void processBufferAppend(
         std::string& lineBuffer,
@@ -100,25 +125,35 @@ namespace mcdk::detail {
         GameLogHandlers handlers;
         handlers.output = [needLogBuffer, logBuffer](std::string line) {
             if (line.find(" [INFO][Engine] ") != std::string::npos) {
+                // 引擎噪声，mcdk 自己都不处理，也就不发事件。
                 return;
             }
-            if (line.find("[INFO][Developer]") != std::string::npos) {
-                printColoredAtomic(line, ConsoleColor::DarkGray);
+            const bool muted = emitLogLine(mcdk::plugin_host::EventId::LogLine, kLogChannelStdout, line);
+            const auto show  = [muted](const std::string& text, ConsoleColor color) {
+                if (!muted) {
+                    printColoredAtomic(text, color);
+                }
+            };
+            switch (classifyLogLine(line)) {
+            case LogLineKind::Developer:
+                show(line, ConsoleColor::DarkGray);
                 return;
-            } else if (containsIgnoreCase(line, "SUC")) {
-                printColoredAtomic(line, ConsoleColor::Green);
+            case LogLineKind::Success:
+                show(line, ConsoleColor::Green);
                 return;
-            } else if (containsIgnoreCase(line, "ERROR")) {
-                printColoredAtomic(line, ConsoleColor::Red);
+            case LogLineKind::Error:
+                show(line, ConsoleColor::Red);
                 return;
-            } else if (containsIgnoreCase(line, "WARN")) {
-                printColoredAtomic(line, ConsoleColor::Yellow);
+            case LogLineKind::Warn:
+                show(line, ConsoleColor::Yellow);
                 return;
-            } else if (containsIgnoreCase(line, "DEBUG")) {
-                printColoredAtomic(line, ConsoleColor::Cyan);
+            case LogLineKind::Debug:
+                show(line, ConsoleColor::Cyan);
                 return;
+            case LogLineKind::Plain:
+                break;
             }
-            printColoredAtomic(line, ConsoleColor::Default);
+            show(line, ConsoleColor::Default);
             if (needLogBuffer) {
                 logBuffer->add(std::move(line));
             }
@@ -164,7 +199,10 @@ namespace mcdk::detail {
                 searchFrom = pathEnd + lineMarker.size();
             }
 
-            printColoredAtomic(line, ConsoleColor::Red);
+            // 在路径重写之后发射：插件看到的应该跟控制台、LogBuffer 一致。
+            if (!emitLogLine(mcdk::plugin_host::EventId::LogError, kLogChannelStderr, line)) {
+                printColoredAtomic(line, ConsoleColor::Red);
+            }
             if (needLogBuffer) {
                 logBuffer->add(line);
                 errorBuffer->add(std::move(line));

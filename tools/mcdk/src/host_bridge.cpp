@@ -1,5 +1,8 @@
 #include <mcdk/host_bridge.hpp>
 
+#include <mcdk/runtime/game_lifecycle.hpp>
+#include <mcdk/version.hpp>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -122,19 +125,6 @@ namespace mcdk {
             }
             return id.is_number_integer();
         }
-
-        [[nodiscard]] const char* stateName(const HostBridgeGameState& state, bool minecraftExited, bool wasInWorld) {
-            if (minecraftExited) {
-                return "exited";
-            }
-            if (!state.debugCapabilityEnabled) {
-                return "game_unavailable";
-            }
-            if (state.gameIpcClientCount > 0) {
-                return "game_ready";
-            }
-            return wasInWorld ? "game_unavailable" : "process_started";
-        }
     } // namespace
 
     class HostBridgeTask::Impl {
@@ -224,6 +214,11 @@ namespace mcdk {
             gameStateProvider = std::move(provider);
         }
 
+        void setGameLifecycle(std::shared_ptr<const runtime::GameLifecycleTracker> tracker) {
+            std::lock_guard lock(stateMutex);
+            gameLifecycle = std::move(tracker);
+        }
+
         [[nodiscard]] HostBridgeGameState gameState() const {
             GameStateProvider provider;
             HostBridgeSessionInfo sessionCopy;
@@ -243,17 +238,15 @@ namespace mcdk {
 
         [[nodiscard]] nlohmann::json buildSessionSnapshot() const {
             HostBridgeSessionInfo sessionCopy;
-            bool                  hasExited = false;
             std::optional<std::uint32_t> exitCode;
             {
                 std::lock_guard lock(stateMutex);
                 sessionCopy = session;
-                hasExited   = minecraftExited;
                 exitCode    = minecraftExitCode;
             }
             const auto game = gameState();
             const bool inWorld = game.debugCapabilityEnabled && game.gameIpcClientCount > 0;
-            const auto currentState = stateName(game, hasExited, wasInWorld.load(std::memory_order_relaxed));
+            const auto currentState = currentStateName();
 
             nlohmann::json sourcePath = nullptr;
             if (sessionCopy.worldSourcePath) {
@@ -265,7 +258,7 @@ namespace mcdk {
                   {"startedAt", sessionCopy.startedAt},
                   {"state", currentState},
                   {"stateSequence", stateSequence.load(std::memory_order_relaxed)}}},
-                {"mcdk", {{"pid", sessionCopy.mcdkPid}, {"version", "0.1.0"}}},
+                {"mcdk", {{"pid", sessionCopy.mcdkPid}, {"version", std::string(kVersion)}}},
                 {"minecraft", {{"pid", sessionCopy.minecraftPid}, {"exitCode", exitCode ? nlohmann::json(*exitCode) : nlohmann::json(nullptr)}}},
                 {"gameIpc",
                  {{"host", "127.0.0.1"},
@@ -288,6 +281,27 @@ namespace mcdk {
             return snapshot;
         }
 
+        // 协议里的 session.state。追踪器是宿主内唯一的那份，插件看到的是同一个值。
+        [[nodiscard]] std::string_view currentStateName() const {
+            std::shared_ptr<const runtime::GameLifecycleTracker> tracker;
+            bool                                                 exited = false;
+            {
+                std::lock_guard lock(stateMutex);
+                tracker = gameLifecycle;
+                exited  = minecraftExited;
+            }
+            if (exited) {
+                return runtime::gameLifecycleStateName(runtime::GameLifecycleState::Exited);
+            }
+            if (tracker) {
+                return runtime::gameLifecycleStateName(tracker->state());
+            }
+            const auto game = gameState();
+            return runtime::gameLifecycleStateName(
+                runtime::classifyGameLifecycle(game.debugCapabilityEnabled, game.gameIpcClientCount, false, false)
+            );
+        }
+
         [[nodiscard]] RpcError availabilityError(GameAvailability availability) const {
             const auto game = gameState();
             HostBridgeSessionInfo sessionCopy;
@@ -298,7 +312,7 @@ namespace mcdk {
                 hasExited   = minecraftExited;
             }
             const bool inWorld = game.debugCapabilityEnabled && game.gameIpcClientCount > 0 && !hasExited;
-            const auto currentState = stateName(game, hasExited, wasInWorld.load(std::memory_order_relaxed));
+            const auto currentState = currentStateName();
             nlohmann::json data = {
                 {"retryable", game.debugCapabilityEnabled},
                 {"sessionId", sessionCopy.sessionId},
@@ -762,7 +776,6 @@ namespace mcdk {
             auto heartbeatId   = std::string{};
             const auto initialGameState = gameState();
             bool lastInWorld = initialGameState.debugCapabilityEnabled && initialGameState.gameIpcClientCount > 0;
-            wasInWorld.store(lastInWorld, std::memory_order_relaxed);
 
             while (!stopFlag.load(std::memory_order_acquire)) {
                 try {
@@ -792,7 +805,6 @@ namespace mcdk {
                 const bool inWorld = currentGameState.debugCapabilityEnabled
                                   && currentGameState.gameIpcClientCount > 0;
                 if (inWorld != lastInWorld) {
-                    wasInWorld.store(wasInWorld.load(std::memory_order_relaxed) || inWorld, std::memory_order_relaxed);
                     queueStateNotification(inWorld ? "game_ready" : "game_unavailable", std::nullopt);
                     lastInWorld = inWorld;
                 }
@@ -903,13 +915,13 @@ namespace mcdk {
         ConsoleOutputCallback outputCallback;
         HostBridgeSessionInfo session;
         GameStateProvider     gameStateProvider;
+        std::shared_ptr<const runtime::GameLifecycleTracker> gameLifecycle;
         bool                  minecraftExited = false;
         std::optional<std::uint32_t> minecraftExitCode;
 
         std::atomic<bool>          stopFlag = false;
         std::atomic<bool>          running  = false;
         std::atomic<bool>          connected = false;
-        std::atomic<bool>          wasInWorld = false;
         std::atomic<std::uint64_t> connectionGeneration = 0;
         std::atomic<std::uint64_t> activeGeneration = 0;
         std::atomic<std::uint64_t> nextRequestId = 1;
@@ -945,6 +957,10 @@ namespace mcdk {
 
     void HostBridgeTask::setSessionInfo(HostBridgeSessionInfo sessionInfo) {
         mImpl->setSessionInfo(std::move(sessionInfo));
+    }
+
+    void HostBridgeTask::setGameLifecycle(std::shared_ptr<const runtime::GameLifecycleTracker> tracker) {
+        mImpl->setGameLifecycle(std::move(tracker));
     }
 
     void HostBridgeTask::setGameStateProvider(GameStateProvider provider) {

@@ -87,4 +87,35 @@ namespace mcdk::detail {
         return utf16;
     }
 
+    std::string convertUtf16ToUtf8(std::wstring_view utf16) {
+        if (utf16.empty()) {
+            return {};
+        }
+        const int length = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            utf16.data(),
+            static_cast<int>(utf16.size()),
+            nullptr,
+            0,
+            nullptr,
+            nullptr
+        );
+        if (length == 0) {
+            throw std::runtime_error("Failed to convert UTF-16 to UTF-8.");
+        }
+        std::string utf8(length, '\0');
+        WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            utf16.data(),
+            static_cast<int>(utf16.size()),
+            utf8.data(),
+            length,
+            nullptr,
+            nullptr
+        );
+        return utf8;
+    }
+
 } // namespace mcdk::detail

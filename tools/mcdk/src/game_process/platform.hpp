@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -58,5 +59,7 @@ namespace mcdk::detail {
     [[nodiscard]] std::filesystem::path currentExecutableDirectory();
     void debuggerAttachToProcess(DWORD processId, int port);
     [[nodiscard]] std::wstring convertUtf8ToUtf16(const std::string& utf8);
+    // 按长度转换，内嵌的 \0 原样保留（环境块要用）。
+    [[nodiscard]] std::string convertUtf16ToUtf8(std::wstring_view utf16);
 
 } // namespace mcdk::detail

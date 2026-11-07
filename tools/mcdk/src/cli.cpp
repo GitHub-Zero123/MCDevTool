@@ -6,6 +6,7 @@
 // #define CLI11_HAS_RTTI 0
 // #define CLI11_HAS_FILESYSTEM 0
 #include <mcdevtool/addon.h>
+#include <mcdk/plugin_cli.hpp>
 #include <mcdevtool/utils.h>
 #include <CLI11.hpp>
 
@@ -78,6 +79,43 @@ int MCDK_CLI_PARSE(int argc, char* argv[]) {
         CREATE_EMPTY_ADDON_PROJECT(name);
     });
 
+    // 插件声明管理。插件不会被自动发现，全靠这几条命令或手写 .mcdev.json。
+    auto* plugin = app.add_subcommand("plugin", "管理 .mcdev.json 中的插件声明");
+    plugin->require_subcommand(1);
+    int result = 0;
+
+    plugin->add_subcommand("list", "列出声明及其解析结果")->callback([&result]() {
+        result = mcdk::pluginList();
+    });
+
+    std::string enableKey;
+    plugin->add_subcommand("enable", "启用指定声明")
+        ->add_option("target", enableKey, "插件 id 或声明中的 path")
+        ->required();
+    plugin->get_subcommand("enable")->callback([&result, &enableKey]() {
+        result = mcdk::pluginSetEnabled(enableKey, true);
+    });
+
+    std::string disableKey;
+    plugin->add_subcommand("disable", "禁用指定声明")
+        ->add_option("target", disableKey, "插件 id 或声明中的 path")
+        ->required();
+    plugin->get_subcommand("disable")->callback([&result, &disableKey]() {
+        result = mcdk::pluginSetEnabled(disableKey, false);
+    });
+
+    std::string addPath;
+    plugin->add_subcommand("add", "追加一条声明（写入前展示权限供确认）")
+        ->add_option("path", addPath, "插件目录（内含 plugin.json）")
+        ->required();
+    plugin->get_subcommand("add")->callback([&result, &addPath]() { result = mcdk::pluginAdd(addPath); });
+
+    std::string removeKey;
+    plugin->add_subcommand("remove", "移除声明")
+        ->add_option("target", removeKey, "插件 id 或声明中的 path")
+        ->required();
+    plugin->get_subcommand("remove")->callback([&result, &removeKey]() { result = mcdk::pluginRemove(removeKey); });
+
     CLI11_PARSE(app, argc, argv);
-    return 0;
+    return result;
 }
