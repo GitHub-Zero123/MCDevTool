@@ -164,7 +164,9 @@ Parameters:
             "sequence: clicks, long presses, drags, wheel, camera motion, text and waits. "
             "Use capture='end' and logs='end' to attach a screenshot and recent logs. Call /help first; /state "
             "reports window geometry and whether the game currently holds the pointer. Coordinates default to the "
-            "0.0-1.0 percentage space shared with capture_game_window. A successful result means input was dispatched "
+            "0.0-1.0 percentage space shared with capture_game_window. delivery='post' sends input straight to the "
+            "game window without taking the foreground or the real mouse, so several instances can run side by side; "
+            "look is unavailable in that mode. A successful result means input was dispatched "
             "to the system queue, not that the game reacted - verify with capture_game_window or logs. Input uses "
             "{op:'/...', args:{...}}.";
         tool.parameters_schema = {

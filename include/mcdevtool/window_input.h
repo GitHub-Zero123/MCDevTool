@@ -35,6 +35,10 @@ namespace MCDevTool::Input {
     enum class ScrollAxis : std::uint8_t { Vertical, Horizontal };
     enum class FocusPolicy : std::uint8_t { Auto, Require, Keep };
 
+    // SendInput 走系统输入：要抢前台，会移动真实光标，同一时间只能服务一个窗口。
+    // Post 把消息投到目标窗口：不碰前台和光标，可以多开并行，但发不出原始鼠标输入，look 不可用。
+    enum class Delivery : std::uint8_t { SendInput, Post };
+
     // 游戏里的 WASD 是动作输入而不是打字：输入法开着时按键会被 IME 吞掉或转成候选词。
     // Suppress 在批次期间把目标窗口切到英数直通模式，结束后恢复原状。
     enum class ImePolicy : std::uint8_t { Suppress, Keep };
@@ -141,6 +145,7 @@ namespace MCDevTool::Input {
     [[nodiscard]] bool stepUsesAbsoluteCoords(const Step& step) noexcept;
 
     struct Options {
+        Delivery    delivery           = Delivery::SendInput;
         FocusPolicy focus              = FocusPolicy::Auto;
         ImePolicy   ime                = ImePolicy::Suppress;
         int         stepDelayMs        = 60;

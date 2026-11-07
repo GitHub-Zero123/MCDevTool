@@ -5,6 +5,12 @@
 #include <vector>
 
 namespace MCDevTool {
+    // 运行时包目录：全局目录，或某个存档内的目录。
+    struct RuntimePackRoots {
+        std::filesystem::path behavior;
+        std::filesystem::path resource;
+    };
+
     // 获取应用数据目录路径
     std::filesystem::path getAppDataPath();
     // 获取MinecraftPE_Netease数据目录
@@ -19,6 +25,8 @@ namespace MCDevTool {
     std::filesystem::path getResourcePacksPath();
     // 获取依赖包目录
     std::filesystem::path getDependenciesPacksPath();
+    // 获取全局运行时包目录
+    RuntimePackRoots getGlobalPackRoots();
     // 清理运行时行为包目录
     void cleanRuntimeBehaviorPacks();
     // 清理运行时资源包目录
@@ -29,6 +37,9 @@ namespace MCDevTool {
     bool createDirectoryJunction(const std::filesystem::path& target, const std::filesystem::path& link);
     // 分析并link源代码pack目录到运行时行为/资源包目录(如果成功将返回有效的PackInfo)
     Addon::PackInfo linkSourcePackToRuntimePack(const std::filesystem::path& sourceDir);
+    Addon::PackInfo linkSourcePackToRuntimePack(const std::filesystem::path& sourceDir, const RuntimePackRoots& roots);
     // 分析并link源代码addon目录到运行时行为包目录 该版本支持批量处理目录下的所有pack
     std::vector<Addon::PackInfo> linkSourceAddonToRuntimePacks(const std::filesystem::path& sourceDir);
+    std::vector<Addon::PackInfo>
+    linkSourceAddonToRuntimePacks(const std::filesystem::path& sourceDir, const RuntimePackRoots& roots);
 } // namespace MCDevTool

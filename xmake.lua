@@ -44,12 +44,6 @@ option("build_mcdk")
     set_description("Build MCDK executable")
 option_end()
 
-option("mcdk_enable_cli")
-    set_default(false)
-    set_showmenu(true)
-    set_description("Enable CLI for MCDK")
-option_end()
-
 -- 与 CMake 的 MCDK_ENABLE_PLUGINS 保持一致。关闭时所有事件发射点在预处理阶段消失，
 -- 插件也不再加载。两套构建系统的开关必须同名同默认值，否则「CMake 能过」什么都证明不了。
 option("mcdk_enable_plugins")
@@ -239,7 +233,11 @@ if has_config("build_mcdk") then
     target("mcdk_mcp_tools")
         set_kind("static")
         set_languages("c++20")
-        add_files("tools/mcdk/src/mcp_tool_definitions.cpp")
+        add_files(
+            "tools/mcdk/src/mcp_http_client.cpp",
+            "tools/mcdk/src/mcp_tool_definitions.cpp",
+            "tools/mcdk/src/mcp_tool_help.cpp"
+        )
         add_includedirs("tools/mcdk/include", {public = true})
         add_includedirs("libs/nlohmann", {public = true})
         add_deps("mcp")
@@ -263,6 +261,7 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/mc_input_mcp.cpp",
             "tools/mcdk/src/mc_profiler_mcp.cpp",
             "tools/mcdk/src/mod_dir_config.cpp",
+            "tools/mcdk/src/session_file.cpp",
             "tools/mcdk/src/mod_register.cpp",
             "tools/mcdk/src/reload_code.cpp",
             "tools/mcdk/src/rpc_registry.cpp",
@@ -285,7 +284,6 @@ if has_config("build_mcdk") then
             "tools/mcdk/src/game_process/platform.cpp",
             "tools/mcdk/src/host_bridge.cpp",
             "tools/mcdk/src/mcp_server.cpp",
-            "tools/mcdk/src/plugin_cli.cpp",
             "tools/mcdk/src/plugin_host/abi_layout_check.cpp",
             "tools/mcdk/src/plugin_host/event_bus.cpp",
             "tools/mcdk/src/plugin_host/guard.cpp",
@@ -322,14 +320,9 @@ if has_config("build_mcdk") then
     target("mcdk")
         set_kind("binary")
         set_languages("c++23")
-        add_files("tools/mcdk/main.cpp")
+        add_files("tools/mcdk/main.cpp", "tools/mcdk/src/cli.cpp")
         add_deps("mcdk_runtime")
         add_includedirs("tools/mcdk/libs")
-
-        if has_config("mcdk_enable_cli") then
-            add_defines("MCDK_ENABLE_CLI")
-            add_files("tools/mcdk/src/cli.cpp")
-        end
 
         if is_plat("windows") then
             on_load(function (target)
@@ -415,6 +408,13 @@ if has_config("build_test") then
         add_deps("mcdevtool", "mcp")
     target_end()
 
+    target("mcp_port_conflict_test")
+        set_kind("binary")
+        set_languages("c++23")
+        add_files("tests/mcp_port_conflict_test.cpp")
+        add_deps("mcp")
+    target_end()
+
     if has_config("build_mcdk") then
         target("rpc_registry_test")
             set_kind("binary")
@@ -441,6 +441,41 @@ if has_config("build_test") then
             set_kind("binary")
             set_languages("c++23")
             add_files("tests/mc_input_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("config_override_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/config_override_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("window_post_input_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/window_post_input_test.cpp")
+            add_deps("mcdevtool")
+        target_end()
+
+        target("mcp_tool_help_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/mcp_tool_help_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("session_file_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/session_file_test.cpp")
+            add_deps("mcdk_core")
+        target_end()
+
+        target("world_pack_link_test")
+            set_kind("binary")
+            set_languages("c++23")
+            add_files("tests/world_pack_link_test.cpp")
             add_deps("mcdk_core")
         target_end()
 

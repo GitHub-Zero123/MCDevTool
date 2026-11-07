@@ -12,10 +12,10 @@
 #include <io.h>
 #endif
 
+#include <mcdk/mcp_http_client.hpp>
 #include <mcdk/mcp_tool_definitions.hpp>
 #include <mcdk/plugin_declarations.hpp>
 
-#include <httplib.h>
 #include <mcp_message.h>
 #include <nlohmann/json.hpp>
 
@@ -276,7 +276,16 @@ namespace {
 
     class GameMcpClient {
     public:
-        explicit GameMcpClient(BridgeConfig config) : config_(std::move(config)) {}
+        explicit GameMcpClient(BridgeConfig config)
+            : client_({
+                  .host                     = config.host,
+                  .port                     = config.port,
+                  .clientName               = "MCDKStdioBridge",
+                  .clientVersion            = BridgeVersion,
+                  .connectTimeoutSeconds    = ConnectTimeoutSeconds,
+                  .initializeTimeoutSeconds = InitializationTimeoutSec,
+                  .requestTimeoutSeconds    = ReadWriteTimeoutSeconds,
+              }) {}
 
         json callTool(const std::string& name, const json& arguments) {
             std::string error;
@@ -288,30 +297,28 @@ namespace {
             if (!postJson(
                     json{
                         {"jsonrpc", "2.0"},
-                        {"id", nextId_++},
+                        {"id", client_.nextId()},
                         {"method", "tools/call"},
                         {"params", {{"name", name}, {"arguments", arguments}}}
                     },
                     response,
                     error
                 )) {
-                connected_ = false;
-                sessionId_.clear();
+                client_.disconnect();
                 if (!ensureConnected(error)) {
                     return makeToolErrorResult(error);
                 }
                 if (!postJson(
                         json{
                             {"jsonrpc", "2.0"},
-                            {"id", nextId_++},
+                            {"id", client_.nextId()},
                             {"method", "tools/call"},
                             {"params", {{"name", name}, {"arguments", arguments}}}
                         },
                         response,
                         error
                     )) {
-                    connected_ = false;
-                    sessionId_.clear();
+                    client_.disconnect();
                     return makeToolErrorResult(error);
                 }
             }
@@ -342,117 +349,32 @@ namespace {
 
     private:
         bool ensureConnected(std::string& error) {
-            if (connected_ && ping()) {
+            if (client_.connected() && client_.ping()) {
                 return true;
             }
-            connected_ = false;
-            sessionId_.clear();
-            return initialize(error);
-        }
-
-        bool initialize(std::string& error) {
-            httplib::Client client(baseUrl());
-            configureClient(client, InitializationTimeoutSec);
-
-            json initializeRequest = {
-                {"jsonrpc", "2.0"},
-                {"id", nextId_++},
-                {"method", "initialize"},
-                {"params",
-                 {{"protocolVersion", mcp::MCP_VERSION},
-                  {"capabilities", json::object()},
-                  {"clientInfo", {{"name", "MCDKStdioBridge"}, {"version", BridgeVersion}}}}}
-            };
-
-            auto result = client.Post(StreamableEndpoint, initializeRequest.dump(), "application/json");
-            if (!result) {
-                error = notReadyMessage("cannot connect to the MCDK game MCP endpoint");
-                return false;
+            client_.disconnect();
+            if (client_.initialize(error)) {
+                return true;
             }
-            if (result->status / 100 != 2) {
-                error = notReadyMessage("MCDK game MCP returned HTTP " + std::to_string(result->status));
-                return false;
-            }
-
-            json response = json::parse(result->body, nullptr, false);
-            if (response.is_discarded() || response.contains("error")) {
-                error = notReadyMessage("MCDK game MCP initialization failed");
-                return false;
-            }
-
-            auto sessionHeader = result->headers.find("Mcp-Session-Id");
-            if (sessionHeader == result->headers.end() || sessionHeader->second.empty()) {
-                error = notReadyMessage("MCDK game MCP did not provide a session id");
-                return false;
-            }
-
-            sessionId_ = sessionHeader->second;
-            connected_ = true;
-
-            json        initializedNotification = {{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}};
-            json        ignored;
-            std::string ignoredError;
-            postJson(initializedNotification, ignored, ignoredError);
-            return true;
-        }
-
-        bool ping() {
-            json        response;
-            std::string error;
-            bool        ok = postJson(json{{"jsonrpc", "2.0"}, {"id", nextId_++}, {"method", "ping"}}, response, error);
-            return ok && !response.contains("error");
+            error = notReadyMessage(error);
+            return false;
         }
 
         bool postJson(const json& request, json& response, std::string& error) {
-            httplib::Client client(baseUrl());
-            configureClient(client, ReadWriteTimeoutSeconds);
-
-            httplib::Headers headers;
-            headers.emplace("Content-Type", "application/json");
-            if (!sessionId_.empty()) {
-                headers.emplace("Mcp-Session-Id", sessionId_);
-            }
-
-            auto result = client.Post(StreamableEndpoint, headers, request.dump(), "application/json");
-            if (!result) {
-                error = notReadyMessage("cannot connect to the MCDK game MCP endpoint");
-                return false;
-            }
-            if (request.contains("id") && result->status / 100 != 2) {
-                error = notReadyMessage("MCDK game MCP returned HTTP " + std::to_string(result->status));
-                return false;
-            }
-            if (!request.contains("id")) {
-                response = json::object();
+            if (client_.post(request, response, error)) {
                 return true;
             }
-
-            response = json::parse(result->body, nullptr, false);
-            if (response.is_discarded()) {
-                error = notReadyMessage("MCDK game MCP returned invalid JSON");
-                return false;
-            }
-            return true;
+            error = notReadyMessage(error);
+            return false;
         }
-
-        void configureClient(httplib::Client& client, int readTimeoutSeconds) const {
-            client.set_connection_timeout(ConnectTimeoutSeconds, 0);
-            client.set_read_timeout(readTimeoutSeconds, 0);
-            client.set_write_timeout(readTimeoutSeconds, 0);
-        }
-
-        std::string baseUrl() const { return "http://" + config_.host + ":" + std::to_string(config_.port); }
 
         std::string notReadyMessage(const std::string& detail) const {
             return "Minecraft has not been launched through MCDK, or MCDK MCP is not enabled/configured. "
                    "Please start the game with MCDK and enable mcp_server_config first. Target endpoint: "
-                 + baseUrl() + StreamableEndpoint + ". Detail: " + detail;
+                 + client_.endpointUrl() + ". Detail: " + detail;
         }
 
-        BridgeConfig config_;
-        std::string  sessionId_;
-        bool         connected_ = false;
-        int          nextId_    = 1;
+        mcdk::McpHttpClient client_;
     };
 
     class BridgeServer {

@@ -49,6 +49,7 @@ namespace {
     constexpr std::string_view AxisNames[]{"vertical", "horizontal"};
     constexpr std::string_view FocusNames[]{"auto", "require", "keep"};
     constexpr std::string_view ImeNames[]{"suppress", "keep"};
+    constexpr std::string_view DeliveryNames[]{"sendinput", "post"};
     constexpr std::string_view CaptureNames[]{"none", "end"};
 
     std::optional<std::size_t> indexOf(std::span<const std::string_view> options, std::string_view value) {
@@ -407,6 +408,15 @@ namespace {
     // --- 批次选项 ---
 
     constexpr FieldSpec RunOptions[]{
+        {"delivery",
+         FieldType::Enum,
+         false,
+         0,
+         0,
+         DeliveryNames,
+         "sendinput=系统输入，会抢前台并移动真实鼠标；post=投递到游戏窗口，不抢前台也不动鼠标，可多开并行，"
+         "此时 focus、ime、restore_cursor 不生效，look 不可用（用 execute_code 调 SetRot）。"
+         "隔离会话默认 post，其余默认 sendinput"},
         {"focus", FieldType::Enum, false, 0, 0, FocusNames, "auto=自动置顶，require=不在前台就报错，keep=完全不干预"},
         {"ime",
          FieldType::Enum,
@@ -465,8 +475,9 @@ namespace {
         {"steps", FieldType::Steps, true, 0, 0, {}, "步骤数组，最多 64 步"},
     };
 
-    Engine::Options readOptions(const Json& args) {
+    Engine::Options readOptions(const Json& args, Engine::Delivery defaultDelivery) {
         Engine::Options options;
+        options.delivery           = enumField(args, "delivery", DeliveryNames, defaultDelivery);
         options.focus              = enumField(args, "focus", FocusNames, Engine::FocusPolicy::Auto);
         options.ime                = enumField(args, "ime", ImeNames, Engine::ImePolicy::Suppress);
         options.stepDelayMs        = intField(args, "step_delay_ms", 60);
@@ -569,7 +580,7 @@ namespace {
         {"UNKNOWN_OPERATION", "/help", "List the available operations."},
         {"WINDOW_NOT_FOUND", "/state", "Confirm the game window exists before sending input."},
         {"WINDOW_MINIMIZED", "/state", "Confirm the window was restored before sending input."},
-        {"FOCUS_DENIED", "/state", "Check which window currently holds the foreground."},
+        {"FOCUS_DENIED", "/state", "Check which window holds the foreground, or retry with delivery=post."},
         {"FOCUS_LOST", "/state", "Re-check the window state, then resume from the reported step."},
         {"POINTER_MODE_MISMATCH", "/state", "Read pointer_locked and switch to look or an in-place click."},
         {"BUSY", "/state", "Another batch is running; check state and retry shortly."},
@@ -701,8 +712,9 @@ namespace {
     // --- 操作实现 ---
 
     struct Context {
-        int              pid       = 0;
-        mcdk::LogBuffer* logBuffer = nullptr;
+        int              pid             = 0;
+        mcdk::LogBuffer* logBuffer       = nullptr;
+        Engine::Delivery defaultDelivery = Engine::Delivery::SendInput;
     };
 
     void appendLogs(const Context& context, const Json& args, Json& data) {
@@ -805,6 +817,12 @@ namespace {
                          Json{{"op", "/key"}, {"args", {{"keys", "shift"}, {"action", "down"}, {"leave_held", true}}}},
                      },
                      {"note", "结束后必须调用 /release-all，否则按键会一直按着"}
+                 },
+                 Json{
+                     {"goal", "不抢前台地操作后台实例，适合多开"},
+                     {"call",
+                      Json{{"op", "/click"}, {"args", {{"at", Json::array({0.5, 0.5})}, {"delivery", "post"}}}}},
+                     {"note", "窗口不能最小化；失焦时投递鼠标事件，游戏可能切到触屏布局；drag 不可靠，物品搬运用两次 click"}
                  },
                  Json{
                      {"goal", "先校验坐标再真正执行"},
@@ -969,7 +987,7 @@ namespace {
         return validateFields(args, RunOptions, "/run", {"steps"})
             .and_then([&] { return readSteps(args); })
             .and_then([&](std::vector<Engine::Step> steps) -> OpResult {
-                const auto options = readOptions(args);
+                const auto options = readOptions(args, context.defaultDelivery);
                 return Engine::run(context.pid, steps, options)
                     .transform([&](const Engine::Report& report) {
                         const bool wanted  = wantsCapture(args) && !report.dryRun;
@@ -1111,9 +1129,11 @@ namespace mcdk::mc_input_mcp {
     }
 
     // 全工具唯一的 try：任何未归类的异常都在这里变成 INTERNAL 错误信封。
-    nlohmann::json handleRequest(int pid, const nlohmann::json& arguments, LogBuffer* logBuffer) noexcept {
+    nlohmann::json
+    handleRequest(int pid, const nlohmann::json& arguments, LogBuffer* logBuffer, bool preferPost) noexcept {
         try {
-            const auto result = dispatch(Context{pid, logBuffer}, arguments);
+            const auto delivery = preferPost ? Engine::Delivery::Post : Engine::Delivery::SendInput;
+            const auto result   = dispatch(Context{pid, logBuffer, delivery}, arguments);
             return result.has_value() ? renderPayload(opOf(arguments), std::move(*result))
                                       : renderFailure(opOf(arguments), result.error());
         } catch (const std::exception& error) {

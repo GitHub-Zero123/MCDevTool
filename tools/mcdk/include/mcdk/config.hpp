@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -17,6 +18,11 @@ namespace mcdk {
     [[nodiscard]] UserConfig createDefaultConfig();
     [[nodiscard]] UserConfig parseUserConfig(std::string_view jsonText);
     [[nodiscard]] UserConfig userParseConfig();
+    // 读取指定配置并依次应用 overrides。不创建、不写回、不询问，失败抛异常。
+    [[nodiscard]] UserConfig
+    loadUserConfig(const std::filesystem::path& path, const std::vector<std::string>& overrides = {});
+    // 把 "a.b=value" 写进 root。value 能解析成 JSON 就取解析结果，否则按字符串。
+    void applyConfigOverride(nlohmann::json& root, std::string_view expression);
 
     // 存档相关的键（world_name、reset_world、game_mode……），.mcdev.json 与插件改写共用。
     [[nodiscard]] bool isWorldConfigKey(std::string_view key) noexcept;

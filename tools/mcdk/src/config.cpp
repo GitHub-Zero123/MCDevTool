@@ -107,6 +107,17 @@ namespace mcdk {
             }
         }
 
+        PackLinkMode parsePackLinkMode(const Json& root) {
+            const auto mode = root.find("pack_link_mode");
+            if (mode == root.end() || *mode == "global") {
+                return PackLinkMode::Global;
+            }
+            if (*mode == "world") {
+                return PackLinkMode::World;
+            }
+            throw std::runtime_error("pack_link_mode must be \"global\" or \"world\".");
+        }
+
         void parseWindowStyle(const Json& root, MCDevTool::Style::StyleConfig& style) {
             const auto value = root.find("window_style");
             if (value == root.end()) {
@@ -170,6 +181,7 @@ namespace mcdk {
             }
 
             config.includeDebugMod     = root.value("include_debug_mod", true);
+            config.packLinkMode        = parsePackLinkMode(root);
             config.hotReload.mods      = root.value("auto_hot_reload_mods", true);
             config.hotReload.ui        = root.value("auto_hot_reload_ui", false);
             config.hotReload.shaders   = root.value("auto_hot_reload_shaders", false);
@@ -409,6 +421,50 @@ namespace mcdk {
             return config;
         }
         return parseUserConfigJson(readConfigJson(configPath));
+    }
+
+    void applyConfigOverride(nlohmann::json& root, std::string_view expression) {
+        const auto separator = expression.find('=');
+        if (separator == std::string_view::npos || separator == 0) {
+            throw std::runtime_error("覆写项格式应为 key=value：" + std::string(expression));
+        }
+        const auto key  = expression.substr(0, separator);
+        const auto text = expression.substr(separator + 1);
+
+        auto*       target = &root;
+        std::size_t begin  = 0;
+        while (true) {
+            const auto dot     = key.find('.', begin);
+            const auto segment = key.substr(begin, dot == std::string_view::npos ? dot : dot - begin);
+            if (target->is_null()) {
+                *target = nlohmann::json::object();
+            }
+            if (segment.empty() || !target->is_object()) {
+                throw std::runtime_error("覆写项的键无效：" + std::string(key));
+            }
+            target = &(*target)[std::string(segment)];
+            if (dot == std::string_view::npos) {
+                break;
+            }
+            begin = dot + 1;
+        }
+
+        auto value = nlohmann::json::parse(text, nullptr, false);
+        *target    = value.is_discarded() ? nlohmann::json(std::string(text)) : std::move(value);
+    }
+
+    UserConfig loadUserConfig(const std::filesystem::path& path, const std::vector<std::string>& overrides) {
+        if (!std::filesystem::is_regular_file(path)) {
+            throw std::runtime_error("配置文件不存在：" + MCDevTool::Utils::pathToGenericUtf8(path));
+        }
+        auto root = readConfigJson(path);
+        if (!root.is_object()) {
+            throw std::runtime_error("配置文件根节点必须是 JSON 对象。");
+        }
+        for (const auto& expression : overrides) {
+            applyConfigOverride(root, expression);
+        }
+        return parseUserConfigJson(root);
     }
 
     bool updateGamePath(std::filesystem::path& path) {

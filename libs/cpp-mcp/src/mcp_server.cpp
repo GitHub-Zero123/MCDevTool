@@ -116,6 +116,17 @@ namespace mcp {
             });
         }
 
+#ifdef _WIN32
+        // Windows 的 SO_REUSEADDR 允许重复绑定已被占用的端口，端口冲突会被静默吞掉。
+        http_server_->set_socket_options([](socket_t) {});
+#endif
+
+        // 非阻塞模式在调用线程完成绑定，端口冲突才能作为返回值交给调用方。
+        if (!blocking && !http_server_->bind_to_port(host_.c_str(), port_)) {
+            LOG_ERROR("Failed to bind server on ", host_, ":", port_);
+            return false;
+        }
+
         // Start resource check thread (only start in non-blocking mode)
         if (!blocking) {
             maintenance_thread_run_ = true;
@@ -157,7 +168,7 @@ namespace mcp {
             // Start server in a separate thread
             server_thread_ = std::make_unique<std::thread>([this]() {
                 LOG_INFO("Starting server in separate thread");
-                if (!http_server_->listen(host_.c_str(), port_)) {
+                if (!http_server_->listen_after_bind()) {
                     LOG_ERROR("Failed to start server on ", host_, ":", port_);
                     running_ = false;
                     return;

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <mcdevtool/addon.h>
+#include <mcdevtool/env.h>
 
 #include <mcdk/mod_dir_config.hpp>
 #include <mcdk/settings.hpp>
@@ -53,6 +54,15 @@ namespace mcdk {
         WorldPackManifest&                             behaviorManifest,
         WorldPackManifest&                             resourceManifest,
         const std::vector<MCDevTool::Addon::PackInfo>& linkedPacks
+    );
+
+    // 摘掉 recordWorldPackLinks 记录过的条目。游戏删除存档时会顺着联接删到源码，所以链接只在运行期存在。
+    void removeWorldPackLinks(const std::filesystem::path& worldPath);
+    // 摘掉上次留下的链接，返回存档内的包目录。
+    [[nodiscard]] MCDevTool::RuntimePackRoots prepareWorldPackRoots(const std::filesystem::path& worldPath);
+    void recordWorldPackLinks(
+        const std::filesystem::path&                   worldPath,
+        const std::vector<MCDevTool::Addon::PackInfo>& packs
     );
 
     void writeWorldPackManifest(const std::filesystem::path& path, const WorldPackManifest& manifest);

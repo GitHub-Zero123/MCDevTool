@@ -16,6 +16,8 @@ namespace mcdk {
     namespace fs = std::filesystem;
 
     namespace {
+        constexpr auto WorldPackLinkRecord = ".mcdk_pack_links.json";
+
         std::string asciiLower(std::string value) {
             std::ranges::transform(value, value.begin(), [](unsigned char character) {
                 if (character >= 'A' && character <= 'Z') {
@@ -276,6 +278,42 @@ namespace mcdk {
                 manifest->push_back({.packId = pack.uuid, .version = pack.version});
             }
         }
+    }
+
+    void removeWorldPackLinks(const fs::path& worldPath) {
+        const auto recordPath = worldPath / WorldPackLinkRecord;
+        if (!fs::is_regular_file(recordPath)) {
+            return;
+        }
+        nlohmann::json entries;
+        {
+            std::ifstream input(recordPath, std::ios::binary);
+            entries = nlohmann::json::parse(input, nullptr, false);
+        }
+        for (const auto& entry : entries.is_array() ? entries : nlohmann::json::array()) {
+            if (!entry.is_string()) {
+                continue;
+            }
+            const auto relative = fs::u8path(entry.get<std::string>()).lexically_normal();
+            if (relative.is_relative() && !relative.empty() && *relative.begin() != "..") {
+                fs::remove_all(worldPath / relative);
+            }
+        }
+        fs::remove(recordPath);
+    }
+
+    MCDevTool::RuntimePackRoots prepareWorldPackRoots(const fs::path& worldPath) {
+        removeWorldPackLinks(worldPath);
+        return {worldPath / "behavior_packs", worldPath / "resource_packs"};
+    }
+
+    void recordWorldPackLinks(const fs::path& worldPath, const std::vector<MCDevTool::Addon::PackInfo>& packs) {
+        auto entries = nlohmann::json::array();
+        for (const auto& pack : packs) {
+            entries.push_back(MCDevTool::Utils::pathToGenericUtf8(pack.path.lexically_relative(worldPath)));
+        }
+        std::ofstream output(worldPath / WorldPackLinkRecord, std::ios::binary | std::ios::trunc);
+        output << entries.dump(4);
     }
 
     void writeWorldPackManifest(const fs::path& path, const WorldPackManifest& manifest) {

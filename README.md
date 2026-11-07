@@ -147,6 +147,8 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
     "auto_join_game": true,
     // 是否附加调试MOD(boolean)，若启用将在生成的世界中包含热更新脚本(R键触发检测)并重定向输出流使其附加[Python]前缀可供筛选搜索。
     "include_debug_mod": true,
+    // Addon 链接位置  "global".全局包目录（默认）  "world".存档内，可多开，详见 docs/cli.md
+    "pack_link_mode": "global",
     // 日志处理策略  0.PIPE方案（默认）  1.Safaia协议（实验性）
     "log_protocol": 0,
     // 是否自动热更新MOD
@@ -278,6 +280,19 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 地图数据会复制到 `world_folder_name` 指定的运行时世界，带有标准 `manifest.json` 的行为包和资源包会通过目录联接加载并参与热更新。
 
 地图开发建议启用 `reset_world`，使每次启动都重新部署地图；否则项目地图的最新内容不会同步到运行时世界。需要保留游戏内测试进度时可临时关闭。
+
+## 命令行自动化
+
+`mcdk` 带命令运行时面向 Agent 和脚本：全程不询问、不改配置文件，用退出码报告结果，并支持多开。
+
+```bash
+mcdk run --session a --detach
+mcdk wait --session a
+mcdk call execute_code --session a --args '{"code":"1+1"}'
+mcdk stop --session a
+```
+
+用 `mcdk --help` 查看命令和工具，`mcdk help <命令或工具>` 查看详情，完整说明见 [docs/cli.md](docs/cli.md)。不带参数的 `mcdk` 行为不变。
 
 ## MCP客户端配置
 

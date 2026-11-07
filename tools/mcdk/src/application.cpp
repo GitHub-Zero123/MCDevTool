@@ -1,14 +1,18 @@
 #include <mcdk/application.hpp>
 #include <mcdk/config.hpp>
+#include <mcdk/console_output.hpp>
 #include <mcdk/game_process.hpp>
 
 #include <mcdk/env.hpp>
 #include <mcdk/level.hpp>
 #include <mcdk/mod_register.hpp>
+#include <mcdk/plugin_declarations.hpp>
 #include <mcdk/plugin_host/host.hpp>
 #include <mcdk/plugin_host/world_request.hpp>
 #include <mcdk/world_project.hpp>
 
+#include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -25,7 +29,62 @@
 
 using mcdk::UserModDirConfig;
 
-void mcdk::startGame(const UserConfig& userConfig) {
+namespace {
+    // 插件终结的作用域守卫。
+    // 析构里绝不能让异常逃出去：它多半是在栈展开途中运行的，再抛一次就是
+    struct PluginScope {
+        ~PluginScope() {
+            try {
+                mcdk::plugin_host::instance().shutdown();
+            } catch (const std::exception& exception) {
+                std::cerr << "[ERROR] 插件终结失败: " << exception.what() << '\n';
+            } catch (...) {
+                std::cerr << "[ERROR] 插件终结失败\n";
+            }
+        }
+    };
+
+    // 游戏一退出就摘掉存档里的链接。
+    struct WorldPackLinkScope {
+        std::filesystem::path world;
+
+        ~WorldPackLinkScope() {
+            try {
+                mcdk::removeWorldPackLinks(world);
+            } catch (const std::exception& exception) {
+                std::cerr << "[ERROR] 存档链接清理失败，请勿在游戏内删除该存档: " << exception.what() << '\n';
+            }
+        }
+    };
+} // namespace
+
+mcdk::GameRunResult mcdk::runGame(const UserConfig& config) {
+    // 插件只从 .mcdev.json 的 plugins 声明加载，宿主不扫描任何目录。
+    // 相对路径以 .mcdev.json 所在目录（即当前工作目录）为基准。
+    auto& pluginHost   = mcdk::plugin_host::instance();
+    auto  declarations = config.plugins;
+    // 定制版编辑器经 MCDEV_PLUGINS 注入的插件，追加在项目声明之后，同样按 priority 排。
+    if (auto external = mcdk::plugin_host::detail::parseEnvPluginDeclarations(); !external.empty()) {
+        std::string paths;
+        for (const auto& declaration : external) {
+            paths += (paths.empty() ? "" : ", ") + declaration.path;
+        }
+        mcdk::printColoredAtomic("[MCDK] 外部插件（MCDEV_PLUGINS）：" + paths, mcdk::ConsoleColor::Cyan);
+        declarations.insert(declarations.end(), external.begin(), external.end());
+        std::stable_sort(declarations.begin(), declarations.end(), [](const auto& left, const auto& right) {
+            return left.priority < right.priority;
+        });
+    }
+    pluginHost.loadDeclared(declarations, std::filesystem::current_path());
+    // 无论 startGame 怎么退出——正常结束、被插件否决、或中途抛异常——插件都必须
+    // 走完终结流程。正常路径上 launchGameExe 已经做过，Host::shutdown 幂等，
+    const PluginScope pluginScope;
+
+    pluginHost.advance(MCDK_STAGE_REGISTER);
+    return mcdk::startGame(config);
+}
+
+mcdk::GameRunResult mcdk::startGame(const UserConfig& userConfig) {
     auto gameExePath = userConfig.gameExecutablePath;
     if (!std::filesystem::is_regular_file(gameExePath)) {
         // 游戏 exe 路径无效，重新发现并选择版本
@@ -57,7 +116,9 @@ void mcdk::startGame(const UserConfig& userConfig) {
     }
     const UserConfig& config = pluginWorldConfig ? *pluginWorldConfig : userConfig;
 
-    if (!_isSubprocessMode) {
+    // 存档级链接不碰全局目录，别的实例才不受影响。
+    const bool linkToWorld = config.packLinkMode == PackLinkMode::World;
+    if (!_isSubprocessMode && !linkToWorld) {
         MCDevTool::cleanRuntimePacks();
     }
 
@@ -75,22 +136,21 @@ void mcdk::startGame(const UserConfig& userConfig) {
 
     if (_isSubprocessMode) {
         // 子进程模式 直接启动游戏exe（通常由vsc插件多开使用）
-        launchGameExe(gameExePath, "", config, &hotReloadModDirConfigs, &worldPacks);
-        return;
+        return launchGameExe(gameExePath, "", config, &hotReloadModDirConfigs, &worldPacks);
     }
     std::vector<MCDevTool::Addon::PackInfo> linkedPacks;
-    if (config.includeDebugMod) {
-        auto debugMod = mcdk::registerDebugMod();
+    const auto linkPacks = [&](const MCDevTool::RuntimePackRoots& roots) {
         std::cout << "[MCDK] Addons\n";
-        std::cout << "  Debug    UUID=" << debugMod.uuid << "\n";
-        linkedPacks.push_back(std::move(debugMod));
-        mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks);
-    } else {
-        std::cout << "[MCDK] Addons\n";
-        mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks);
+        if (config.includeDebugMod) {
+            auto debugMod = mcdk::registerDebugMod(roots);
+            std::cout << "  Debug    UUID=" << debugMod.uuid << "\n";
+            linkedPacks.push_back(std::move(debugMod));
+        }
+        mcdk::linkUserConfigModDirs(modDirConfigs, linkedPacks, roots);
+    };
+    if (!linkToWorld) {
+        linkPacks(MCDevTool::getGlobalPackRoots());
     }
-    // 地图包只补充热更新所需的源码路径，不参与全局链接或世界包清单合并。
-    auto hotReloadPacks = mcdk::makeHotReloadPacks(linkedPacks, worldPacks);
     // 创建世界
     const auto& worldFolderName = config.world.folderName;
     const bool  resetWorld      = config.world.reset; // 若启用该参数 每次都会强制覆盖世界
@@ -121,6 +181,17 @@ void mcdk::startGame(const UserConfig& userConfig) {
             MCDevTool::Level::updateLevelDatLastPlayedInFile(worldsPath / "level.dat");
         }
     }
+
+    // 存档可能刚被重置，存档级链接要等它就绪后再建。
+    std::optional<WorldPackLinkScope> worldPackLinks;
+    if (linkToWorld) {
+        const auto roots = mcdk::prepareWorldPackRoots(worldsPath);
+        worldPackLinks.emplace(worldsPath);
+        linkPacks(roots);
+        mcdk::recordWorldPackLinks(worldsPath, linkedPacks);
+    }
+    // 地图包只补充热更新所需的源码路径，不参与全局链接或世界包清单合并。
+    auto hotReloadPacks = mcdk::makeHotReloadPacks(linkedPacks, worldPacks);
 
     // netease_world_behavior_packs.json / netease_world_resource_packs.json
     auto autoJoinGame = config.world.autoJoin;
@@ -153,8 +224,7 @@ void mcdk::startGame(const UserConfig& userConfig) {
 
     if (!autoJoinGame) {
         // 不自动进入游戏 直接启动游戏exe
-        launchGameExe(gameExePath, "", config, &hotReloadModDirConfigs, &hotReloadPacks);
-        return;
+        return launchGameExe(gameExePath, "", config, &hotReloadModDirConfigs, &hotReloadPacks);
     }
 
     auto configPath = worldsPath / "dev_config.cppconfig";
@@ -192,7 +262,7 @@ void mcdk::startGame(const UserConfig& userConfig) {
     std::ofstream configFile(configPath);
     configFile << devConfig.dump(4);
     configFile.close();
-    launchGameExe(
+    return launchGameExe(
         gameExePath,
         MCDevTool::Utils::pathToGenericUtf8(configPath),
         config,

@@ -47,7 +47,8 @@ namespace mcdk {
         void registerBuiltinTools();
 
         // 封存注册表并把表中全部工具发布给 MCP 服务器，随后非阻塞启动。
-        void start();
+        // 端口绑定失败时返回 false。未启用 MCP 时视为成功。
+        bool start();
         void stop();
 
     private:

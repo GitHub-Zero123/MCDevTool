@@ -1,6 +1,5 @@
 project(MC_DEV_TOOL_MCDK)
 
-option(MC_DEV_TOOL_MCDK_ENABLE_CLI "BUILD CLI EXECUTABLE" OFF)
 
 set(_mcdk_native_profiler_supported OFF)
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -39,7 +38,11 @@ target_include_directories(mcdk_plugin_manifest PUBLIC
 )
 target_link_libraries(mcdk_plugin_manifest PUBLIC mcp mcdk::plugin-abi)
 
-add_library(mcdk_mcp_tools STATIC src/mcp_tool_definitions.cpp)
+add_library(mcdk_mcp_tools STATIC
+    src/mcp_http_client.cpp
+    src/mcp_tool_definitions.cpp
+    src/mcp_tool_help.cpp
+)
 target_compile_features(mcdk_mcp_tools PUBLIC cxx_std_20)
 target_include_directories(mcdk_mcp_tools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(mcdk_mcp_tools PUBLIC mcp)
@@ -57,6 +60,7 @@ add_library(mcdk_core STATIC
     src/log_buffer.cpp
     src/log_classifier.cpp
     src/mod_dir_config.cpp
+    src/session_file.cpp
     src/mod_register.cpp
     src/mc_input_mcp.cpp
     src/mc_profiler_mcp.cpp
@@ -84,7 +88,6 @@ add_library(mcdk_runtime STATIC
     src/plugin_host/images.cpp
     src/plugin_host/process_request.cpp
     src/plugin_host/world_request.cpp
-    src/plugin_cli.cpp
     src/plugin_host/host.cpp
     src/plugin_host/registry.cpp
     src/plugin_host/session_binding.cpp
@@ -112,7 +115,7 @@ if(WIN32)
     target_link_libraries(mcdk_runtime PRIVATE ws2_32)
 endif()
 
-add_executable(mcdk main.cpp)
+add_executable(mcdk main.cpp src/cli.cpp)
 target_compile_features(mcdk PRIVATE cxx_std_23)
 target_include_directories(mcdk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs)
 target_link_libraries(mcdk PRIVATE mcdk_runtime)
@@ -140,11 +143,6 @@ if(_mcdk_native_profiler_supported)
         VERBATIM
     )
     add_dependencies(mcdk mcdk_native_profiler_component)
-endif()
-
-if(MC_DEV_TOOL_MCDK_ENABLE_CLI)
-    target_compile_definitions(mcdk PRIVATE MCDK_ENABLE_CLI)
-    target_sources(mcdk PRIVATE src/cli.cpp)
 endif()
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

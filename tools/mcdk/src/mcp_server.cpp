@@ -601,7 +601,12 @@ namespace mcdk {
             bindBuiltinTool(
                 mcp_tool_definitions::buildMcInputTool(),
                 [this](const nlohmann::json& params, const std::string& /* session_id */) -> nlohmann::json {
-                    return mc_input_mcp::handleRequest(mcPid.load(std::memory_order_relaxed), params, logBuffer.get());
+                    return mc_input_mcp::handleRequest(
+                        mcPid.load(std::memory_order_relaxed),
+                        params,
+                        logBuffer.get(),
+                        config.preferPostInput
+                    );
                 }
             );
         }
@@ -622,9 +627,9 @@ namespace mcdk {
         }
 
         // 启动MCP服务器
-        void start() {
+        bool start() {
             if (!config.enabled || server.get() != nullptr) {
-                return;
+                return true;
             }
             // 兜底：调用方未显式注册内置工具时在此补上。
             registerBuiltinTools();
@@ -640,7 +645,11 @@ namespace mcdk {
             toolRegistry->forEach([this](const runtime::McpToolEntry& entry) {
                 server->register_tool(entry.descriptor, entry.handler);
             });
-            server->start(false); // 非阻塞启动
+            if (!server->start(false)) { // 非阻塞启动
+                server.reset();
+                return false;
+            }
+            return true;
         }
 
         // 停止MCP服务器
@@ -705,7 +714,7 @@ namespace mcdk {
 
     void MCPServer::registerBuiltinTools() { mImpl->registerBuiltinTools(); }
 
-    void MCPServer::start() { mImpl->start(); }
+    bool MCPServer::start() { return mImpl->start(); }
 
     void MCPServer::stop() { mImpl->stop(); }
 } // namespace mcdk

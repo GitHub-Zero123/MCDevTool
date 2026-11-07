@@ -13,7 +13,7 @@
 - 避免同名插件在多个搜索路径间覆盖时产生的"到底加载了哪一个"问题；
 - 与 [01-overview.md](01-overview.md) §3 的非目标一致：既然 v1 不做沙箱与权限强制，就必须把信任边界前移到声明这一步。
 
-由此，插件清单中的 `permissions` 字段（见 §3）**仅用于在用户添加插件时向其展示**，运行期不做拦截。
+由此，插件清单中的 `permissions` 字段（见 §3）**仅供用户添加插件前查阅**，运行期不做拦截。
 
 唯一的另一个来源是环境变量 `MCDEV_PLUGINS`（§2.4），留给拉起 mcdk 的那个程序——通常是定制版编辑器。
 它没有破坏上面的性质：仍然是逐条写明的路径，不扫描目录；能设置 mcdk 环境变量的程序，本来就决定了
@@ -51,7 +51,7 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `enable` | bool | 是 | `false` 时宿主**禁止**加载该动态库，仅在 `mcdk plugin list` 中列出 |
+| `enable` | bool | 是 | `false` 时宿主**禁止**加载该动态库 |
 | `path` | string | 是 | 插件目录（内含 `plugin.json`）或直接指向动态库文件。见 §2.2 |
 | `id` | string | 否 | 期望的插件 id。填写后，与清单中 `id` 不符则拒绝加载并报错 |
 | `config` | 任意 JSON | 否 | 传给该插件的配置，原样序列化后透传，插件通过 `mcdk.core` 的 `get_config` 取回文本自行解析。**这是「同一个插件二进制按不同参数声明多次」的基础。** 未写时插件收到字面量 `"null"` |
@@ -85,12 +85,11 @@ MCDEV_PLUGINS=[{"enable":true,"path":"D:/MyEditor/plugins/editor-core","config":
 - 未设置或为空白时等于没有。**不是合法 JSON 或条目格式错误时 mcdk 直接报错退出**，理由与 `plugins` 相同：
   静默跳过会让「明明注入了却没生效」无从排查。
 - 启动时打印 `[MCDK] 外部插件（MCDEV_PLUGINS）：…`。
-- 不选命令行参数，是因为 mcdk 带任何参数都会进入 `mcdk plugin …` 这类子命令模式；而 `MCDEV_*`
+- 不选命令行参数，是因为 mcdk 带参数时进入面向自动化的 CLI（见 [docs/cli.md](../cli.md)）；而 `MCDEV_*`
   本来就是编辑器向 mcdk 传参的通道（`MCDEV_IS_PLUGIN_ENV`、`MCDEV_HOST_PORT` 等），且 mcdk 给游戏
   构造环境时会剔掉所有 `MCDEV_*`，不会漏进游戏进程。
 - `mcdk_stdio_bridge` 同样读取它：编辑器用同一个变量拉起 bridge，注入插件在 `plugin.json` 里声明的 MCP
   工具也会出现在 `tools/list` 里。
-- `mcdk plugin …` 命令只管 `.mcdev.json`，不显示也不修改这里的插件。
 
 ## 3. `plugin.json` 清单
 
@@ -181,21 +180,9 @@ MCDEV_PLUGINS=[{"enable":true,"path":"D:/MyEditor/plugins/editor-core","config":
 
 任何单个插件的失败都**禁止**影响其余插件与 mcdk 主流程。
 
-## 5. CLI
+## 5. 管理声明
 
-```bash
-mcdk plugin list                 # 列出 .mcdev.json 中的声明及其解析结果
-mcdk plugin enable <id|path>     # 将对应条目的 enable 置 true
-mcdk plugin disable <id|path>    # 置 false
-mcdk plugin add <path>           # 追加一条声明；先解析清单并展示 permissions 供用户确认
-mcdk plugin remove <id>          # 移除声明
-```
-
-`add` **必须**在写入前把该插件声明的 `permissions` 与 `id`、`version` 打印给用户确认——这是 §1 信任模型中用户做决策的那一刻。
-
-**实现状态：五条命令均已可用**（`tools/mcdk/src/plugin_cli.cpp`）。`enable` / `disable` / `remove` 的参数按 `id` 或 `path` 匹配；`add` 只接受插件目录，直指动态库的形态没有清单可展示，无法完成信任确认那一步，需用户手写声明。
-
-**已知缺陷：写回会丢掉原文件中的注释与缩进风格。** 与现有的 `tryUpdateUserGamePath` 同源——两者都是「解析成 JSON DOM 再 `dump`」，而 jsonc 注释在解析时就被丢弃了，`dump` 不可能还原。当前的做法是每次写回都向用户明说这一点，而不是假装无事发生。根治需要一套保留格式的读改写实现，见 [10-roadmap.md](10-roadmap.md) §4 待定问题 1。
+mcdk 不提供插件管理命令，声明一律手写进 `.mcdev.json`。添加前请自行查看插件 `plugin.json` 的 `id`、`version` 与 `permissions`——这是 §1 信任模型中用户做决策的那一刻。mcdk 的 CLI 只聚焦游戏自动化，定位见 [docs/cli.md](../cli.md)。
 
 ## 6. 与用户级全局插件的关系
 

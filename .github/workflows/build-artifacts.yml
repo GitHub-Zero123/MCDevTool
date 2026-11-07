@@ -57,7 +57,6 @@ jobs:
             -DMC_DEV_TOOL_BUILD_TEST=OFF \
             -DMC_DEV_TOOL_BUILD_MCDK=ON \
             -DMC_DEV_TOOL_BUILD_MCDK_STDIO_BRIDGE=ON \
-            -DMC_DEV_TOOL_MCDK_ENABLE_CLI=OFF \
             ${{ matrix.configure_extra }}
 
       - name: Build

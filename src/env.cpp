@@ -134,6 +134,8 @@ namespace MCDevTool {
         return getGamesComNeteasePath() / "_dependencies_packs";
     }
 
+    RuntimePackRoots getGlobalPackRoots() { return {getBehaviorPacksPath(), getResourcePacksPath()}; }
+
     // 清理运行时行为包目录
     // 删的是父目录，底下挂着 junction，所以真会走进 remove_all 的递归分支，靠的是
     // file_type::junction != directory 这一层。依据见 createDirectoryJunction 处。
@@ -161,6 +163,10 @@ namespace MCDevTool {
 
     // 分析并link源代码addon目录到运行时行为/资源包目录
     Addon::PackInfo linkSourcePackToRuntimePack(const std::filesystem::path& sourceDir) {
+        return linkSourcePackToRuntimePack(sourceDir, getGlobalPackRoots());
+    }
+
+    Addon::PackInfo linkSourcePackToRuntimePack(const std::filesystem::path& sourceDir, const RuntimePackRoots& roots) {
         auto info = Addon::parsePackInfo(sourceDir);
         if (!info) {
             return info;
@@ -168,7 +174,7 @@ namespace MCDevTool {
         if (info.type == Addon::PackType::BEHAVIOR) {
             auto uuid = info.uuid;
             normalizeUUIDString(uuid);
-            auto destPath = getBehaviorPacksPath() / uuid;
+            auto destPath = roots.behavior / uuid;
             if (!createDirectoryJunction(sourceDir, destPath)) {
                 std::cerr << "行为包软链接创建失败: " << Utils::pathToUtf8(sourceDir.filename()) << "\n";
             } else {
@@ -177,7 +183,7 @@ namespace MCDevTool {
         } else if (info.type == Addon::PackType::RESOURCE) {
             auto uuid = info.uuid;
             normalizeUUIDString(uuid);
-            auto destPath = getResourcePacksPath() / uuid;
+            auto destPath = roots.resource / uuid;
             if (!createDirectoryJunction(sourceDir, destPath)) {
                 std::cerr << "资源包软链接创建失败: " << Utils::pathToUtf8(sourceDir.filename()) << "\n";
             } else {
@@ -189,9 +195,14 @@ namespace MCDevTool {
 
     // 分析并link源代码addon目录到运行时行为包目录 该版本支持资源+行为包组合
     std::vector<Addon::PackInfo> linkSourceAddonToRuntimePacks(const std::filesystem::path& sourceDir) {
+        return linkSourceAddonToRuntimePacks(sourceDir, getGlobalPackRoots());
+    }
+
+    std::vector<Addon::PackInfo>
+    linkSourceAddonToRuntimePacks(const std::filesystem::path& sourceDir, const RuntimePackRoots& roots) {
         std::vector<Addon::PackInfo> packs;
         // 先尝试处理当前目录为单一pack
-        auto oncePackInfo = linkSourcePackToRuntimePack(sourceDir);
+        auto oncePackInfo = linkSourcePackToRuntimePack(sourceDir, roots);
         if (oncePackInfo) {
             packs.push_back(std::move(oncePackInfo));
             return packs;
@@ -199,7 +210,7 @@ namespace MCDevTool {
         // 遍历当前文件夹下的所有文件夹
         for (const auto& entry : std::filesystem::directory_iterator(sourceDir)) {
             if (entry.is_directory()) {
-                auto packInfo = linkSourcePackToRuntimePack(entry.path());
+                auto packInfo = linkSourcePackToRuntimePack(entry.path(), roots);
                 if (packInfo) {
                     packs.push_back(std::move(packInfo));
                 }

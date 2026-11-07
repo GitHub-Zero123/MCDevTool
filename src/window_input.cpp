@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <iterator>
 #include <mutex>
 #include <ranges>
@@ -178,6 +179,7 @@ namespace MCDevTool::Input {
         constexpr int SliceMs       = 20;    // 睡眠切片，保证守卫及时生效
         constexpr int LockWaitMs    = 250;   // 输入互斥的等待上限
         constexpr int SegmentGapMs  = 8;     // 拖拽/视角插值点之间的间隔
+        constexpr int PostNotchGapMs = 60;   // Post 模式滚轮每格的间隔，同一帧内的多条消息只算一格
         constexpr int DoubleGapMs   = 40;    // 双击两次按下之间的间隔
         constexpr int ImeWaitMs     = 200;   // 与目标进程 IME 窗口通信的等待上限
         constexpr int HeldLeaseMs   = 60000; // leave_held 的租期上限，超时视为泄漏
@@ -393,6 +395,118 @@ namespace MCDevTool::Input {
             return SendInput(static_cast<UINT>(events.size()), events.data(), sizeof(INPUT)) == events.size();
         }
 
+        // --- 窗口消息投递（Delivery::Post）---
+
+        // 窗口消息要自带坐标和按键状态，系统不再替我们维护。一个 mcdk 只驱动一个游戏，全局一份即可。
+        struct PostedPointer {
+            Pixel  at;
+            WPARAM keys   = 0; // MK_* 掩码
+            bool   placed = false;
+        };
+
+        PostedPointer& postedPointer() noexcept {
+            static PostedPointer pointer;
+            return pointer;
+        }
+
+        void setPostedKey(WPARAM key, bool down) noexcept {
+            auto& keys = postedPointer().keys;
+            keys       = down ? keys | key : keys & ~key;
+        }
+
+        LPARAM clientLParam(Pixel at) noexcept {
+            return static_cast<LPARAM>(MAKELONG(static_cast<WORD>(at.x), static_cast<WORD>(at.y)));
+        }
+
+        // 系统在 WM_KEYDOWN 里给的是不分左右的虚拟键，这里要对齐。
+        UINT genericVirtualKey(UINT key) noexcept {
+            switch (key) {
+            case VK_LSHIFT:
+            case VK_RSHIFT:
+                return VK_SHIFT;
+            case VK_LCONTROL:
+            case VK_RCONTROL:
+                return VK_CONTROL;
+            case VK_LMENU:
+            case VK_RMENU:
+                return VK_MENU;
+            default:
+                return key;
+            }
+        }
+
+        bool postKey(HWND window, const KEYBDINPUT& key) noexcept {
+            const bool up = (key.dwFlags & KEYEVENTF_KEYUP) != 0;
+            if ((key.dwFlags & KEYEVENTF_UNICODE) != 0) {
+                return up || PostMessageW(window, WM_CHAR, key.wScan, 1) != FALSE;
+            }
+
+            const bool extended = (key.dwFlags & KEYEVENTF_EXTENDEDKEY) != 0;
+            const UINT virtualKey =
+                genericVirtualKey(MapVirtualKeyW(extended ? 0xE000u | key.wScan : key.wScan, MAPVK_VSC_TO_VK_EX));
+            const bool system = virtualKey == VK_MENU;
+            if (virtualKey == VK_SHIFT) setPostedKey(MK_SHIFT, !up);
+            if (virtualKey == VK_CONTROL) setPostedKey(MK_CONTROL, !up);
+
+            const auto bits = 1u | (static_cast<UINT>(key.wScan) << 16) | (extended ? 1u << 24 : 0u)
+                            | (system ? 1u << 29 : 0u) | (up ? 3u << 30 : 0u);
+            const UINT message = system ? (up ? WM_SYSKEYUP : WM_SYSKEYDOWN) : (up ? WM_KEYUP : WM_KEYDOWN);
+            return PostMessageW(window, message, virtualKey, static_cast<LPARAM>(bits)) != FALSE;
+        }
+
+        bool postMouse(HWND window, const MOUSEINPUT& mouse) noexcept {
+            auto& pointer = postedPointer();
+            if ((mouse.dwFlags & (MOUSEEVENTF_WHEEL | MOUSEEVENTF_HWHEEL)) != 0) {
+                // 滚轮消息的坐标是屏幕坐标，其余鼠标消息是客户区坐标。
+                POINT screen{pointer.at.x, pointer.at.y};
+                ClientToScreen(window, &screen);
+                const UINT message = (mouse.dwFlags & MOUSEEVENTF_HWHEEL) != 0 ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL;
+                const auto delta   = static_cast<WORD>(static_cast<short>(mouse.mouseData));
+                return PostMessageW(
+                           window,
+                           message,
+                           MAKEWPARAM(static_cast<WORD>(pointer.keys), delta),
+                           static_cast<LPARAM>(MAKELONG(static_cast<WORD>(screen.x), static_cast<WORD>(screen.y)))
+                       )
+                    != FALSE;
+            }
+
+            struct ButtonMessage {
+                DWORD  flag;
+                UINT   message;
+                WPARAM key;
+                bool   down;
+            };
+            constexpr ButtonMessage buttons[]{
+                {MOUSEEVENTF_LEFTDOWN, WM_LBUTTONDOWN, MK_LBUTTON, true},
+                {MOUSEEVENTF_LEFTUP, WM_LBUTTONUP, MK_LBUTTON, false},
+                {MOUSEEVENTF_RIGHTDOWN, WM_RBUTTONDOWN, MK_RBUTTON, true},
+                {MOUSEEVENTF_RIGHTUP, WM_RBUTTONUP, MK_RBUTTON, false},
+                {MOUSEEVENTF_MIDDLEDOWN, WM_MBUTTONDOWN, MK_MBUTTON, true},
+                {MOUSEEVENTF_MIDDLEUP, WM_MBUTTONUP, MK_MBUTTON, false},
+            };
+            const auto button = std::ranges::find_if(buttons, [&](const ButtonMessage& candidate) {
+                return (mouse.dwFlags & candidate.flag) != 0;
+            });
+            if (button == std::end(buttons)) return false;
+
+            setPostedKey(button->key, button->down);
+            return PostMessageW(window, button->message, pointer.keys, clientLParam(pointer.at)) != FALSE;
+        }
+
+        bool postMove(HWND window, Pixel client) noexcept {
+            auto& pointer  = postedPointer();
+            pointer.at     = client;
+            pointer.placed = true;
+            return PostMessageW(window, WM_MOUSEMOVE, pointer.keys, clientLParam(client)) != FALSE;
+        }
+
+        bool postEvents(HWND window, std::span<INPUT> events) noexcept {
+            return std::ranges::all_of(events, [window](const INPUT& event) {
+                return event.type == INPUT_KEYBOARD ? postKey(window, event.ki) : postMouse(window, event.mi);
+            });
+        }
+
         // --- 已按下未释放的输入 ---
 
         struct Held {
@@ -402,6 +516,7 @@ namespace MCDevTool::Input {
             bool              extended = false;
             bool              isButton = false;
             MouseButton       button   = MouseButton::Left;
+            HWND              window   = nullptr; // Post 模式下按键所在的窗口，抬起要投回同一个窗口
         };
 
         Held asHeld(const Key& key) {
@@ -460,7 +575,11 @@ namespace MCDevTool::Input {
             std::vector<std::string> released;
             for (auto& entry : entries | std::views::reverse) {
                 INPUT event = heldEvent(entry, true);
-                emit(std::span{&event, 1});
+                if (entry.window != nullptr) {
+                    postEvents(entry.window, std::span{&event, 1});
+                } else {
+                    emit(std::span{&event, 1});
+                }
                 released.push_back(std::move(entry.name));
             }
             entries.clear();
@@ -544,13 +663,18 @@ namespace MCDevTool::Input {
             Ledger&           ledger;
         };
 
+        bool posts(const Runtime& runtime) noexcept { return runtime.options.delivery == Delivery::Post; }
+
         Result<void> send(const Runtime& runtime, std::span<INPUT> events) {
-            return runtime.options.dryRun || emit(events)
-                     ? Result<void>{}
-                     : Result<void>{fail(
-                           ErrorCode::PartialFailure,
-                           "SendInput did not deliver every event (last error " + std::to_string(GetLastError()) + ")."
-                       )};
+            const bool delivered =
+                runtime.options.dryRun || (posts(runtime) ? postEvents(runtime.hwnd, events) : emit(events));
+            return delivered ? Result<void>{}
+                             : Result<void>{fail(
+                                   ErrorCode::PartialFailure,
+                                   std::string{posts(runtime) ? "PostMessage" : "SendInput"}
+                                       + " did not deliver every event (last error " + std::to_string(GetLastError())
+                                       + ")."
+                               )};
         }
 
         // 每一步之前复核：时间预算、窗口存活、前台归属。任一失效立即中止，
@@ -589,7 +713,8 @@ namespace MCDevTool::Input {
         // --- 按下 / 释放 ---
 
         Result<void> pressDown(Runtime& runtime, Held target) {
-            INPUT event = heldEvent(target, false);
+            target.window = posts(runtime) ? runtime.hwnd : nullptr;
+            INPUT event   = heldEvent(target, false);
             return send(runtime, std::span{&event, 1}).transform([&] {
                 if (!runtime.options.dryRun) runtime.ledger.add(std::move(target));
             });
@@ -689,6 +814,11 @@ namespace MCDevTool::Input {
         }
 
         Result<void> moveTo(Runtime& runtime, Pixel client) {
+            if (posts(runtime)) {
+                return runtime.options.dryRun || postMove(runtime.hwnd, client)
+                         ? Result<void>{}
+                         : Result<void>{fail(ErrorCode::GameExited, "The game window is no longer addressable.")};
+            }
             POINT screen{client.x, client.y};
             if (ClientToScreen(runtime.hwnd, &screen) == FALSE) {
                 return fail(ErrorCode::GameExited, "The game window is no longer addressable.");
@@ -818,9 +948,18 @@ namespace MCDevTool::Input {
                     return sequence(
                                [&] { return moveIfNeeded(runtime, at); },
                                [&] {
-                                   return withHeld(runtime, step.modifiers, [&] {
-                                       INPUT event = wheelEvent(step.amount, step.axis);
-                                       return send(runtime, std::span{&event, 1});
+                                   return withHeld(runtime, step.modifiers, [&]() -> Result<void> {
+                                       if (!posts(runtime)) {
+                                           INPUT event = wheelEvent(step.amount, step.axis);
+                                           return send(runtime, std::span{&event, 1});
+                                       }
+                                       return repeatTimes(std::abs(step.amount), [&] {
+                                           INPUT event = wheelEvent(step.amount < 0 ? -1 : 1, step.axis);
+                                           return sequence(
+                                               [&] { return send(runtime, std::span{&event, 1}); },
+                                               [&] { return settle(runtime, PostNotchGapMs); }
+                                           );
+                                       });
                                    });
                                }
                     ).transform([at] { return at; });
@@ -884,7 +1023,21 @@ namespace MCDevTool::Input {
             Options    options;
             WindowInfo info;
             bool       absoluteSteps = false;
+            bool       lookSteps     = false;
         };
+
+        bool isPost(const Session& session) noexcept { return session.options.delivery == Delivery::Post; }
+
+        // 视角走原始鼠标输入，窗口消息送不进去，投了也只会静默无效。
+        Result<void> checkDelivery(Session& session) {
+            return isPost(session) && session.lookSteps
+                     ? Result<void>{fail(
+                           ErrorCode::Unsupported,
+                           "look needs raw mouse input, which delivery=post cannot send. Turn the camera with "
+                           "execute_code instead: GetEngineCompFactory().CreateRot(playerId).SetRot((pitch, yaw))."
+                       )}
+                     : Result<void>{};
+        }
 
         // pid 为 0 时窗口查找会退化成“匹配任意 Minecraft 窗口”，必须先挡住。
         Result<void> checkProcess(Session& session) {
@@ -895,7 +1048,8 @@ namespace MCDevTool::Input {
                                      )};
         }
 
-        Result<void> checkDesktop(Session&) {
+        Result<void> checkDesktop(Session& session) {
+            if (isPost(session)) return {}; // 窗口消息不经过输入桌面，锁屏时也能投递
             const HDESK desktop = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
             if (desktop == nullptr) {
                 return fail(
@@ -924,7 +1078,7 @@ namespace MCDevTool::Input {
                     "The game window is minimized and restore_if_minimized is off."
                 );
             }
-            ShowWindow(session.hwnd, SW_RESTORE);
+            ShowWindow(session.hwnd, isPost(session) ? SW_SHOWNOACTIVATE : SW_RESTORE);
             Sleep(RestoreWaitMs);
             return IsIconic(session.hwnd) == FALSE
                      ? Result<void>{}
@@ -1078,7 +1232,7 @@ namespace MCDevTool::Input {
             session.info.pointerLocked = pointerHeldBy(session.hwnd);
             session.info.imeOpen       = imeIsOpen(session.hwnd);
 
-            return session.info.pointerLocked && session.absoluteSteps
+            return session.info.pointerLocked && session.absoluteSteps && !isPost(session)
                      ? Result<void>{fail(
                            ErrorCode::PointerModeMismatch,
                            "The game holds the pointer (in-world view), so absolute coordinates do not apply. "
@@ -1090,6 +1244,7 @@ namespace MCDevTool::Input {
         using Check = Result<void> (*)(Session&);
 
         constexpr Check Preflight[]{
+            &checkDelivery,
             &checkProcess,
             &checkDesktop,
             &checkWindow,
@@ -1133,6 +1288,12 @@ namespace MCDevTool::Input {
 
             Options effective = options;
             effective.focus   = options.dryRun ? FocusPolicy::Keep : options.focus;
+            if (options.delivery == Delivery::Post) {
+                // 不碰前台，也不碰系统光标和输入法。
+                effective.focus         = FocusPolicy::Keep;
+                effective.ime           = ImePolicy::Keep;
+                effective.restoreCursor = false;
+            }
 
             Report report;
             report.total  = steps.size();
@@ -1140,11 +1301,23 @@ namespace MCDevTool::Input {
             // 先回收超租的保留输入：即使这次调用随后失败，泄漏的按键也已经放开了。
             report.released = sweepExpired();
 
-            Session session{pid, nullptr, {}, effective, {}, std::ranges::any_of(steps, &stepUsesAbsoluteCoords)};
+            Session session{
+                pid,
+                nullptr,
+                {},
+                effective,
+                {},
+                std::ranges::any_of(steps, &stepUsesAbsoluteCoords),
+                std::ranges::any_of(steps, [](const Step& step) { return std::holds_alternative<LookStep>(step); }),
+            };
 
             return preflight(session)
                 .and_then([&]() -> Result<Report> {
                     report.window = session.info;
+                    // 没传坐标的首次点击落在窗口中央，对应游戏内的准星。
+                    if (effective.delivery == Delivery::Post && !postedPointer().placed) {
+                        postedPointer().at = {session.client.right / 2, session.client.bottom / 2};
+                    }
 
                     ImeScope      ime{session.hwnd, effective.ime == ImePolicy::Suppress && !effective.dryRun};
                     CursorRestore restore{effective.restoreCursor && !effective.dryRun};

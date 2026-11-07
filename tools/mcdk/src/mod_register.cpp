@@ -10,7 +10,7 @@
 #include <mcdevtool/env.h>
 
 namespace mcdk {
-    MCDevTool::Addon::PackInfo registerDebugMod() {
+    MCDevTool::Addon::PackInfo registerDebugMod(const MCDevTool::RuntimePackRoots& roots) {
         using namespace MCDevTool;
 
         const auto        manifest = INCLUDE_MOD_RES::resourceMap.at("manifest.json");
@@ -20,9 +20,9 @@ namespace mcdk {
 
         std::filesystem::path outputDirectory;
         if (info.type == Addon::PackType::BEHAVIOR) {
-            outputDirectory = getBehaviorPacksPath();
+            outputDirectory = roots.behavior;
         } else if (info.type == Addon::PackType::RESOURCE) {
-            outputDirectory = getResourcePacksPath();
+            outputDirectory = roots.resource;
         } else {
             throw std::runtime_error("调试MOD的PackType类型未知，无法注册。");
         }
@@ -43,18 +43,20 @@ namespace mcdk {
                 static_cast<std::streamsize>(resourceData.second)
             );
         }
+        info.path = target;
         return info;
     }
 
     void linkUserConfigModDirs(
         std::vector<UserModDirConfig>&           configs,
         std::vector<MCDevTool::Addon::PackInfo>& linkedPacks,
+        const MCDevTool::RuntimePackRoots&       roots,
         bool                                     updateConfigPaths
     ) {
         using namespace MCDevTool;
 
         for (auto& modConfig : configs) {
-            auto packInfos = linkSourceAddonToRuntimePacks(modConfig.getAbsolutePath());
+            auto packInfos = linkSourceAddonToRuntimePacks(modConfig.getAbsolutePath(), roots);
             for (auto& info : packInfos) {
                 if (info.type == Addon::PackType::BEHAVIOR) {
                     std::cout << "  Behavior \"" << info.name << "\"  UUID=" << info.uuid;

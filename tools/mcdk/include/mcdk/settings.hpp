@@ -19,6 +19,12 @@ namespace mcdk {
         Safaia = 1,
     };
 
+    // Addon 链接到哪里。World 让实例互不干扰，见 docs/cli.md。
+    enum class PackLinkMode : std::uint8_t {
+        Global = 0,
+        World  = 1,
+    };
+
     struct HotReloadConfig {
         bool mods      = true;
         bool ui        = false;
@@ -81,13 +87,25 @@ namespace mcdk {
         bool        enabled    = false;
         std::string serverIp   = "localhost";
         int         serverPort = 19133;
+        // 监听失败时中止启动。来自 mcdk run，不读配置文件。
+        bool        required   = false;
+        // mc_input 默认走窗口消息投递。来自隔离会话，不读配置文件。
+        bool        preferPostInput = false;
     };
+    // 由 mcdk run 设置，不读配置文件。无参启动全部保持默认。
+    struct AutomationConfig {
+        std::string sessionName;
+        // mcdk 退出时带走游戏，避免留下无人管理的进程。
+        bool killGameWithMcdk = false;
+    };
+
     struct UserConfig {
         std::filesystem::path         gameExecutablePath;
         std::vector<UserModDirConfig> modDirectories;
         WorldProjectConfig            world;
         PlayerConfig                  player;
         bool                          includeDebugMod = true;
+        PackLinkMode                  packLinkMode    = PackLinkMode::Global;
         HotReloadConfig               hotReload;
         DebugModOptions               debugOptions;
         ModPcDebuggerConfig           modPcDebugger;
@@ -95,6 +113,7 @@ namespace mcdk {
         MCDevTool::Style::StyleConfig windowStyle;
         NeteaseConfig                 netease;
         McpServerConfig               mcpServer;
+        AutomationConfig              automation;
         GameLogProtocol               logProtocol = GameLogProtocol::Stdio;
         std::vector<PluginDeclaration> plugins;
     };

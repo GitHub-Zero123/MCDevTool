@@ -123,8 +123,6 @@ mcdk_add_plugin(my_plugin
 [mcdk] 插件已构建。将下面这段加入项目的 .mcdev.json：
 
   { "enable": true, "path": "D:/dev/my-plugin/build/plugins/my-plugin" }
-
-  或执行： mcdk plugin add D:/dev/my-plugin/build/plugins/my-plugin
 ```
 
 ## 5. 加载器模式：一个 DLL 充当其他插件的宿主

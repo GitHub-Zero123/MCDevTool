@@ -52,6 +52,7 @@
 #include <mcdk/mc_profiler_mcp.hpp>
 #include <mcdk/runtime/game_lifecycle.hpp>
 #include <mcdk/runtime/session.hpp>
+#include <mcdk/session_file.hpp>
 #include <mcdk/shader_reload_support.hpp>
 #include <mcdk/style_processor.hpp>
 #include <mcdk/utils.hpp>
@@ -116,7 +117,7 @@ namespace mcdk {
 
 } // namespace mcdk
 
-void mcdk::launchGameExe(
+mcdk::GameRunResult mcdk::launchGameExe(
     const std::filesystem::path&                   exePath,
     std::string_view                               config,
     const mcdk::UserConfig&                        userConfig,
@@ -185,7 +186,7 @@ void mcdk::launchGameExe(
         });
         if (vetoed) {
             printColoredAtomic("[MCDK] 游戏启动被插件否决", ConsoleColor::Yellow);
-            return;
+            return {};
         }
     }
 
@@ -214,6 +215,24 @@ void mcdk::launchGameExe(
     auto& particleReloadTask = session.particleReloadTask();
     auto& styleProcessor     = session.styleProcessor();
     auto& hostBridgeTask     = session.hostBridgeTask();
+    // mcdk run 的会话记录。无参启动没有它，也不留下任何文件。
+    std::shared_ptr<mcdk::SessionRecordWriter> sessionRecord;
+    if (!userConfig.automation.sessionName.empty()) {
+        const auto& name = userConfig.automation.sessionName;
+        sessionRecord    = std::make_shared<mcdk::SessionRecordWriter>(
+            mcdk::sessionRecordPath(std::filesystem::current_path(), name),
+            mcdk::SessionRecord{
+                   .name            = name,
+                   .mcdkPid         = GetCurrentProcessId(),
+                   .mcdkStartTime   = mcdk::currentProcessStartTime(),
+                   .worldFolderName = userConfig.world.folderName,
+                   .mcpHost         = mcpServerConfig.enabled ? mcpServerConfig.serverIp : std::string{},
+                   .mcpPort         = mcpServerConfig.enabled ? mcpServerConfig.serverPort : 0,
+                   .isolated        = userConfig.packLinkMode == mcdk::PackLinkMode::World,
+            }
+        );
+    }
+
     // 把运行期子系统接给插件接口层。尽早做：插件在 mcdk.mcp.register.before
     // 里就可能要读 mcdk.info，而那个事件就在几十行之后。此刻游戏进程还没创建，
     if (!mcdk::plugin_host::instance().empty()) {
@@ -391,7 +410,14 @@ void mcdk::launchGameExe(
         }
 
         // Publish the MCP server only after every buffer and callback has been configured.
-        mcpServer.start();
+        if (!mcpServer.start()) {
+            const auto message = "MCP Server 无法监听 " + mcpServerConfig.serverIp + ":"
+                               + std::to_string(mcpServerConfig.serverPort) + "，端口可能已被其他实例占用";
+            if (mcpServerConfig.required) {
+                throw std::runtime_error(message);
+            }
+            printColoredAtomic("[MCDK] " + message + "，本次启动不提供 MCP", ConsoleColor::Red);
+        }
 
         // 注册表此时已封存，工具清单不再变化。
         MCDK_EMIT(mcdk::plugin_host::EventId::McpRegisterFinish, [&] {
@@ -778,7 +804,8 @@ void mcdk::launchGameExe(
         // 插件侧的 mcdk.ipc.client.*。DebugIPCServer 在 mcdevtool 层，不认识插件系统，
         // 所以由它提供钩子、这里负责发事件。回调跑在 accept / 客户端读线程上。
         ipcServer->setClientCountChangedCallback(
-            [tracker = session.gameLifecycle()](std::size_t clientCount, bool connected, unsigned short peerPort) {
+            [tracker = session.gameLifecycle(),
+             sessionRecord](std::size_t clientCount, bool connected, unsigned short peerPort) {
                 const auto eventId = connected ? mcdk::plugin_host::EventId::IpcClientConnected
                                                : mcdk::plugin_host::EventId::IpcClientDisconnected;
                 MCDK_EMIT(eventId, [clientCount, peerPort] {
@@ -791,6 +818,9 @@ void mcdk::launchGameExe(
                 // 首次握手 / 最后一个客户端断开，都可能改变游戏生命周期状态。
                 if (const auto transition = tracker->onIpcClientCountChanged(clientCount)) {
                     mcdk::emitGameStateChanged(*transition);
+                    if (sessionRecord) {
+                        sessionRecord->setState(mcdk::runtime::gameLifecycleStateName(transition->to));
+                    }
                 }
             }
         );
@@ -952,6 +982,18 @@ void mcdk::launchGameExe(
     nullInput.reset();
     nullOutput.reset();
 
+    UniqueHandle gameJob;
+    if (userConfig.automation.killGameWithMcdk) {
+        gameJob.reset(CreateJobObjectW(nullptr, nullptr));
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (gameJob.get() == nullptr
+            || !SetInformationJobObject(gameJob.get(), JobObjectExtendedLimitInformation, &limits, sizeof(limits))
+            || !AssignProcessToJobObject(gameJob.get(), processHandle.get())) {
+            printColoredAtomic("[MCDK] 无法把游戏绑定到 mcdk，mcdk 异常退出时游戏可能残留", ConsoleColor::Yellow);
+        }
+    }
+
     // 插件交回的进程一律是挂起的，与 Safaia 模式共用「先就绪、再恢复」这一步。
     const bool                         startedSuspended = committed.has_value() || useSafaiaLogs;
     std::unique_ptr<SafaiaLogReceiver> safaiaReceiver;
@@ -991,6 +1033,9 @@ void mcdk::launchGameExe(
     }
     // 把进程 id 分发给 profiler、样式处理器与 MCP 服务
     session.onGameProcessStarted(pid);
+    if (sessionRecord) {
+        sessionRecord->start(pid, mcdk::runtime::gameLifecycleStateName(session.gameLifecycle()->state()));
+    }
 
     // 运行期子系统均已就绪、游戏进程已创建。
     mcdk::plugin_host::instance().advance(MCDK_STAGE_RUNTIME);
@@ -1162,6 +1207,11 @@ void mcdk::launchGameExe(
 
     // 等待读线程退出并关闭读端句柄
     pipeReaders.join();
+    // 放在最后：记录变成 exited 时端口已释放，同名会话可以马上重开。
+    if (sessionRecord) {
+        sessionRecord->finish(minecraftExitCode);
+    }
+    return {.started = true, .exitCode = minecraftExitCode};
 }
 
 #endif
