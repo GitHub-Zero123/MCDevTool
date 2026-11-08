@@ -155,6 +155,15 @@ namespace MCDevTool::Input {
     }
 
     std::optional<Key> findKey(std::string_view name) noexcept {
+        // 常见的另一种写法，统一映射到表里的名字。
+        constexpr std::pair<std::string_view, std::string_view> Aliases[]{
+            {"escape", "esc"}, {"return", "enter"}, {"del", "delete"}, {"ins", "insert"},
+            {"pgup", "pageup"}, {"pgdn", "pagedown"},
+        };
+        if (const auto alias = std::ranges::find(Aliases, name, &std::pair<std::string_view, std::string_view>::first);
+            alias != std::end(Aliases)) {
+            name = alias->second;
+        }
         const auto found = std::ranges::find(Keys, name, &Key::name);
         return found == std::end(Keys) ? std::nullopt : std::optional<Key>{*found};
     }

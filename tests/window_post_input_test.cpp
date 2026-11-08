@@ -210,6 +210,12 @@ namespace {
         require(messages.empty() || messages.back().id == WM_KEYUP, "no key stays down after a failure");
     }
 
+    void testKeyAliases() {
+        require(Input::findKey("escape").has_value() && Input::findKey("escape")->name == "esc", "escape is esc");
+        require(Input::findKey("return")->name == "enter", "return is enter");
+        require(!Input::findKey("escap").has_value(), "unknown names stay unknown");
+    }
+
     void testLookIsRejected() {
         Input::Options options;
         options.delivery = Input::Delivery::Post;
@@ -252,6 +258,7 @@ int main() {
         testHeldInputIsReleasedThroughTheWindow();
         testFailedBatchReleasesKeys();
         testLookIsRejected();
+        testKeyAliases();
         testDryRunPostsNothing();
 
         require(GetForegroundWindow() != gWindow.load(), "the test window never takes the foreground");

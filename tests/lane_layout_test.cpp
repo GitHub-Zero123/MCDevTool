@@ -66,7 +66,7 @@ namespace {
         lane::prepare(real, laneRoot, lane::Level::Worlds);
         const auto data = laneRoot / "MinecraftPE_Netease";
         require(isJunction(data / "minecraftpe"), "settings are shared");
-        require(isJunction(data / "logs"), "logs are shared");
+        require(isPrivateDirectory(data / "logs") && fs::is_empty(data / "logs"), "logs are private");
         require(isPrivateDirectory(data / "minecraftWorlds"), "worlds are private");
         require(fs::is_empty(data / "minecraftWorlds"), "private worlds start empty");
         require(fs::is_regular_file(data / "deviceid.txt"), "loose files are copied");
@@ -81,6 +81,8 @@ namespace {
         require(fs::is_regular_file(data / "minecraftWorlds" / "mine" / "level.dat"), "private data survives");
 
         require(throws([&] { lane::prepare(real, laneRoot, lane::Level::Full); }), "level cannot change silently");
+        require(lane::readLevel(laneRoot) == lane::Level::Worlds, "the level is recorded");
+        require(!lane::readLevel(root / "missing").has_value(), "a plain directory has no level");
     }
 
     void testAddons(const fs::path& real, const fs::path& root) {
@@ -90,6 +92,19 @@ namespace {
         require(isJunction(data / "minecraftWorlds"), "worlds are shared");
         require(fs::is_regular_file(data / "minecraftWorlds" / "w1" / "level.dat"), "shared worlds are visible");
         require(isPrivateDirectory(data / "games" / "com.netease" / "behavior_packs"), "packs stay private");
+    }
+
+    void testOldSharedLogsBecomePrivate(const fs::path& real, const fs::path& root) {
+        // 旧版本的 worlds Lane 里 logs 是联接；再次准备时只摘联接，真实日志不能被删。
+        const auto laneRoot = root / "oldlogs";
+        lane::prepare(real, laneRoot, lane::Level::Worlds);
+        const auto logs = laneRoot / "MinecraftPE_Netease" / "logs";
+        fs::remove(logs);
+        require(MCDevTool::createDirectoryJunction(real / "MinecraftPE_Netease" / "logs", logs), "old junction");
+        lane::prepare(real, laneRoot, lane::Level::Worlds);
+        require(isPrivateDirectory(logs) && fs::is_empty(logs), "the junction is replaced by a private directory");
+        require(fs::is_regular_file(real / "MinecraftPE_Netease" / "logs" / "a.txt"), "real logs survive");
+        lane::remove(laneRoot);
     }
 
     void testExistingPrivateDirectoryIsKept(const fs::path& real, const fs::path& root) {
@@ -179,6 +194,7 @@ int main() {
         testWorlds(real, lanes);
         testAddons(real, lanes);
         testExistingPrivateDirectoryIsKept(real, lanes);
+        testOldSharedLogsBecomePrivate(real, lanes);
         testEntrySlots(lanes / "slots");
         testSegments();
         testRemoveNeverFollowsLinks(real, lanes);

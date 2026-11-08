@@ -54,6 +54,14 @@ namespace mcdk::lane {
             }
         }
 
+        // 独享的目录。旧版本在这里建过联接时只摘掉联接本身，再建真实目录。
+        void privateDirectory(const fs::path& path) {
+            if (isLink(path)) {
+                MCDevTool::removeAllNoFollow(path);
+            }
+            fs::create_directories(path);
+        }
+
         // 文件没法跨盘共享，初次复制一份，之后归 Lane 所有。
         void seedFile(const fs::path& real, const fs::path& target) {
             if (!pathExists(target)) {
@@ -97,6 +105,15 @@ namespace mcdk::lane {
         }
     } // namespace
 
+    std::optional<Level> readLevel(const fs::path& root) {
+        std::ifstream input(root / MetadataFile, std::ios::binary);
+        if (!input) {
+            return std::nullopt;
+        }
+        const auto json = nlohmann::json::parse(input, nullptr, false);
+        return json.is_object() ? parseLevel(json.value("level", "")) : std::nullopt;
+    }
+
     std::optional<Level> parseLevel(std::string_view name) noexcept {
         const auto found = std::ranges::find(LevelNames, name);
         return found == LevelNames.end() ? std::nullopt
@@ -122,8 +139,10 @@ namespace mcdk::lane {
         const auto packsReal = real / "games" / "com.netease";
         const auto packsLane = lane / "games" / "com.netease";
         if (level == Level::Worlds) {
-            mirror(real, lane, {"games", "minecraftWorlds"});
-            fs::create_directories(lane / "minecraftWorlds");
+            // 日志随会话走，不混进真实日志目录。
+            mirror(real, lane, {"games", "minecraftWorlds", "logs"});
+            privateDirectory(lane / "minecraftWorlds");
+            privateDirectory(lane / "logs");
         } else {
             mirror(real, lane, {"games"});
         }

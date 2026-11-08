@@ -38,6 +38,7 @@
 #define CLI11_HAS_FILESYSTEM 0
 #include <CLI11.hpp>
 #include <mcdevtool/env.h>
+#include <mcdevtool/game_discovery.h>
 #include <mcdevtool/utils.h>
 #include <nlohmann/json.hpp>
 
@@ -85,9 +86,22 @@ namespace {
         "  槽位按需复用，数量不超过同时运行的实例数，空闲槽位的联接会被自动摘掉。\n"
         "\n"
         "级别（--lane，默认 worlds）：\n"
-        "  addons  只独享包目录。存档、设置、日志通过目录联接共享真实数据，存档名带 __<会话名> 后缀\n"
-        "  worlds  独享包目录和存档，各会话可以使用同名存档互不冲突。设置、日志仍共享\n"
+        "  addons  只独享包目录。存档、设置、日志目录通过联接共享真实数据；会话的存档建在真实存档目录里，\n"
+        "          文件夹名和游戏里的显示名都带 __<会话名> 后缀，mcdk lane remove 时一并删除\n"
+        "  worlds  独享包目录、存档和日志，各会话可以使用同名存档互不冲突。设置目录仍共享\n"
         "  full    整个数据目录独享，从空白开始，不读写你的真实设置\n"
+        "  addons、worlds 级别里，数据目录顶层的零散文件（如 deviceid.txt、mcp.log）在创建 Lane 时复制一份，之后各写各的。\n"
+        "  旧版本建的 worlds Lane 里日志目录是联接，下次启动时只摘掉联接、改成独享，不会删到真实日志。\n"
+        "\n"
+        "怎么选：\n"
+        "  一般用默认的 worlds：存档、日志互不冲突，删除 Lane 不留残留；代价是游戏里改的设置会写回真实设置。\n"
+        "  测试会改设置，或要求完全干净、可复现时用 full（从默认设置开始）。\n"
+        "  只有测试必须用到已有的真实存档时才用 addons；它的存档列表就是真实存档，不要在游戏里删存档。\n"
+        "\n"
+        "生命周期（类似容器）：\n"
+        "  run 创建或沿用 Lane 并启动；stop 只结束进程，Lane 和存档保留，下次同名 run 接着用；\n"
+        "  mcdk lane remove 删除 Lane 及其数据；mcdk ps --prune 清理已结束会话的记录。\n"
+        "  这些都由调用方（通常是 AI）按需执行，mcdk 不会自动删除任何数据。\n"
         "\n"
         "Lane 目录（--lane-root）：\n"
         "  默认 <project>/.mcdev/lanes/<会话名>，并自动生成 .mcdev/lanes/.gitignore。\n"
@@ -210,13 +224,16 @@ namespace {
         std::string              fingerprint;
     };
 
+    fs::path laneRootFor(const RunOptions& options);
+
     // 本次启动的参数，写进会话记录；--reuse 不能复用时据此说清哪里不同。
     Json launchSummary(const RunOptions& options, const fs::path& configPath) {
         return Json{
             {"config", MCDevTool::Utils::pathToGenericUtf8(configPath)},
             {"set", options.overrides},
             {"lane", options.lane.empty() ? std::string("worlds") : options.lane},
-            {"laneRoot", MCDevTool::Utils::pathToGenericUtf8(options.laneRootPath)},
+            {"laneRoot",
+             options.session.empty() ? std::string{} : MCDevTool::Utils::pathToGenericUtf8(laneRootFor(options))},
             {"background", options.background},
             {"hotReload", options.hotReload},
         };
@@ -371,6 +388,7 @@ namespace {
             // addons 级别的存档目录与其他实例共享，用会话名区分。
             if (*level == mcdk::lane::Level::Addons) {
                 config.world.folderName += "__" + options.session;
+                config.world.name += "__" + options.session; // 游戏里的存档列表靠显示名区分
             }
             config.mcpServer.enabled   = true;
             config.mcpServer.preferPostInput = true;
@@ -563,7 +581,17 @@ namespace {
         }
         CloseHandle(process.hProcess);
         if (exitCode != ExitOk) {
-            std::cerr << "[ERROR] 后台启动失败，日志见 " << MCDevTool::Utils::pathToGenericUtf8(logPath) << '\n';
+            // 原因在后台实例的日志里，把其中的错误行直接转出来，调用方不必再去翻日志。
+            std::ifstream input(logPath, std::ios::binary);
+            for (std::string line; std::getline(input, line);) {
+                if (line.ends_with('\r')) {
+                    line.pop_back();
+                }
+                if (line.starts_with("[ERROR]")) {
+                    std::cerr << line << '\n';
+                }
+            }
+            std::cerr << "[ERROR] 后台启动失败，完整日志见 " << MCDevTool::Utils::pathToGenericUtf8(logPath) << '\n';
         }
         return exitCode;
     }
@@ -642,12 +670,46 @@ namespace {
         }
     }
 
+    // 本机找到的 modpc，新版本在前；标出工程配置当前用的是哪个。
+    int gamesCommand(const SessionOptions& options) {
+        enterProject(options.project);
+        std::string configured;
+        if (const auto config = mcdk::plugin_host::detail::readConfigJson(fs::current_path() / ".mcdev.json");
+            config && config->is_object()) {
+            configured = config->value("game_executable_path", std::string{});
+        }
+        const auto configuredPath = fs::u8path(configured);
+        std::error_code ignored;
+        const auto& paths = MCDevTool::autoMatchGameExePaths();
+        auto        games = Json::array();
+        for (std::size_t index = 0; index < paths.size(); ++index) {
+            games.push_back({
+                {"version", MCDevTool::Utils::pathToUtf8(paths[index].parent_path().filename())},
+                {"path", MCDevTool::Utils::pathToGenericUtf8(paths[index])},
+                {"latest", index == 0},
+                {"configured", !configured.empty() && fs::equivalent(paths[index], configuredPath, ignored)},
+            });
+        }
+        printJson(Json{
+            {"configured", configured.empty() ? Json() : Json(configured)},
+            {"configuredExists", !configured.empty() && fs::is_regular_file(configuredPath, ignored)},
+            {"games", std::move(games)},
+        });
+        if (paths.empty()) {
+            std::cerr << "[ERROR] 没有找到 modpc：各磁盘根目录下都没有 MCStudioDownload\\game\\MinecraftPE_Netease\n";
+            return ExitConfig;
+        }
+        return ExitOk;
+    }
+
     int psCommand(const SessionOptions& options, bool all, bool prune) {
         enterProject(options.project);
         auto sessions = Json::array();
         for (const auto& record : mcdk::listSessionRecords(fs::current_path())) {
             const bool alive = mcdk::isSessionAlive(record);
-            if (prune && !alive) {
+            // Lane 还在时保留记录：lane remove 要靠它找到 addons 会话建在真实目录里的存档。
+            const bool laneLeft = !record.laneRoot.empty() && fs::exists(fs::u8path(record.laneRoot));
+            if (prune && !alive && !laneLeft) {
                 const auto path = mcdk::sessionRecordPath(fs::current_path(), record.name);
                 std::error_code ignored;
                 fs::remove(path, ignored);
@@ -734,6 +796,8 @@ namespace {
                 std::this_thread::sleep_for(PollInterval);
                 current = mcdk::readSessionRecord(path).value_or(current);
             }
+            // 循环里最后读到的可能是退出前的记录，mcdk 写完 exited 才退出，此时再读一次。
+            current = mcdk::readSessionRecord(path).value_or(current);
             stopped.push_back(sessionToJson(current));
         }
         printJson(stopped);
@@ -752,10 +816,26 @@ namespace {
             std::cerr << "[ERROR] Lane 不存在：" << MCDevTool::Utils::pathToGenericUtf8(root) << '\n';
             return ExitConfig;
         }
+        const bool addons = mcdk::lane::readLevel(root) == mcdk::lane::Level::Addons;
         mcdk::lane::remove(root);
         // 顺带摘掉空闲槽位的入口，其中可能有指向刚删除目录的。
         mcdk::lane::sweepEntries(mcdk::lane::defaultEntryDirectory());
-        printJson(Json{{"removed", MCDevTool::Utils::pathToGenericUtf8(root)}});
+        Json result{{"removed", MCDevTool::Utils::pathToGenericUtf8(root)}};
+
+        // addons 的存档建在真实存档目录里，名字带 __<会话名>。只删这一个，不顺着联接。
+        if (addons) {
+            const auto suffix = "__" + options.session;
+            if (record && record->worldFolderName.ends_with(suffix)) {
+                const auto world = MCDevTool::getMinecraftWorldsPath() / fs::u8path(record->worldFolderName);
+                if (fs::is_directory(world) && !MCDevTool::isLink(world)) {
+                    MCDevTool::removeAllNoFollow(world);
+                    result["removedWorld"] = MCDevTool::Utils::pathToGenericUtf8(world);
+                }
+            } else {
+                std::cerr << "[WARN] 找不到会话记录，真实存档目录里名字以 " << suffix << " 结尾的存档需要手动删除\n";
+            }
+        }
+        printJson(result);
         return ExitOk;
     }
 
@@ -1280,7 +1360,11 @@ namespace mcdk::cli {
         auto*          ps      = app.add_subcommand("ps", "列出运行中的会话");
         addProjectOption(ps, psOptions.project);
         ps->add_flag("--all", psAll, "也列出已结束的会话");
-        ps->add_flag("--prune", psPrune, "删除已结束会话的记录和日志，不碰 Lane（Lane 用 mcdk lane remove）");
+        ps->add_flag(
+            "--prune",
+            psPrune,
+            "删除已结束会话的记录和日志。Lane 还在的会话保留记录，先用 mcdk lane remove 删 Lane"
+        );
         ps->footer(
             "会话状态：\n"
             "  process_started   游戏进程已创建，还没进入存档\n"
@@ -1290,6 +1374,17 @@ namespace mcdk::cli {
             "                    （此时 exitCode 是 1296254027，即 0x4D43444B，\"MCDK\"）\n"
             "  lost              mcdk 进程已不在，但记录没有写完\n"
             "readyCount 是进入存档的次数，重载存档后加一，配合 mcdk wait --after 使用。"
+        );
+
+        SessionOptions gamesOptions;
+        auto*          games = app.add_subcommand("games", "列出本机安装的 modpc 版本");
+        addProjectOption(games, gamesOptions.project);
+        games->footer(
+            "从各磁盘根目录下的 MCStudioDownload\\game\\MinecraftPE_Netease\\<版本>\\Minecraft.Windows.exe 查找，新版本在前。\n"
+            "configured 是工程 .mcdev.json 里的 game_executable_path，configuredExists 表示它是否还存在。\n"
+            "run 时配置的路径无效会改用最新版本，只影响本次；指定版本用\n"
+            "  mcdk run --set game_executable_path=<path>\n\n"
+            + std::string(ExitCodeHelp)
         );
 
         SessionOptions waitOptions{.timeoutSeconds = 120};
@@ -1394,6 +1489,9 @@ namespace mcdk::cli {
             }
             if (stop->parsed()) {
                 return stopCommand(stopOptions, stopAll);
+            }
+            if (games->parsed()) {
+                return gamesCommand(gamesOptions);
             }
             if (logs->parsed()) {
                 return logsCommand(logsOptions, logsQuery);

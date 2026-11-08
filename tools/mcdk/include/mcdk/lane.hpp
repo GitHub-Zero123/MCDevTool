@@ -31,6 +31,9 @@ namespace mcdk::lane {
     // 删除 Lane。遇到联接只摘链接，不进入，联接指向的真实数据不受影响。
     void remove(const std::filesystem::path& root);
 
+    // lane.json 里记下的级别；目录不是 Lane 时为空。
+    [[nodiscard]] std::optional<Level> readLevel(const std::filesystem::path& root);
+
     // 游戏的 Python 加载器把模组脚本路径按 '/' 切开后直接丢掉前 10 段，剩下的拼成模块名
     // （ModSDK mod/common/minecraftMod.py 中 LoadWindowsAddonPy 等处的 split('/')[10:]）。
     // 所以游戏看到的 AppData 必须正好 5 段。工程里的 Lane 目录做不到，游戏经由一个 5 段的入口访问它。

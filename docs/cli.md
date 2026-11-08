@@ -94,11 +94,19 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 
 - 在 [Lane](lane.md) 里运行：游戏的数据根目录指向这个会话自己的目录，按 `--lane` 级别决定独享包目录、存档还是整个数据目录。
 - 包只链接到 Lane 的包目录，存档里不放任何联接，配置里的 `pack_link_mode` 不生效。
-- `addons` 级别的存档与真实目录共享，存档目录变成 `<world_folder_name>__NAME`；`worlds`、`full` 级别沿用原名。
+- `addons` 级别的存档与真实目录共享，存档的文件夹名和游戏里的显示名都加上 `__NAME`，在存档列表里能认出是哪个会话的；`mcdk lane remove` 时一并删除这个存档。`worlds`、`full` 级别沿用原名。
 - 启用 MCP，并分配一个空闲端口。用 `--set mcp_server_config.server_port=...` 可以指定端口。
 - `mc_input` 默认使用后台投递。
 
 隔离会话之间互不影响，同 UUID 的包也能并存，比如同一项目的两个 worktree。无参 `mcdk` 和不带 `--session` 的 `run` 仍使用真实的全局包目录，影响不到隔离会话。机制、目录布局和删除方式见 [lane.md](lane.md)。
+
+选择级别：
+
+| 级别 | 适合 | 代价 |
+| --- | --- | --- |
+| `worlds`（默认，推荐） | 大多数自动化测试：存档、日志互不冲突，删除 Lane 不留残留 | 设置目录与真实数据共享，游戏里改的设置会写回真实设置 |
+| `full` | 测试会改设置，或要求完全干净、可复现 | 从默认设置开始，每个 Lane 都要单独初始化 |
+| `addons` | 测试必须用到已有的真实存档 | 存档建在真实目录；存档列表就是真实存档，不要在游戏里删存档 |
 
 ### 与无参启动的差异
 
@@ -125,16 +133,19 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 
 ## 会话命令
 
+会话的生命周期类似容器，由调用方（通常是 AI）管理：`run` 创建或沿用 Lane 并启动，`stop` 只结束进程，Lane 和存档留着供下次同名 `run` 使用；`lane remove` 删除 Lane 及其数据，`ps --prune` 清理已结束会话的记录。mcdk 不会自动删除任何数据。
+
 这些命令的 stdout 都是 JSON。不带 `--session` 时，运行中的会话恰好只有一个才能省略。
 
 | 命令 | 说明 |
 | --- | --- |
-| `mcdk ps [--all] [--prune]` | 列出本项目运行中的会话。`--all` 连已结束的一起列出，`--prune` 删除已结束会话的记录和日志（不碰 Lane） |
+| `mcdk ps [--all] [--prune]` | 列出本项目运行中的会话。`--all` 连已结束的一起列出，`--prune` 删除已结束会话的记录和日志；Lane 还在的会话保留记录，先 `lane remove` |
+| `mcdk games` | 列出本机安装的 modpc 版本（新版本在前），并标出工程配置用的是哪个 |
 | `mcdk wait [--state ready\|exited] [--after N] [--timeout 秒]` | 等待进入存档或退出。默认等 `ready`，超时 120 秒。会话还没启动时会继续等。`--after N` 等到 `readyCount` 大于 N，用于重载存档后确认已重新进入 |
 | `mcdk logs [--since N] [--limit N] [--grep TEXT] [--regex RE] [-i] [--errors] [--json] [--wait-for RE --timeout 秒]` | 按游标读取日志，见下文“日志” |
 | `mcdk call <工具> [--args JSON] [--args-file FILE] [--output FILE] [--image FILE] [--timeout 秒]` | 调用工具。`--output` 把完整结果 JSON 写入文件；`--image` 把结果里的图片解码存成文件（如截图存成 .jpg），stdout 里的图片数据换成文件路径。工具返回错误时，原因同时写到 stderr |
 | `mcdk stop [--all] [--timeout 秒]` | 结束游戏并等 mcdk 退出。返回后端口已释放，可以马上重开同名会话 |
-| `mcdk lane remove --session NAME [--lane-root DIR]` | 删除会话的 Lane 目录，并摘掉空闲的入口槽位。遇到联接只摘链接，不会删到真实游戏数据。会话仍在运行时拒绝 |
+| `mcdk lane remove --session NAME [--lane-root DIR]` | 删除会话的 Lane 目录，并摘掉空闲的入口槽位。遇到联接只摘链接，不会删到真实游戏数据。`addons` 会话建在真实存档目录里的 `<存档>__NAME` 也一并删除，只删这一个。会话仍在运行时拒绝 |
 
 `stop` 直接结束游戏进程，不走正常保存流程。原因见下文的“退出码”。
 
@@ -281,7 +292,7 @@ CLI 不替代 MCP，两者共用同一份工具定义和同一个服务。MCP �
 
 - `mc_input` 的后台投递限制见上文“后台输入”。
 - 后台模式下，游戏窗口刚创建时可能短暂抢到前台（实测约 100 毫秒）后被交还；这段时间里的按键会进入游戏。之后进出存档未再观察到。
-- `addons`、`worlds` 级别的 Lane 仍与真实目录共享游戏设置和日志；需要完全独立请用 `full`。
+- `addons`、`worlds` 级别的 Lane 仍与真实目录共享游戏设置（`addons` 还共享日志）；需要完全独立请用 `full`。
 - 不带 `--session` 的 `run` 不要同时运行多个：全局包清理发生在 MCP 端口检查之前。
 - Lane 不会自动删除，用 `mcdk lane remove` 清理；已结束会话的记录用 `mcdk ps --prune` 清理。
 - 各会话的游戏窗口标题相同，按窗口区分会话请看 `mcdk ps` 里的 `gamePid`。

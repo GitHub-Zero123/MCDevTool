@@ -9,7 +9,7 @@ Lane 给每个游戏实例一个自己的数据根目录，再按级别决定哪
 | 级别 | 独享 | 共享 | 适用场景 |
 | --- | --- | --- | --- |
 | `addons` | 行为包、资源包目录 | 存档、设置、日志、缓存 | 只想让多个工程的包互不干扰，存档沿用真实目录 |
-| `worlds`（默认） | 包目录和存档 | 设置、日志、缓存 | 多开测试。各实例可以使用同名存档，互不冲突 |
+| `worlds`（默认） | 包目录、存档和日志 | 设置、缓存 | 多开测试。各实例可以使用同名存档，日志也各自独立 |
 | `full` | 整个数据目录 | 无 | 需要干净环境，或不希望测试改动你的游戏设置 |
 
 ```bash
@@ -83,7 +83,8 @@ tempPyFilePathList = filePathName.split('/')[10:]
       resource_packs/               独享
       <其他条目>                    worlds/addons：联接到真实目录
     minecraftWorlds/                worlds、full：独享；addons：联接到真实目录
-    minecraftpe/、logs/ 等          worlds/addons：联接到真实目录；full：独享
+    minecraftpe/ 等                worlds/addons：联接到真实目录；full：独享
+    logs/                           addons：联接到真实目录；worlds/full：独享
     deviceid.txt 等散落文件         worlds/addons：首次从真实目录复制一份
 ```
 
