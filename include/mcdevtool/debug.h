@@ -128,6 +128,8 @@ namespace MCDevTool::Debug {
         void setProcessId(int processId);
         void setModDirs(const std::vector<std::filesystem::path>& modDirs);
         void setModDirs(std::vector<std::filesystem::path>&& modDirs);
+        // 关闭后文件一变就触发，不等游戏窗口回到前台；须在 start() 前设置。
+        void setRequireForeground(bool require);
 
         // 热更新触发（在文件修改后重新进入前台时调用）
         virtual void onHotReloadTriggered();
@@ -148,5 +150,6 @@ namespace MCDevTool::Debug {
         std::optional<std::thread>         fileWatcherThread;
         std::vector<std::filesystem::path> mModDirs;
         std::atomic<bool>                  mStopFlag = false;
+        bool                               mRequireForeground = true;
     };
 } // namespace MCDevTool::Debug

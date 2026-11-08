@@ -70,10 +70,13 @@ add_library(mcdk_core STATIC
     src/jsonui_reload_support.cpp
     src/level.cpp
     src/log_buffer.cpp
+    src/log_query.cpp
+    src/background_window.cpp
     src/log_classifier.cpp
     src/mod_dir_config.cpp
     src/lane.cpp
     src/session_file.cpp
+    src/session_log.cpp
     src/mod_register.cpp
     src/mc_input_mcp.cpp
     src/mc_profiler_mcp.cpp

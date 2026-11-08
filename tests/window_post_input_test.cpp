@@ -216,7 +216,7 @@ namespace {
         const std::vector<Input::Step> steps{Input::LookStep{10.0, 0.0, 1}};
         const auto result = Input::run(0, steps, options);
         require(!result.has_value() && result.error().code == Input::ErrorCode::Unsupported, "look is unsupported");
-        require(result.error().message.find("SetRot") != std::string::npos, "the error names the alternative");
+        require(result.error().message.find("turn") != std::string::npos, "the error names the alternative");
     }
 
     void testDryRunPostsNothing() {

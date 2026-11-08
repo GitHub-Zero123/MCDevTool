@@ -473,6 +473,22 @@ def JSON_EXECUTE_CODE(params, callback):
         })
 
 
+def JSON_RELOAD_SCRIPTS(params, callback):
+    from .Game import RELOAD_CHANGED_SCRIPTS
+    try:
+        timeout = float(params.get("timeout", 30.0))
+    except Exception:
+        timeout = 30.0
+    try:
+        callback(CALL_ON_CLIENT_THREAD(RELOAD_CHANGED_SCRIPTS, timeout))
+    except Exception as e:
+        callback(None, False, {
+            "code": "reload_scripts_error",
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        })
+
+
 def JSON_PING(params, callback):
     callback({
         "pong": True,
@@ -500,6 +516,7 @@ _IPCSYSTEM.updateJsonHandlers(
     {
         "ping": JSON_PING,
         "execute_code": JSON_EXECUTE_CODE,
+        "reload_scripts": JSON_RELOAD_SCRIPTS,
     }
 )
 

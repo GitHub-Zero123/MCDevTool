@@ -77,6 +77,8 @@ namespace mcdk {
             {"mcpPort", record.mcpPort},
             {"lane", record.lane},
             {"laneRoot", record.laneRoot},
+            {"configFingerprint", record.configFingerprint},
+            {"readyCount", record.readyCount},
         };
         if (record.exitCode) {
             json["exitCode"] = *record.exitCode;
@@ -125,6 +127,8 @@ namespace mcdk {
         record.mcpPort         = json.value("mcpPort", 0);
         record.lane            = json.value("lane", "");
         record.laneRoot        = json.value("laneRoot", "");
+        record.configFingerprint = json.value("configFingerprint", "");
+        record.readyCount      = json.value("readyCount", std::uint32_t{0});
         if (const auto exitCode = json.find("exitCode"); exitCode != json.end()) {
             record.exitCode = exitCode->get<std::uint32_t>();
         }
@@ -205,13 +209,19 @@ namespace mcdk {
     void SessionRecordWriter::start(std::uint32_t gamePid, std::string_view state) {
         std::lock_guard lock(mMutex);
         mRecord.gamePid = gamePid;
-        mRecord.state   = state;
+        if (state == SessionStateReady && mRecord.state != SessionStateReady) {
+            ++mRecord.readyCount;
+        }
+        mRecord.state = state;
         mStarted        = true;
         flush();
     }
 
     void SessionRecordWriter::setState(std::string_view state) {
         std::lock_guard lock(mMutex);
+        if (state == SessionStateReady && mRecord.state != SessionStateReady) {
+            ++mRecord.readyCount;
+        }
         mRecord.state = state;
         if (mStarted) {
             flush();

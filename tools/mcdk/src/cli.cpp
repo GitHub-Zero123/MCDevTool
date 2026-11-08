@@ -8,6 +8,7 @@
 #include <mcdk/mcp_tool_help.hpp>
 #include <mcdk/plugin_declarations.hpp>
 #include <mcdk/session_file.hpp>
+#include <mcdk/session_log.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -86,6 +87,34 @@ namespace {
         "  不要手动删除，部分工具（如 Windows PowerShell 5.1 的 Remove-Item -Recurse）会顺着联接删到真实数据。\n"
         "\n";
 
+    constexpr auto WorkflowHelp =
+        "测试流程：启动一次，反复迭代\n"
+        "  mcdk run --session t --detach --reuse   启动会话；已在运行且配置相同时直接复用\n"
+        "  mcdk wait --session t                   阻塞到玩家进入存档\n"
+        "  mcdk logs --session t                   看最新日志并拿到游标，末行 [logs] next=N\n"
+        "  改代码后 mcdk call reload_scripts       同步重载改过的 py，返回重载与失败的模块\n"
+        "  mcdk logs --session t --since N         只看游标之后的新日志，可加 --errors、--grep\n"
+        "  不要每个小测试都重启游戏；整轮工作结束后再 mcdk stop。\n"
+        "\n"
+        "重载存档：\n"
+        "  一次改了很多 py 时，模块逐个重载，可能读到彼此的新旧版本而报错，这不是代码本身的问题。\n"
+        "  此时重载存档，不要为了让热更新通过往代码里加 getattr、try 之类的兜底。\n"
+        "  先记下 mcdk ps 里的 readyCount=R，mcdk call reload_game，再 mcdk wait --after R。\n"
+        "\n"
+        "日志：\n"
+        "  长时间运行的日志很大，不要整段读取。用 logs 的游标增量读，用 --grep/--regex/--errors 过滤；\n"
+        "  要等某行出现时用 logs --wait-for <正则> --timeout <秒> 阻塞。\n"
+        "\n"
+        "后台模式（run --background）：\n"
+        "  游戏窗口不激活、待在其他窗口之下，不碰前台和鼠标，适合自动化期间用户继续做自己的事。\n"
+        "  mc_input 只能 post；视角用 turn 步骤（按角度），不能用 look。\n"
+        "\n"
+        "脚本化：\n"
+        "  多步、重复或需要判断结果的测试，可以写 Python、PowerShell 等脚本串起 mcdk 命令。\n"
+        "  每个命令都阻塞到完成或超时，用退出码判断结果；会话信息、call 的结果、logs --json 都是 JSON。\n"
+        "  脚本放在工程目录里，每一步都设超时。\n"
+        "\n";
+
     constexpr auto DefaultSessionName = "default";
     constexpr auto PollInterval       = std::chrono::milliseconds(200);
 
@@ -98,7 +127,32 @@ namespace {
         std::string              lane;
         std::string              laneRoot;
         fs::path                 laneRootPath; // 已按调用者目录解析
+        std::string              logFile;      // --detach 拉起的后台实例自己写轮转日志
+        bool                     reuse      = false;
+        bool                     background = false;
+        std::string              fingerprint;
     };
+
+    // 配置文件内容与影响启动结果的参数。相同才允许 --reuse 复用正在运行的会话。
+    std::string runFingerprint(const RunOptions& options, const fs::path& configPath) {
+        std::string material;
+        if (std::ifstream input(configPath, std::ios::binary); input) {
+            material.assign(std::istreambuf_iterator<char>(input), {});
+        }
+        for (const auto& expression : options.overrides) {
+            material += '\0' + expression;
+        }
+        material += '\0' + (options.lane.empty() ? std::string("worlds") : options.lane);
+        material += '\0' + MCDevTool::Utils::pathToGenericUtf8(options.laneRootPath);
+        if (options.background) {
+            material += std::string_view("\0background", 11);
+        }
+        std::uint64_t hash = 14695981039346656037ull;
+        for (const unsigned char c : material) {
+            hash = (hash ^ c) * 1099511628211ull;
+        }
+        return std::format("{:016x}", hash);
+    }
 
     // 只建自己的 .gitignore，不碰上层已有的。
     void ensureIgnored(const fs::path& directory) {
@@ -171,7 +225,7 @@ namespace {
     void claimSessionName(const std::string& name) {
         const auto path = mcdk::sessionRecordPath(fs::current_path(), name);
         if (const auto record = mcdk::readSessionRecord(path); record && mcdk::isSessionAlive(*record)) {
-            throw std::runtime_error("会话已在运行：" + name);
+            throw std::runtime_error("会话已在运行：" + name + "。继续使用它请加 --reuse，或先 mcdk stop");
         }
         std::error_code error;
         fs::remove(path, error);
@@ -182,6 +236,13 @@ namespace {
         config.mcpServer.required          = true;
         config.automation.killGameWithMcdk = true;
         config.automation.sessionName      = options.session.empty() ? DefaultSessionName : options.session;
+        config.automation.configFingerprint = options.fingerprint;
+        if (options.background) {
+            config.automation.background        = true;
+            config.mcpServer.preferPostInput    = true;
+            config.mcpServer.requirePostInput   = true;
+            config.windowStyle.alwaysOnTop      = false;
+        }
 
         if (!options.session.empty()) {
             // 隔离会话：数据目录按 Lane 级别隔离，端口和输入也归自己。
@@ -291,7 +352,8 @@ namespace {
         const auto logPath = mcdk::sessionsDirectory(project) / (name + ".log");
         fs::create_directories(logPath.parent_path());
 
-        auto command = quoteArgument(currentExecutablePath()) + L" run --config " + quoteArgument(configPath.wstring());
+        auto command = quoteArgument(currentExecutablePath()) + L" run --config " + quoteArgument(configPath.wstring())
+                     + L" --log-file " + quoteArgument(logPath.wstring());
         if (!options.session.empty()) {
             command += L" --session " + quoteArgument(CLI::widen(options.session));
         }
@@ -304,20 +366,16 @@ namespace {
         if (!options.laneRootPath.empty()) {
             command += L" --lane-root " + quoteArgument(options.laneRootPath.wstring());
         }
+        if (options.background) {
+            command += L" --background";
+        }
 
+        // 后台实例自己把输出写进轮转日志，这里只给它 NUL。
         SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
-        HANDLE              log = CreateFileW(
-            logPath.c_str(),
-            GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            &inherit,
-            CREATE_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL,
-            nullptr
-        );
+        HANDLE log = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
         HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ, &inherit, OPEN_EXISTING, 0, nullptr);
         if (log == INVALID_HANDLE_VALUE || input == INVALID_HANDLE_VALUE) {
-            throw std::runtime_error("无法创建会话日志：" + MCDevTool::Utils::pathToGenericUtf8(logPath));
+            throw std::runtime_error("无法打开 NUL 设备");
         }
 
         // 只继承这两个句柄。调用方的 stdout 管道一旦被后台实例持有，调用方会一直等到实例退出。
@@ -406,6 +464,10 @@ namespace {
 #endif
 
     int runCommand(RunOptions options) {
+        std::optional<mcdk::RotatingOutputCapture> capture;
+        if (!options.logFile.empty()) {
+            capture.emplace(fs::u8path(options.logFile));
+        }
         fs::path configPath;
         try {
             if (!options.session.empty() && !mcdk::isValidSessionName(options.session)) {
@@ -430,8 +492,22 @@ namespace {
             return ExitConfig;
         }
 
+        options.fingerprint = runFingerprint(options, configPath);
+        const auto name     = options.session.empty() ? std::string(DefaultSessionName) : options.session;
+        if (options.reuse) {
+            const auto record = mcdk::readSessionRecord(mcdk::sessionRecordPath(fs::current_path(), name));
+            if (record && mcdk::isSessionAlive(*record)) {
+                if (record->configFingerprint != options.fingerprint) {
+                    std::cerr << "[ERROR] 会话 " << name << " 正在运行，但配置或启动参数与本次不同，不能复用。"
+                              << "先 mcdk stop --session " << name << " 再启动\n";
+                    return ExitConfig;
+                }
+                printJson(sessionToJson(*record));
+                return ExitOk;
+            }
+        }
         try {
-            claimSessionName(options.session.empty() ? DefaultSessionName : options.session);
+            claimSessionName(name);
             return options.detach ? runDetached(options, configPath) : runForeground(options, configPath);
         } catch (const std::exception& exception) {
             std::cerr << "[ERROR] " << exception.what() << '\n';
@@ -449,16 +525,17 @@ namespace {
         return ExitOk;
     }
 
-    int waitCommand(const SessionOptions& options, const std::string& target) {
+    int waitCommand(const SessionOptions& options, const std::string& target, std::optional<std::uint32_t> after) {
         enterProject(options.project);
-        const auto wanted   = target == "exited" ? std::string(mcdk::SessionStateExited) : std::string("game_ready");
+        const auto wanted   = target == "exited" ? std::string(mcdk::SessionStateExited) : std::string(mcdk::SessionStateReady);
         const auto deadline = Clock::now() + std::chrono::seconds(options.timeoutSeconds);
         std::string lastError = "会话尚未出现";
         while (true) {
             try {
                 const auto record = resolveSession(options.session);
                 const auto state  = mcdk::effectiveSessionState(record);
-                if (state == wanted) {
+                // --after N：要等第 N 次之后的那次进入存档，用于重载存档后确认已重新进入。
+                if (state == wanted && (!after || state != mcdk::SessionStateReady || record.readyCount > *after)) {
                     printJson(sessionToJson(record));
                     return ExitOk;
                 }
@@ -556,6 +633,69 @@ namespace {
         return arguments;
     }
 
+    // 一次命令内复用的 MCP 连接。析构时关闭服务端会话，否则每次调用都留下一个要闲置一小时才回收的会话。
+    class SessionConnection {
+    public:
+        SessionConnection(const mcdk::SessionRecord& record, int timeoutSeconds)
+        : mClient({
+              .host                  = record.mcpHost,
+              .port                  = record.mcpPort,
+              .clientName            = "mcdk-cli",
+              .clientVersion         = "1",
+              .requestTimeoutSeconds = timeoutSeconds,
+          }) {
+            if (!mcdk::isSessionAlive(record)) {
+                throw std::runtime_error("会话已结束：" + record.name);
+            }
+            std::string error;
+            if (!mClient.initialize(error)) {
+                throw std::runtime_error("无法连接会话 " + record.name + " 的 MCP：" + error);
+            }
+        }
+
+        ~SessionConnection() { mClient.close(); }
+
+        SessionConnection(const SessionConnection&)            = delete;
+        SessionConnection& operator=(const SessionConnection&) = delete;
+
+        // 返回 tools/call 的 result；连接或协议出错时抛出。
+        Json callTool(const std::string& tool, const Json& arguments) {
+            Json        response;
+            std::string error;
+            // 服务端异步处理 initialized 通知，紧跟的请求可能先到，稍等重发。
+            for (int attempt = 0; attempt < 40; ++attempt) {
+                const Json request{
+                    {"jsonrpc", "2.0"},
+                    {"id", mClient.nextId()},
+                    {"method", "tools/call"},
+                    {"params", {{"name", tool}, {"arguments", arguments}}}
+                };
+                if (!mClient.post(request, response, error)) {
+                    throw std::runtime_error(error);
+                }
+                if (!response.contains("error") || response["error"].value("code", 0) != -32600) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            if (!response.contains("result")) {
+                throw std::runtime_error(response.dump());
+            }
+            return response["result"];
+        }
+
+    private:
+        mcdk::McpHttpClient mClient;
+    };
+
+    std::string firstText(const Json& result) {
+        const auto content = result.find("content");
+        if (content == result.end() || !content->is_array() || content->empty()) {
+            return {};
+        }
+        return content->front().value("text", std::string{});
+    }
+
     int callCommand(
         const SessionOptions& options,
         const std::string&    tool,
@@ -565,54 +705,103 @@ namespace {
     ) {
         const auto arguments = readCallArguments(argumentsText, argumentsFile);
         enterProject(options.project);
-        const auto record = resolveSession(options.session);
-        if (!mcdk::isSessionAlive(record)) {
-            throw std::runtime_error("会话已结束：" + record.name);
+        SessionConnection connection(resolveSession(options.session), options.timeoutSeconds);
+        Json              result;
+        try {
+            result = connection.callTool(tool, arguments);
+        } catch (const std::runtime_error& error) {
+            std::cerr << "[ERROR] " << error.what() << '\n';
+            return ExitToolError;
         }
-
-        mcdk::McpHttpClient client({
-            .host                  = record.mcpHost,
-            .port                  = record.mcpPort,
-            .clientName            = "mcdk-cli",
-            .clientVersion         = "1",
-            .requestTimeoutSeconds = options.timeoutSeconds,
-        });
-        std::string error;
-        if (!client.initialize(error)) {
-            throw std::runtime_error("无法连接会话 " + record.name + " 的 MCP：" + error);
-        }
-
-        // 服务端异步处理 initialized 通知，紧跟的请求可能先到，稍等重发。
-        Json response;
-        for (int attempt = 0; attempt < 40; ++attempt) {
-            if (!client.post(
-                    Json{
-                        {"jsonrpc", "2.0"},
-                        {"id", client.nextId()},
-                        {"method", "tools/call"},
-                        {"params", {{"name", tool}, {"arguments", arguments}}}
-                    },
-                    response,
-                    error
-                )) {
-                std::cerr << "[ERROR] " << error << '\n';
-                return ExitToolError;
-            }
-            if (!response.contains("error") || response["error"].value("code", 0) != -32600) {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-
-        const auto hasResult = response.contains("result");
-        const auto result    = hasResult ? response["result"] : response;
         if (output.empty()) {
             printJson(result);
         } else {
             std::ofstream(fs::u8path(output), std::ios::binary)
                 << result.dump(2, ' ', false, Json::error_handler_t::replace);
         }
-        return hasResult && !result.value("isError", false) ? ExitOk : ExitToolError;
+        return result.value("isError", false) ? ExitToolError : ExitOk;
+    }
+
+    struct LogsOptions {
+        std::optional<std::uint64_t> since;
+        int                          limit = 50;
+        std::string                  contains;
+        std::string                  regex;
+        bool                         ignoreCase = false;
+        bool                         errors     = false;
+        bool                         json       = false;
+        std::string                  waitFor;
+    };
+
+    int logsCommand(const SessionOptions& options, const LogsOptions& logs) {
+        enterProject(options.project);
+        const auto        record = resolveSession(options.session);
+        SessionConnection connection(record, 30);
+        Json arguments{{"limit", logs.limit}, {"stream", logs.errors ? "errors" : "all"}, {"format", "json"}};
+        if (!logs.contains.empty()) {
+            arguments["contains"] = logs.contains;
+        }
+        if (!logs.regex.empty()) {
+            arguments["regex"] = logs.regex;
+        }
+        if (logs.ignoreCase) {
+            arguments["ignore_case"] = true;
+        }
+
+        auto query = [&](const Json& extra) {
+            auto request = arguments;
+            request.update(extra);
+            const auto result = connection.callTool("read_logs", request);
+            if (result.value("isError", false)) {
+                throw std::runtime_error(firstText(result));
+            }
+            return Json::parse(firstText(result));
+        };
+
+        auto print = [&](const Json& page) {
+            if (logs.json) {
+                printJson(page);
+                return;
+            }
+            for (const auto& line : page["lines"]) {
+                std::cout << line.value("text", std::string{}) << '\n';
+            }
+            std::cout << "[logs] next=" << page.value("next", std::uint64_t{0});
+            if (const auto skipped = page.value("skipped", std::uint64_t{0}); skipped > 0) {
+                std::cout << " skipped=" << skipped;
+            }
+            if (page.value("more", false)) {
+                std::cout << " more";
+            }
+            std::cout << '\n';
+        };
+
+        if (logs.waitFor.empty()) {
+            print(query(logs.since ? Json{{"since", *logs.since}} : Json::object()));
+            return ExitOk;
+        }
+
+        // 阻塞到出现匹配 --wait-for 的行。没给 --since 时从现在算起，之前的行不算。
+        auto cursor = logs.since ? *logs.since : query(Json{{"limit", 1}}).value("next", std::uint64_t{0});
+        const auto deadline = Clock::now() + std::chrono::seconds(options.timeoutSeconds);
+        while (true) {
+            const auto page = query(Json{{"since", cursor}, {"regex", logs.waitFor}});
+            if (!page["lines"].empty()) {
+                print(page);
+                return ExitOk;
+            }
+            cursor = page.value("next", cursor);
+            if (Clock::now() >= deadline) {
+                std::cerr << "[ERROR] 等待超时，没有出现匹配 " << logs.waitFor << " 的日志\n";
+                std::cout << "[logs] next=" << cursor << '\n';
+                return ExitTimeout;
+            }
+            if (!mcdk::isSessionAlive(record)) {
+                std::cerr << "[ERROR] 会话已结束\n";
+                return ExitGameFailed;
+            }
+            std::this_thread::sleep_for(PollInterval);
+        }
     }
 
     std::vector<mcp::tool> availableTools() {
@@ -629,7 +818,7 @@ namespace {
     }
 
     std::string toolListFooter() {
-        return "工具（mcdk call <工具>，mcdk help <工具> 查看详情）：\n"
+        return std::string(WorkflowHelp) + "工具（mcdk call <工具>，mcdk help <工具> 查看详情）：\n"
              + mcdk::mcp_tool_help::formatToolList(availableTools());
     }
 
@@ -696,10 +885,22 @@ namespace mcdk::cli {
         run->add_option("--session", runOptions.session, "隔离会话名：独立的包、存档和 MCP 端口，可多开")
             ->type_name("NAME");
         run->add_flag("--detach", runOptions.detach, "后台运行，游戏进程创建后打印会话信息并返回");
+        run->add_flag(
+            "--reuse",
+            runOptions.reuse,
+            "同名会话已在运行且配置与参数相同时直接复用，打印会话信息并返回；不同则报错"
+        );
         run->add_option("--lane", runOptions.lane, "Lane 级别：addons、worlds（默认）、full，需要 --session")
             ->type_name("LEVEL");
         run->add_option("--lane-root", runOptions.laneRoot, "Lane 目录，默认 <project>/.mcdev/lanes/<会话名>")
             ->type_name("DIR");
+        run->add_flag(
+            "--background",
+            runOptions.background,
+            "后台模式：游戏窗口不激活、待在其他窗口之下，游戏抢前台时交还给你；mc_input 只允许 post，"
+            "转视角用 turn 步骤。适合自动化期间继续做自己的事"
+        );
+        run->add_option("--log-file", runOptions.logFile)->group("");
         run->footer(std::string(LaneHelp) + ExitCodeHelp);
 
         SessionOptions laneOptions;
@@ -724,6 +925,14 @@ namespace mcdk::cli {
         addSessionOption(wait, waitOptions.session);
         wait->add_option("--state", waitState, "目标状态（默认 ready）")->check(CLI::IsMember({"ready", "exited"}));
         wait->add_option("--timeout", waitOptions.timeoutSeconds, "超时秒数（默认 120）");
+        std::optional<std::uint32_t> waitAfter;
+        wait->add_option(
+                "--after",
+                waitAfter,
+                "等到 readyCount 大于 N 的那次进入存档。重载存档前记下会话信息里的 readyCount，"
+                "传给它就不会把重载前的状态当成已就绪"
+            )
+            ->type_name("N");
         wait->footer(ExitCodeHelp);
 
         SessionOptions stopOptions{.timeoutSeconds = 30};
@@ -734,6 +943,31 @@ namespace mcdk::cli {
         stop->add_flag("--all", stopAll, "结束本项目全部运行中的会话");
         stop->add_option("--timeout", stopOptions.timeoutSeconds, "超时秒数（默认 30）");
         stop->footer(ExitCodeHelp);
+
+        SessionOptions logsOptions{.timeoutSeconds = 60};
+        LogsOptions    logsQuery;
+        auto*          logs = app.add_subcommand("logs", "按游标增量读取游戏日志，可过滤，可阻塞等待某行出现");
+        addProjectOption(logs, logsOptions.project);
+        addSessionOption(logs, logsOptions.session);
+        logs->add_option("--since", logsQuery.since, "从上次输出末尾 [logs] next=N 的 N 开始读")->type_name("N");
+        logs->add_option("--limit", logsQuery.limit, "最多输出行数（默认 50，上限 500）")
+            ->check(CLI::Range(1, 500));
+        logs->add_option("--grep", logsQuery.contains, "只保留包含该文本的行")->type_name("TEXT");
+        logs->add_option("--regex", logsQuery.regex, "只保留匹配该正则（ECMAScript）的行")->type_name("REGEX");
+        logs->add_flag("-i,--ignore-case", logsQuery.ignoreCase, "--grep/--regex/--wait-for 忽略大小写");
+        logs->add_flag("--errors", logsQuery.errors, "只读 stderr；它有自己的游标");
+        logs->add_flag("--json", logsQuery.json, "输出 JSON：{lines:[{seq,text}], next, skipped, more}");
+        logs->add_option("--wait-for", logsQuery.waitFor, "阻塞到出现匹配该正则的行，输出匹配行后返回")
+            ->type_name("REGEX");
+        logs->add_option("--timeout", logsOptions.timeoutSeconds, "--wait-for 的超时秒数（默认 60）");
+        logs->footer(
+            "不带 --since 时输出最新的 --limit 行，用来先看一眼并拿到游标；之后带 --since 只读新增的行。\n"
+            "skipped=K 表示游标之后有 K 行在读取前已被挤出内存缓冲（约保留最近 1000 行，reload_game 会清空）。\n"
+            "more 表示达到 --limit，用新游标继续读。\n"
+            "--wait-for 不带 --since 时只看命令开始之后的行；要避免漏掉先前触发的输出，\n"
+            "先记下触发动作之前的游标再传给 --since。\n\n"
+            + std::string(ExitCodeHelp)
+        );
 
         SessionOptions callOptions{.timeoutSeconds = 60};
         std::string    callTool;
@@ -762,10 +996,13 @@ namespace mcdk::cli {
                 return psCommand(psOptions);
             }
             if (wait->parsed()) {
-                return waitCommand(waitOptions, waitState);
+                return waitCommand(waitOptions, waitState, waitAfter);
             }
             if (stop->parsed()) {
                 return stopCommand(stopOptions, stopAll);
+            }
+            if (logs->parsed()) {
+                return logsCommand(logsOptions, logsQuery);
             }
             if (laneRemove->parsed()) {
                 return laneRemoveCommand(laneOptions, laneRemoveRoot);

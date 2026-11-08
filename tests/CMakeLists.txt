@@ -73,6 +73,18 @@ target_compile_features(session_file_test PRIVATE cxx_std_23)
 target_link_libraries(session_file_test PRIVATE mcdk_core)
 add_test(NAME session-file COMMAND session_file_test)
 
+add_executable(log_query_test log_query_test.cpp)
+target_compile_features(log_query_test PRIVATE cxx_std_23)
+target_link_libraries(log_query_test PRIVATE mcdk_core)
+add_test(NAME log-query COMMAND log_query_test)
+
+if(WIN32)
+    add_executable(session_log_test session_log_test.cpp)
+    target_compile_features(session_log_test PRIVATE cxx_std_23)
+    target_link_libraries(session_log_test PRIVATE mcdk_core)
+    add_test(NAME session-log COMMAND session_log_test)
+endif()
+
 add_executable(world_pack_link_test world_pack_link_test.cpp)
 target_compile_features(world_pack_link_test PRIVATE cxx_std_23)
 target_link_libraries(world_pack_link_test PRIVATE mcdk_core)

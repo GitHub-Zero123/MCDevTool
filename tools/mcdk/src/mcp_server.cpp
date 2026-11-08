@@ -12,6 +12,7 @@
 #include <functional>
 #include <stdexcept>
 #include <mcdk/log_buffer.hpp>
+#include <mcdk/log_query.hpp>
 #include <mcdk/runtime/mcp_tool_registry.hpp>
 #include <mcdk/mcp_tool_definitions.hpp>
 #include <mcdk/mc_input_mcp.hpp>
@@ -73,6 +74,7 @@ namespace mcdk {
         using SimpleHandler = std::function<bool()>;
         // 接收一个布尔参数的Handler类型（用于游戏/Addon重载）
         using BoolParamHandler = std::function<bool(bool param)>;
+        using ToolResultHandler = MCPServer::ToolResultHandler;
 
     private:
         McpServerConfig              config;
@@ -83,6 +85,8 @@ namespace mcdk {
         ProfilerHandler              profilerHandler;
         BoolParamHandler             reloadGameHandler;  // 重载游戏/Addon处理器
         SimpleHandler                reloadUiHandler;    // 重载 UI definition 处理器
+        ToolResultHandler            reloadScriptsHandler;
+        MCDevTool::Input::TurnHandler turnHandler;
         // The process id is published after server startup and read by HTTP worker threads.
         std::atomic<int>             mcPid = 0;
 
@@ -115,6 +119,8 @@ namespace mcdk {
         void setProfilerHandler(ProfilerHandler handler) { profilerHandler = std::move(handler); }
         void setReloadGameHandler(BoolParamHandler handler) { reloadGameHandler = std::move(handler); }
         void setReloadUiHandler(SimpleHandler handler) { reloadUiHandler = std::move(handler); }
+        void setReloadScriptsHandler(ToolResultHandler handler) { reloadScriptsHandler = std::move(handler); }
+        void setTurnHandler(MCDevTool::Input::TurnHandler handler) { turnHandler = std::move(handler); }
         void setMinecraftProcessId(int pid) { mcPid.store(pid, std::memory_order_relaxed); }
         int  getMinecraftProcessId() const { return mcPid.load(std::memory_order_relaxed); }
 
@@ -128,6 +134,19 @@ namespace mcdk {
 
         // 初始化日志相关的工具
         void initLogTool() {
+            bindBuiltinTool(
+                mcp_tool_definitions::buildReadLogsTool(),
+                [this](const nlohmann::json& params, const std::string&) -> nlohmann::json {
+                    if (!logBuffer || !errBuffer) {
+                        return nlohmann::json{
+                            {"isError", true},
+                            {"content", nlohmann::json::array({{{"type", "text"}, {"text", "Log buffer not set"}}})}
+                        };
+                    }
+                    return log_query::readLogs(*logBuffer, *errBuffer, params);
+                }
+            );
+
             mcp::tool logTool = mcp_tool_definitions::buildGetLatestLogsTool();
 
             bindBuiltinTool(
@@ -536,6 +555,22 @@ namespace mcdk {
             );
         }
 
+        // 同步重载已修改的 Python 模块，不依赖窗口焦点
+        void initReloadScriptsTool() {
+            bindBuiltinTool(
+                mcp_tool_definitions::buildReloadScriptsTool(),
+                [this](const nlohmann::json&, const std::string&) -> nlohmann::json {
+                    if (reloadScriptsHandler) {
+                        return reloadScriptsHandler();
+                    }
+                    return nlohmann::json{
+                        {"isError", true},
+                        {"content", nlohmann::json::array({{{"type", "text"}, {"text", "Reload handler not set"}}})}
+                    };
+                }
+            );
+        }
+
         // 初始化游戏窗口工具（如获取画面，模拟点击）
         void initGameWindowTools() {
             // 截图工具：捕获游戏窗口画面，返回 480p JPEG base64 图片
@@ -604,8 +639,12 @@ namespace mcdk {
                     return mc_input_mcp::handleRequest(
                         mcPid.load(std::memory_order_relaxed),
                         params,
-                        logBuffer.get(),
-                        config.preferPostInput
+                        mc_input_mcp::Environment{
+                            .logBuffer   = logBuffer.get(),
+                            .preferPost  = config.preferPostInput,
+                            .requirePost = config.requirePostInput,
+                            .turn        = turnHandler,
+                        }
                     );
                 }
             );
@@ -623,6 +662,7 @@ namespace mcdk {
             initProfilerTool();
             initJsonUiDebuggerTool();
             initGameTools();
+            initReloadScriptsTool();
             initGameWindowTools();
         }
 
@@ -705,6 +745,12 @@ namespace mcdk {
     void MCPServer::setReloadGameHandler(BoolParamHandler handler) { mImpl->setReloadGameHandler(std::move(handler)); }
 
     void MCPServer::setReloadUiHandler(SimpleHandler handler) { mImpl->setReloadUiHandler(std::move(handler)); }
+
+    void MCPServer::setReloadScriptsHandler(ToolResultHandler handler) {
+        mImpl->setReloadScriptsHandler(std::move(handler));
+    }
+
+    void MCPServer::setTurnHandler(MCDevTool::Input::TurnHandler handler) { mImpl->setTurnHandler(std::move(handler)); }
 
     void MCPServer::setMinecraftProcessId(int processId) { mImpl->setMinecraftProcessId(processId); }
 

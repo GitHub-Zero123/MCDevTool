@@ -101,7 +101,7 @@ def main():
     assert [reply["id"] for reply in replies] == list(range(1, len(requests) + 1))
     results = [reply["result"] for reply in replies]
     names = {tool["name"] for tool in results[1]["tools"]}
-    assert len(names) == 9 and {"mc_input", "mc_profiler", "capture_game_window"} <= names
+    assert len(names) == 11 and {"mc_input", "mc_profiler", "capture_game_window"} <= names
     for index in (2, 3, 4, 7):
         assert results[index] == RESULT, "image, text and structured content must pass through unchanged"
     assert results[5] == FAILURE, "backend tool errors must remain unchanged"
@@ -174,7 +174,7 @@ def check_declared_tools(binary):
         )
         tools = json.loads(completed.stdout.splitlines()[0])["result"]["tools"]
         by_name = {tool["name"]: tool for tool in tools}
-        assert len(tools) == 10, f"9 个内置 + 1 个声明式，实际 {len(tools)}"
+        assert len(tools) == 12, f"11 个内置 + 1 个声明式，实际 {len(tools)}"
         assert DECLARED_TOOL["name"] in by_name, "plugin.json 声明的工具没进 tools/list"
         # 清单里写的就是列出来的，不经任何改写。
         assert by_name[DECLARED_TOOL["name"]] == DECLARED_TOOL

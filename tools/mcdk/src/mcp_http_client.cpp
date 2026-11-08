@@ -23,6 +23,15 @@ namespace mcdk {
         mSessionId.clear();
     }
 
+    void McpHttpClient::close() {
+        if (!mSessionId.empty()) {
+            httplib::Client client(baseUrl());
+            configure(client, mOptions.connectTimeoutSeconds, mOptions.initializeTimeoutSeconds);
+            client.Delete(Endpoint, httplib::Headers{{"Mcp-Session-Id", mSessionId}});
+        }
+        disconnect();
+    }
+
     std::string McpHttpClient::baseUrl() const {
         return "http://" + mOptions.host + ":" + std::to_string(mOptions.port);
     }

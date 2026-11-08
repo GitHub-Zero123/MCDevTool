@@ -360,6 +360,20 @@ namespace {
         return scroll;
     }
 
+    constexpr FieldSpec TurnFields[]{
+        {"yaw", FieldType::Int, false, -360, 360, {}, "水平角度（度），正数向右；absolute 时为朝向"},
+        {"pitch", FieldType::Int, false, -180, 180, {}, "俯仰角度（度），正数向下；absolute 时为 -90 到 90"},
+        {"absolute", FieldType::Bool, false, 0, 0, {}, "true=直接设为该朝向，默认 false 为相对转动"},
+    };
+
+    Engine::Step parseTurn(const Json& step) {
+        return Engine::TurnStep{
+            static_cast<double>(intField(step, "yaw", 0)),
+            static_cast<double>(intField(step, "pitch", 0)),
+            boolField(step, "absolute", false),
+        };
+    }
+
     Engine::Step parseLook(const Json& step) {
         const auto by = pointField(step.at("by"));
         return Engine::LookStep{by.x, by.y, intField(step, "segments", 4)};
@@ -390,7 +404,11 @@ namespace {
         {Engine::ClickStep::kName, ClickFields, &parseClick, "点击/长按/双击，支持修饰键"},
         {Engine::DragStep::kName, DragFields, &parseDrag, "按住并拖动，中途产生插值移动事件"},
         {Engine::ScrollStep::kName, ScrollFields, &parseScroll, "滚轮，用于切换热键栏或滚动列表"},
-        {Engine::LookStep::kName, LookFields, &parseLook, "相对移动视角，游戏独占指针时唯一有效的移动方式"},
+        {Engine::LookStep::kName, LookFields, &parseLook, "用原始鼠标位移转动视角，只有 sendinput 能用"},
+        {Engine::TurnStep::kName,
+         TurnFields,
+         &parseTurn,
+         "按角度转动视角，经游戏接口设置，不依赖窗口和焦点，post 与后台模式也能用"},
         {Engine::KeyStep::kName, KeyFields, &parseKey, "按键、组合键与长按"},
         {Engine::TextStep::kName, TextFields, &parseText, "输入文本，走 Unicode 通道"},
         {Engine::WaitStep::kName, WaitFields, &parseWait, "等待，用于让界面动画或游戏刻推进"},
@@ -415,8 +433,8 @@ namespace {
          0,
          DeliveryNames,
          "sendinput=系统输入，会抢前台并移动真实鼠标；post=投递到游戏窗口，不抢前台也不动鼠标，可多开并行，"
-         "此时 focus、ime、restore_cursor 不生效，look 不可用（用 execute_code 调 SetRot）。"
-         "隔离会话默认 post，其余默认 sendinput"},
+         "此时 focus、ime、restore_cursor 不生效，look 不可用（改用 turn）。"
+         "隔离会话默认 post，其余默认 sendinput；后台模式（run --background）只允许 post"},
         {"focus", FieldType::Enum, false, 0, 0, FocusNames, "auto=自动置顶，require=不在前台就报错，keep=完全不干预"},
         {"ime",
          FieldType::Enum,
@@ -712,9 +730,11 @@ namespace {
     // --- 操作实现 ---
 
     struct Context {
-        int              pid             = 0;
-        mcdk::LogBuffer* logBuffer       = nullptr;
-        Engine::Delivery defaultDelivery = Engine::Delivery::SendInput;
+        int                 pid             = 0;
+        mcdk::LogBuffer*    logBuffer       = nullptr;
+        Engine::Delivery    defaultDelivery = Engine::Delivery::SendInput;
+        bool                requirePost     = false;
+        Engine::TurnHandler turn;
     };
 
     void appendLogs(const Context& context, const Json& args, Json& data) {
@@ -987,7 +1007,14 @@ namespace {
         return validateFields(args, RunOptions, "/run", {"steps"})
             .and_then([&] { return readSteps(args); })
             .and_then([&](std::vector<Engine::Step> steps) -> OpResult {
-                const auto options = readOptions(args, context.defaultDelivery);
+                auto options = readOptions(args, context.defaultDelivery);
+                options.turn = context.turn;
+                if (context.requirePost && options.delivery != Engine::Delivery::Post) {
+                    return invalid(
+                        "This session runs in background mode, which only allows delivery=post so the user's "
+                        "foreground window and mouse are never touched."
+                    );
+                }
                 return Engine::run(context.pid, steps, options)
                     .transform([&](const Engine::Report& report) {
                         const bool wanted  = wantsCapture(args) && !report.dryRun;
@@ -1037,6 +1064,7 @@ namespace {
         {"/drag", Engine::DragStep::kName, nullptr, "单步糖"},
         {"/scroll", Engine::ScrollStep::kName, nullptr, "单步糖"},
         {"/look", Engine::LookStep::kName, nullptr, "单步糖"},
+        {"/turn", Engine::TurnStep::kName, nullptr, "单步糖"},
         {"/key", Engine::KeyStep::kName, nullptr, "单步糖"},
         {"/text", Engine::TextStep::kName, nullptr, "单步糖"},
         {"/wait", Engine::WaitStep::kName, nullptr, "单步糖"},
@@ -1129,11 +1157,12 @@ namespace mcdk::mc_input_mcp {
     }
 
     // 全工具唯一的 try：任何未归类的异常都在这里变成 INTERNAL 错误信封。
-    nlohmann::json
-    handleRequest(int pid, const nlohmann::json& arguments, LogBuffer* logBuffer, bool preferPost) noexcept {
+    nlohmann::json handleRequest(int pid, const nlohmann::json& arguments, const Environment& environment) noexcept {
         try {
-            const auto delivery = preferPost ? Engine::Delivery::Post : Engine::Delivery::SendInput;
-            const auto result   = dispatch(Context{pid, logBuffer, delivery}, arguments);
+            const auto delivery = environment.preferPost || environment.requirePost ? Engine::Delivery::Post
+                                                                                     : Engine::Delivery::SendInput;
+            const auto result =
+                dispatch(Context{pid, environment.logBuffer, delivery, environment.requirePost, environment.turn}, arguments);
             return result.has_value() ? renderPayload(opOf(arguments), std::move(*result))
                                       : renderFailure(opOf(arguments), result.error());
         } catch (const std::exception& error) {

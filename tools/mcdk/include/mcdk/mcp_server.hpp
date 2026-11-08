@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <mcdevtool/window_input.h>
 #include <mcdk/runtime/mcp_tool_registry.hpp>
 #include <mcdk/settings.hpp>
 
@@ -20,6 +21,8 @@ namespace mcdk {
         using ProfilerHandler = std::function<nlohmann::json(const nlohmann::json& arguments)>;
         using SimpleHandler    = std::function<bool()>;
         using BoolParamHandler = std::function<bool(bool parameter)>;
+        // 返回完整的 MCP 工具结果（content/isError）。
+        using ToolResultHandler = std::function<nlohmann::json()>;
 
         explicit MCPServer(const McpServerConfig& config);
         explicit MCPServer(McpServerConfig&& config);
@@ -36,6 +39,8 @@ namespace mcdk {
         void setProfilerHandler(ProfilerHandler handler);
         void setReloadGameHandler(BoolParamHandler handler);
         void setReloadUiHandler(SimpleHandler handler);
+        void setReloadScriptsHandler(ToolResultHandler handler);
+        void setTurnHandler(MCDevTool::Input::TurnHandler handler);
         void setMinecraftProcessId(int processId);
 
         [[nodiscard]] int getMinecraftProcessId() const;

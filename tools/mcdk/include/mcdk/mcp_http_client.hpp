@@ -25,6 +25,8 @@ namespace mcdk {
 
         [[nodiscard]] bool connected() const noexcept { return mConnected; }
         void               disconnect();
+        // 通知服务端结束会话再断开；不调用时服务端要等闲置超时才回收。
+        void               close();
         [[nodiscard]] int  nextId() noexcept { return mNextId++; }
 
         [[nodiscard]] std::string baseUrl() const;

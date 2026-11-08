@@ -6,11 +6,13 @@
 
 namespace mcdk::mcp_tool_definitions {
 
+    [[nodiscard]] mcp::tool              buildReadLogsTool();
     [[nodiscard]] mcp::tool              buildGetLatestLogsTool();
     [[nodiscard]] mcp::tool              buildGetLogRangeTool();
     [[nodiscard]] mcp::tool              buildGetLatestErrorLogsTool();
     [[nodiscard]] mcp::tool              buildExecuteCodeTool();
     [[nodiscard]] mcp::tool              buildReloadGameTool();
+    [[nodiscard]] mcp::tool              buildReloadScriptsTool();
     [[nodiscard]] mcp::tool              buildCaptureGameWindowTool();
     [[nodiscard]] mcp::tool              buildMcInputTool();
     [[nodiscard]] mcp::tool              buildJsonUiDebuggerTool();

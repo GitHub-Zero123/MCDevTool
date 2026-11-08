@@ -654,7 +654,7 @@ namespace MCDevTool::Debug {
         {
             std::lock_guard<std::mutex> stateLock(mStateMutex);
             mNeedUpdate   = false;
-            mIsForeground = false;
+            mIsForeground = !mRequireForeground;
         }
         fileWatcherThread  = MCDevTool::HotReload::watchAndReloadFiles(
             mModDirs,
@@ -681,6 +681,9 @@ namespace MCDevTool::Debug {
         if (!fileWatcherThread.has_value()) {
             fileWatcherThread.reset();
             throw std::runtime_error("Failed to start file watcher thread");
+        }
+        if (!mRequireForeground) {
+            return;
         }
         try {
             processWatcherThread = MCDevTool::HotReload::watchProcessForegroundWindow(
@@ -728,6 +731,8 @@ namespace MCDevTool::Debug {
     }
 
     void HotReloadWatcherTask::setProcessId(int processId) { mProcessId = processId; }
+
+    void HotReloadWatcherTask::setRequireForeground(bool require) { mRequireForeground = require; }
 
     void HotReloadWatcherTask::setModDirs(const std::vector<std::filesystem::path>& modDirs) { mModDirs = modDirs; }
 

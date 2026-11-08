@@ -972,6 +972,19 @@ namespace MCDevTool::Input {
                 });
             }
 
+            Result<std::optional<Pixel>> operator()(const TurnStep& step) const {
+                if (!runtime.options.turn) {
+                    return fail(ErrorCode::Unsupported, "turn needs a connection to the game, which is not available.");
+                }
+                if (runtime.options.dryRun) {
+                    return std::optional<Pixel>{};
+                }
+                if (auto error = runtime.options.turn(step)) {
+                    return fail(ErrorCode::Internal, "turn failed: " + *error);
+                }
+                return std::optional<Pixel>{};
+            }
+
             Result<std::optional<Pixel>> operator()(const KeyStep& step) const {
                 return repeatTimes(
                            std::max(step.repeat, 1),
@@ -1033,8 +1046,8 @@ namespace MCDevTool::Input {
             return isPost(session) && session.lookSteps
                      ? Result<void>{fail(
                            ErrorCode::Unsupported,
-                           "look needs raw mouse input, which delivery=post cannot send. Turn the camera with "
-                           "execute_code instead: GetEngineCompFactory().CreateRot(playerId).SetRot((pitch, yaw))."
+                           "look needs raw mouse input, which delivery=post cannot send. Use the turn step instead, "
+                           "which rotates the camera by degrees through the game."
                        )}
                      : Result<void>{};
         }

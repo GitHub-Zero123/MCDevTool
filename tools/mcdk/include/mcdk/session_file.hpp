@@ -16,6 +16,7 @@ namespace mcdk {
     // mcdk stop 用这个退出码结束游戏，以区别于崩溃。
     inline constexpr std::uint32_t SessionStopExitCode = 0x4D43444B;
 
+    inline constexpr std::string_view SessionStateReady  = "game_ready";
     inline constexpr std::string_view SessionStateExited = "exited";
     // 记录未写完 exited，mcdk 进程却已不在。
     inline constexpr std::string_view SessionStateLost = "lost";
@@ -31,6 +32,8 @@ namespace mcdk {
         int                          mcpPort = 0;
         std::string                  lane; // Lane 级别，空表示没有隔离
         std::string                  laneRoot;
+        std::string                  configFingerprint; // run --reuse 据此判断能否复用
+        std::uint32_t                readyCount = 0;    // 进入存档的次数，重载存档后加一
         std::optional<std::uint32_t> exitCode;
     };
 

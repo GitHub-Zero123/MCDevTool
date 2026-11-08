@@ -15,12 +15,21 @@ CLI 只服务一件事：让 Agent 和脚本可控地驱动游戏。项目脚手
 
 ## 典型流程
 
+启动一次，之后反复修改、重载、检查，整轮工作结束再停：
+
 ```bash
-mcdk run --session a --detach
-mcdk wait --session a
-mcdk call execute_code --session a --args '{"code":"1+1"}'
+mcdk run --session a --detach --reuse         # 启动；已在运行且配置相同就直接复用
+mcdk wait --session a                         # 等到进入存档
+mcdk logs --session a                         # 看最新日志，末行给出游标 [logs] next=N
+# 修改脚本
+mcdk call reload_scripts --session a          # 同步重载改过的 py，返回重载与失败的模块
+mcdk logs --session a --since N --errors      # 只看上次之后的新错误
+mcdk call execute_code --session a --args '{"code":"..."}'
+# ……重复
 mcdk stop --session a
 ```
+
+每个小测试都重启游戏既慢，又会丢掉排查问题需要的现场。
 
 多开时用不同的会话名即可，每个会话有自己的包、存档和 MCP 端口：
 
@@ -42,7 +51,8 @@ mcdk help execute_code
 ## `mcdk run`
 
 ```bash
-mcdk run [--project DIR] [--config FILE] [--set KEY=VALUE]... [--session NAME] [--lane LEVEL] [--lane-root DIR] [--detach]
+mcdk run [--project DIR] [--config FILE] [--set KEY=VALUE]... [--session NAME] [--lane LEVEL] [--lane-root DIR]
+         [--detach] [--reuse] [--background]
 ```
 
 | 参数 | 说明 |
@@ -53,7 +63,9 @@ mcdk run [--project DIR] [--config FILE] [--set KEY=VALUE]... [--session NAME] [
 | `--session` | 隔离会话名，只能包含字母、数字、`_` 和 `-`。不指定时会话名为 `default`，且不隔离 |
 | `--lane` | Lane 级别：`addons`、`worlds`（默认）、`full`，需要 `--session` |
 | `--lane-root` | Lane 目录，默认 `<project>/.mcdev/lanes/<会话名>` |
-| `--detach` | 后台运行：游戏进程创建后打印会话信息并返回，输出写入 `.mcdev/sessions/<名称>.log` |
+| `--detach` | mcdk 转入后台：游戏进程创建后打印会话信息并返回。输出写入 `.mcdev/sessions/<名称>.log`，超过 8 MB 时改名为 `.log.1` 再开新文件，最多保留两份 |
+| `--reuse` | 同名会话已在运行，且配置文件内容与 `--set`、`--lane`、`--lane-root`、`--background` 都相同时，直接打印它的会话信息并返回 0；有任何不同返回 3。会话不在运行时照常启动 |
+| `--background` | 后台模式，见下文。和 `--detach` 无关：`--detach` 指 mcdk 进程不占终端，`--background` 指游戏窗口不打扰用户 |
 
 `--config` 只决定读哪个文件，不改变相对路径的基准。这样放在别处的测试配置里，`"./"` 仍然指项目目录。配置文件不存在时直接失败，不会创建。
 
@@ -90,6 +102,8 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 - **MCP：** 已启用但端口监听失败时中止启动，游戏不会运行。无参启动只打印红色警告并继续，因为联机调试的子进程实例可能与主实例共用配置。
 - **进程绑定：** mcdk 退出时游戏随之结束。无参启动不绑定，关掉 mcdk 不影响游戏。
 - **输出：** stdout 不缓冲，管道另一端能实时读到日志；不打印启动 Logo。
+- **热更新：** 会话里的自动热更新不等游戏窗口回到前台，文件一改就触发。无参启动仍只在窗口回到前台时触发。
+- **MCP 请求日志：** 会话里只输出 warning 以上，每次工具调用不再打印几行请求记录。
 
 ## `pack_link_mode`
 
@@ -111,7 +125,8 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 | 命令 | 说明 |
 | --- | --- |
 | `mcdk ps` | 列出本项目的会话 |
-| `mcdk wait [--state ready\|exited] [--timeout 秒]` | 等待进入存档或退出。默认等 `ready`，超时 120 秒。会话还没启动时会继续等 |
+| `mcdk wait [--state ready\|exited] [--after N] [--timeout 秒]` | 等待进入存档或退出。默认等 `ready`，超时 120 秒。会话还没启动时会继续等。`--after N` 等到 `readyCount` 大于 N，用于重载存档后确认已重新进入 |
+| `mcdk logs [--since N] [--limit N] [--grep TEXT] [--regex RE] [-i] [--errors] [--json] [--wait-for RE --timeout 秒]` | 按游标读取日志，见下文“日志” |
 | `mcdk call <工具> [--args JSON] [--args-file FILE] [--output FILE] [--timeout 秒]` | 调用工具。截图等大结果用 `--output` 写入文件 |
 | `mcdk stop [--all] [--timeout 秒]` | 结束游戏并等 mcdk 退出。返回后端口已释放，可以马上重开同名会话 |
 | `mcdk lane remove --session NAME [--lane-root DIR]` | 删除会话的 Lane 目录，并摘掉空闲的入口槽位。遇到联接只摘链接，不会删到真实游戏数据。会话仍在运行时拒绝 |
@@ -127,6 +142,78 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 | `game_unavailable` | 不在存档内，或没有包含调试 MOD |
 | `exited` | 已退出，`exitCode` 为游戏退出码，`stopped` 表示由 `mcdk stop` 结束 |
 | `lost` | mcdk 进程已不在，但记录没有写完 |
+
+会话信息里的 `readyCount` 是进入存档的次数，每次重载存档后重新进入加一。
+
+`call`、`logs` 用完即关闭自己的 MCP 会话，不会在服务端留下等闲置超时才回收的会话。
+
+## 日志
+
+长时间运行时日志很大，不要每次取回全部。mcdk 给每行日志编一个递增序号，`logs` 和 MCP 工具 `read_logs` 都按序号增量读取：
+
+```bash
+mcdk logs --session a                          # 最新 50 行，末行 [logs] next=1203
+mcdk logs --session a --since 1203             # 只看 1203 之后新增的行
+mcdk logs --session a --since 1203 --errors    # 只看 stderr，它有自己的游标
+mcdk logs --session a --grep "[MyMod]" -i      # 过滤，--regex 用 ECMAScript 正则
+mcdk logs --session a --json                   # {lines:[{seq,text}], next, skipped, more}
+```
+
+- 末行的 `next` 是下一次的 `--since`。`more` 表示达到了 `--limit`，用新游标继续读。
+- 内存里约保留最近 1000 行，`reload_game` 会清空。`skipped=K` 说明游标之后有 K 行没来得及读就被丢弃了，完整输出在会话日志文件里。
+- 序号在清空后继续递增，旧游标仍然有效。游标比当前序号还大时（来自上一次运行），从头读。
+
+`--wait-for <正则>` 阻塞到出现匹配的行，输出匹配行后返回 0，超时返回 6，会话结束返回 5。不给 `--since` 时只看命令开始之后的行；如果触发动作在先，先记下动作之前的游标再传给 `--since`，否则可能漏掉。
+
+## 重载
+
+| 方式 | 适用 |
+| --- | --- |
+| `mcdk call reload_scripts` | 改了 Python 脚本。同步执行，返回重载了哪些模块、哪些失败及其 traceback，失败时退出码 7 |
+| `mcdk call reload_game` | 改了 JSON、贴图等资源（加 `reload_addons`），或一次改了很多 Python 模块 |
+
+`reload_scripts` 只重载游戏已经导入过的模块，按修改时间判断，不依赖窗口焦点。模块是逐个替换的：一次改了很多文件（改名的函数、挪动的类、模块之间的导入关系）时，先重载的模块可能读到后者的旧版本而报错，代码本身并没有问题。这时应当重载存档，而不是往代码里加 `getattr`、`try` 之类的兜底让热更新通过，这些代码会掩盖真正的错误，测试结束后也留在代码里。
+
+重载存档后，玩家会离开并重新进入存档。用 `readyCount` 确认已经重新进入：
+
+```bash
+mcdk ps                                       # 记下 readyCount，例如 3
+mcdk call reload_game --session a
+mcdk wait --session a --after 3
+```
+
+## 后台模式
+
+`--background` 面向自动化期间仍要用电脑的人：
+
+- 游戏窗口以不激活的方式显示，出现后放到所有窗口之下。截图不受遮挡影响。
+- 启动期间和每次进出存档后的 20 秒内，如果游戏自己把窗口切到前台，mcdk 把它放回底层，并把前台还给原来的窗口。用户刚有键鼠输入时视为主动切换，不干预。
+- `mc_input` 只允许 `delivery=post`，传 `sendinput` 返回错误。转视角用 `turn` 步骤。
+- 配置里的 `always_on_top` 不生效。
+
+## 脚本化
+
+需要多步、重复或要判断中间结果的测试，可以写 Python、PowerShell 等脚本串起 mcdk 命令：
+
+- 每个命令都阻塞到完成或超时，用退出码判断结果，不要解析提示文字。
+- 会话信息、`call` 的结果、`logs --json` 都是 JSON。
+- 每一步都设超时：`wait --timeout`、`logs --wait-for ... --timeout`、`call --timeout`。
+- 脚本放在工程目录里，便于复用和审阅。
+
+```python
+import json, subprocess
+
+def mcdk(*args):
+    r = subprocess.run(["mcdk", *args], capture_output=True, text=True, encoding="utf-8", timeout=300)
+    return r.returncode, r.stdout
+
+mcdk("run", "--session", "t", "--detach", "--reuse")
+assert mcdk("wait", "--session", "t", "--timeout", "180")[0] == 0
+cursor = json.loads(mcdk("logs", "--session", "t", "--limit", "1", "--json")[1])["next"]
+mcdk("call", "execute_code", "--session", "t", "--args", json.dumps({"code": "import myTests; myTests.run()"}))
+code, out = mcdk("logs", "--session", "t", "--since", str(cursor), "--wait-for", r"\[TEST\] (PASS|FAIL)", "--timeout", "30")
+assert code == 0 and "[TEST] PASS" in out
+```
 
 ## 退出码
 
@@ -158,7 +245,13 @@ mcdk call mc_input --session a --args '{"op":"/click","args":{"at":[0.24,0.56],"
 
 `post` 模式的限制：
 
-- **视角：** 游戏用原始鼠标输入转视角，消息投递不进去，`look` 会直接报错。改用 `execute_code` 调 `CreateRot(playerId).SetRot((pitch, yaw))`。
+- **视角：** 游戏用原始鼠标输入转视角，消息投递不进去，`look` 会直接报错。改用 `turn` 步骤，按角度转动，经游戏接口设置，不需要窗口焦点：
+
+  ```bash
+  mcdk call mc_input --session a --args '{"op":"/turn","args":{"yaw":90,"pitch":-20}}'
+  ```
+
+  `yaw` 正数向右，`pitch` 正数向下，`absolute: true` 时直接设为该朝向。刚进入存档的几秒内玩家还在出生点定位，游戏会重算视角，转动可能被覆盖。
 - **窗口状态：** 窗口不能最小化，否则按键无效，截图也是旧画面。
 - **触屏布局：** 窗口失焦时投递鼠标事件，游戏可能切到触屏布局，界面点击不受影响，但看到的 UI 和键鼠模式不同。
 - **拖拽：** `drag` 在失焦时不可靠，实测物品没有按预期移动。搬运物品请用两次 `click`：先点物品，再点目标格。
@@ -170,7 +263,8 @@ CLI 不替代 MCP，两者共用同一份工具定义和同一个服务。MCP �
 
 ## 已知限制
 
-- `mc_input` 的后台投递限制见下文“后台输入”。
+- `mc_input` 的后台投递限制见上文“后台输入”。
+- 后台模式下，游戏窗口刚创建时可能短暂抢到前台（实测约 100 毫秒）后被交还；这段时间里的按键会进入游戏。之后进出存档未再观察到。
 - `addons`、`worlds` 级别的 Lane 仍与真实目录共享游戏设置和日志；需要完全独立请用 `full`。
 - 不带 `--session` 的 `run` 不要同时运行多个：全局包清理发生在 MCP 端口检查之前。
 - Lane 不会自动删除，用 `mcdk lane remove` 清理。

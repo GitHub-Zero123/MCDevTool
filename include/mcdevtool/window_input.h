@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -113,6 +114,16 @@ namespace MCDevTool::Input {
         [[nodiscard]] constexpr bool      usesAbsoluteCoords() const noexcept { return false; }
     };
 
+    // 按角度转动视角，不经过窗口输入，由 Options::turn 交给游戏执行；后台投递也能用。
+    struct TurnStep {
+        double yaw      = 0.0; // 度，正数向右
+        double pitch    = 0.0; // 度，正数向下
+        bool   absolute = false;
+
+        static constexpr std::string_view kName = "turn";
+        [[nodiscard]] constexpr bool      usesAbsoluteCoords() const noexcept { return false; }
+    };
+
     struct KeyStep {
         std::vector<Key> keys;
         PressAction      action = PressAction::Press;
@@ -137,7 +148,11 @@ namespace MCDevTool::Input {
         [[nodiscard]] constexpr bool      usesAbsoluteCoords() const noexcept { return false; }
     };
 
-    using Step = std::variant<MoveStep, ClickStep, DragStep, ScrollStep, LookStep, KeyStep, TextStep, WaitStep>;
+    using Step =
+        std::variant<MoveStep, ClickStep, DragStep, ScrollStep, LookStep, TurnStep, KeyStep, TextStep, WaitStep>;
+
+    // 执行 turn 步骤；失败时返回原因。
+    using TurnHandler = std::function<std::optional<std::string>(const TurnStep& step)>;
 
     [[nodiscard]] std::string_view stepName(const Step& step) noexcept;
 
@@ -154,6 +169,7 @@ namespace MCDevTool::Input {
         bool        restoreIfMinimized = true;
         bool        leaveHeld          = false;
         bool        dryRun             = false;
+        TurnHandler turn;
     };
 
     struct StepOutcome {

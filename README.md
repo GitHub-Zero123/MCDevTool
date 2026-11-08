@@ -287,13 +287,14 @@ MCDEV配置文件，若不存在字段将以此处默认值为基准。
 `mcdk` 带命令运行时面向 Agent 和脚本：全程不询问、不改配置文件，用退出码报告结果，并支持多开。
 
 ```bash
-mcdk run --session a --detach
+mcdk run --session a --detach --reuse
 mcdk wait --session a
-mcdk call execute_code --session a --args '{"code":"1+1"}'
+mcdk call reload_scripts --session a
+mcdk logs --session a --since 1203 --errors
 mcdk stop --session a
 ```
 
-用 `mcdk --help` 查看命令和工具，`mcdk help <命令或工具>` 查看详情，完整说明见 [docs/cli.md](docs/cli.md)。不带参数的 `mcdk` 行为不变。
+`--background` 让游戏窗口待在其他窗口之下、不抢前台和鼠标，自动化期间可以继续做自己的事。用 `mcdk --help` 查看命令和工具，`mcdk help <命令或工具>` 查看详情，完整说明见 [docs/cli.md](docs/cli.md)。不带参数的 `mcdk` 行为不变。
 
 隔离会话运行在 [Lane](docs/lane.md) 里：游戏的数据根目录指向工程内 `.mcdev/lanes/<会话名>`，可选只隔离包目录、隔离包和存档、或隔离整个数据目录，多开时各实例的存档与包互不冲突。删除 Lane 请用 `mcdk lane remove`，不要手动删除目录。
 
@@ -405,17 +406,24 @@ mcdk help execute_code      # 某个工具的参数和调用示例
 mcdk call mc_input --session a --args '{"op":"/help"}'   # 命令式工具自带的详细说明
 ```
 
-一轮测试的基本流程：
+启动一次，之后反复修改、重载、检查，不要每个小测试都重启游戏：
 
 ```bash
-mcdk run --session a --detach                     # 后台启动隔离会话，立即返回会话信息
+mcdk run --session a --detach --reuse             # 启动；已在运行且配置相同就直接复用
 mcdk wait --session a                             # 等到进入存档
-mcdk call get_latest_error_logs --session a       # 记录错误日志基线
+mcdk logs --session a                             # 看最新日志，末行给出游标 [logs] next=N
+# 修改脚本
+mcdk call reload_scripts --session a              # 同步重载改过的 py，返回重载与失败的模块
 mcdk call execute_code --session a --args '{"code":"...","is_client":false}'
-mcdk call get_latest_error_logs --session a       # 确认没有新增异常
-mcdk stop --session a                             # 结束游戏，返回后可以马上重开同名会话
+mcdk logs --session a --since N --errors          # 只看游标之后的新错误
+# ……重复，整轮工作结束后
+mcdk stop --session a
 ```
 
+- **日志：** 长时间运行的日志很大，不要整段取回。用 `logs` 的游标增量读，用 `--grep`、`--regex`、`--errors` 过滤；要等某行出现时用 `--wait-for <正则> --timeout <秒>`。
+- **重载存档：** 一次改了很多 Python 模块时，逐个重载可能因先后顺序读到彼此的旧版本而报错，这时用 `reload_game` 重载存档，不要往代码里加 `getattr`、`try` 之类的兜底。之后用 `mcdk wait --after <readyCount>` 等重新进入。
+- **后台模式：** `run --background` 让游戏窗口不激活、待在其他窗口之下，`mc_input` 只走后台投递，转视角用 `turn` 步骤。
+- **脚本化：** 多步、重复或要判断中间结果的测试，可以写 Python、PowerShell 等脚本串起这些命令。每个命令都阻塞到完成或超时，输出是 JSON，用退出码判断结果。
 - **判断结果：** 看退出码，不要解析日志里的提示文字。`0` 成功，`6` 等待超时，`7` 工具返回错误，`5` 表示游戏不是由 `mcdk stop` 结束的；完整列表见 `mcdk help run`。
 - **多开：** 用不同的 `--session` 名称。每个会话在自己的 Lane 里，存档、包和 MCP 端口互不冲突，`mc_input` 默认后台投递，不抢前台和鼠标。
 - **Lane 目录：** 放在对应的工程或 worktree 下（默认 `.mcdev/lanes/<会话名>`），不要放进系统临时目录；清理用 `mcdk lane remove --session a`。

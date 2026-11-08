@@ -92,6 +92,7 @@ namespace mcdk {
         bool        required   = false;
         // mc_input 默认走窗口消息投递。来自隔离会话，不读配置文件。
         bool        preferPostInput = false;
+        bool        requirePostInput = false; // 后台模式：mc_input 只允许 post
     };
     // 由 mcdk run 设置，不读配置文件。无参启动全部保持默认。
     struct AutomationConfig {
@@ -102,6 +103,9 @@ namespace mcdk {
         std::optional<lane::Level> laneLevel;
         std::filesystem::path      laneRoot;  // 工程里的 Lane 目录
         std::filesystem::path      laneEntry; // 游戏实际使用的入口，见 lane::EntrySlot
+        std::string                configFingerprint;
+        // 不激活游戏窗口、不抢前台，输入只走窗口消息。
+        bool                       background = false;
     };
 
     struct UserConfig {

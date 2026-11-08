@@ -14,6 +14,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <format>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -67,11 +68,14 @@
 #include <mcdevtool/env.h>
 #include <mcdevtool/level.h>
 #include <mcdevtool/style.h>
+#include <mcp_logger.h>
 #include <nlohmann/json.hpp>
 
 #ifdef _WIN32
 #include <mcdev_lane_shim.h>
 #endif
+
+#include <mcdk/background_window.hpp>
 
 #include "game_process/logging.hpp"
 #include "game_process/platform.hpp"
@@ -118,6 +122,50 @@ namespace mcdk {
             payload.to          = toAbiGameState(transition.to);
             return payload;
         });
+    }
+
+    static nlohmann::json toolText(bool isError, const std::string& text) {
+        return {{"isError", isError}, {"content", nlohmann::json::array({{{"type", "text"}, {"text", text}}})}};
+    }
+
+    // reload_scripts 的 IPC 结果整理成一段文本：成功的模块一行，失败的附 traceback。
+    static nlohmann::json formatReloadScriptsResult(const std::optional<MCDevTool::Debug::IPCJsonResult>& result) {
+        if (!result) {
+            return toolText(true, "Reload failed. The player may not be in the game.");
+        }
+        if (!result->success) {
+            return toolText(true, "Reload failed: " + result->errorMessage);
+        }
+        const auto response =
+            result->responseValue ? *result->responseValue : nlohmann::json::parse(result->responseJson, nullptr, false);
+        if (!response.is_object() || !response.value("ok", false)) {
+            const auto error = response.is_object() ? response.value("error", nlohmann::json::object()) : nlohmann::json{};
+            return toolText(true, "Reload failed: " + (error.is_object() ? error.value("message", response.dump()) : response.dump()));
+        }
+        const auto  payload = response.value("result", nlohmann::json::object());
+        const auto  updated = payload.value("updated", nlohmann::json::array());
+        const auto  failed  = payload.value("failed", nlohmann::json::array());
+        std::string text;
+        if (updated.empty() && failed.empty()) {
+            text = "No changed modules.";
+        } else {
+            text = "Reloaded " + std::to_string(updated.size()) + " module(s)";
+            for (const auto& name : updated) {
+                text += "\n  " + name.get<std::string>();
+            }
+        }
+        if (!failed.empty()) {
+            text += "\nFailed " + std::to_string(failed.size()) + " module(s):";
+            for (const auto& item : failed) {
+                text += "\n  " + item.value("module", std::string{}) + ": " + item.value("error", std::string{});
+                text += "\n" + item.value("traceback", std::string{});
+            }
+            if (updated.size() + failed.size() > 1) {
+                text += "\nSeveral modules changed together; the failure may only be reload order. Reload the world "
+                        "with reload_game instead of adding getattr/try fallbacks to the code.";
+            }
+        }
+        return toolText(!failed.empty(), text);
     }
 
 } // namespace mcdk
@@ -231,6 +279,9 @@ mcdk::GameRunResult mcdk::launchGameExe(
     auto& hostBridgeTask     = session.hostBridgeTask();
     // mcdk run 的会话记录。无参启动没有它，也不留下任何文件。
     std::shared_ptr<mcdk::SessionRecordWriter> sessionRecord;
+    // 后台模式看守游戏窗口，进出存档时游戏可能再次抢前台。
+    const auto backgroundGuard =
+        userConfig.automation.background ? std::make_shared<mcdk::BackgroundWindowGuard>() : nullptr;
     if (!userConfig.automation.sessionName.empty()) {
         const auto& name = userConfig.automation.sessionName;
         sessionRecord    = std::make_shared<mcdk::SessionRecordWriter>(
@@ -245,6 +296,7 @@ mcdk::GameRunResult mcdk::launchGameExe(
                    .lane            = laneLevel ? std::string(mcdk::lane::levelName(*laneLevel)) : std::string{},
                    .laneRoot        = laneLevel ? MCDevTool::Utils::pathToGenericUtf8(userConfig.automation.laneRoot)
                                                 : std::string{},
+                   .configFingerprint = userConfig.automation.configFingerprint,
             }
         );
     }
@@ -278,6 +330,10 @@ mcdk::GameRunResult mcdk::launchGameExe(
     }
 
     if (mcpServerConfig.enabled) {
+        // 自动化会话每次调用都会产生几行 INFO 请求日志，长时间运行时会淹没游戏日志。
+        if (!userConfig.automation.sessionName.empty()) {
+            mcp::logger::instance().set_level(mcp::log_level::warning);
+        }
         // 若启用MCP服务器将自动启用IPC调试功能
         enableIPC     = true;
         needLogBuffer = true;
@@ -396,6 +452,43 @@ mcdk::GameRunResult mcdk::launchGameExe(
                 return false;
             }
             return MCDevTool::Style::triggerMinecraftUiReloadShortcut(pid);
+        });
+        mcpServer.setTurnHandler([ipcServer](const MCDevTool::Input::TurnStep& step) -> std::optional<std::string> {
+            if (ipcServer->getClientCount() == 0) {
+                return "the player is not in a world";
+            }
+            const auto code = std::format(
+                "import mod.client.extraClientApi as c\n"
+                "comp = c.GetEngineCompFactory().CreateRot(c.GetLocalPlayerId())\n"
+                "p, y = (0.0, 0.0) if {2} else comp.GetRot()\n"
+                "_result = comp.SetRot((max(-90.0, min(90.0, p + {1})), y + {0}))",
+                step.yaw,
+                step.pitch,
+                step.absolute ? "True" : "False"
+            );
+            auto result = ipcServer->requestJsonValue("execute_code", {{"code", code}, {"is_client", true}}, 5000);
+            if (!result.success) {
+                return result.errorMessage;
+            }
+            const auto response = result.responseValue ? *result.responseValue
+                                                       : nlohmann::json::parse(result.responseJson, nullptr, false);
+            if (!response.is_object() || !response.value("ok", false)) {
+                return response.dump();
+            }
+            const auto value = response.value("result", nlohmann::json::object()).value("return_value", nlohmann::json{});
+            if (value != true) {
+                return "SetRot returned " + value.dump();
+            }
+            return std::nullopt;
+        });
+
+        mcpServer.setReloadScriptsHandler([ipcServer]() -> nlohmann::json {
+            if (ipcServer->getClientCount() == 0) {
+                return mcdk::formatReloadScriptsResult(std::nullopt);
+            }
+            return mcdk::formatReloadScriptsResult(
+                ipcServer->requestJsonValue("reload_scripts", nlohmann::json::object(), 35000)
+            );
         });
         // 内置工具先进注册表，各自占住名字，重名的插件工具才能被检出。
         mcpServer.registerBuiltinTools();
@@ -821,7 +914,8 @@ mcdk::GameRunResult mcdk::launchGameExe(
         // 所以由它提供钩子、这里负责发事件。回调跑在 accept / 客户端读线程上。
         ipcServer->setClientCountChangedCallback(
             [tracker = session.gameLifecycle(),
-             sessionRecord](std::size_t clientCount, bool connected, unsigned short peerPort) {
+             sessionRecord,
+             backgroundGuard](std::size_t clientCount, bool connected, unsigned short peerPort) {
                 const auto eventId = connected ? mcdk::plugin_host::EventId::IpcClientConnected
                                                : mcdk::plugin_host::EventId::IpcClientDisconnected;
                 MCDK_EMIT(eventId, [clientCount, peerPort] {
@@ -836,6 +930,9 @@ mcdk::GameRunResult mcdk::launchGameExe(
                     mcdk::emitGameStateChanged(*transition);
                     if (sessionRecord) {
                         sessionRecord->setState(mcdk::runtime::gameLifecycleStateName(transition->to));
+                    }
+                    if (backgroundGuard) {
+                        backgroundGuard->armFor(std::chrono::seconds(20));
                     }
                 }
             }
@@ -895,6 +992,11 @@ mcdk::GameRunResult mcdk::launchGameExe(
     }
 
     si.dwFlags |= STARTF_USESTDHANDLES;
+    if (userConfig.automation.background) {
+        // 游戏第一次 ShowWindow 时按这里的方式显示：不激活。
+        si.dwFlags     |= STARTF_USESHOWWINDOW;
+        si.wShowWindow  = SW_SHOWNOACTIVATE;
+    }
 
     // Do not expose MCDK's terminal as Minecraft stdin. A Mod calling input()
     // would otherwise block the game thread while waiting for terminal input.
@@ -1069,6 +1171,10 @@ mcdk::GameRunResult mcdk::launchGameExe(
     }
     // 把进程 id 分发给 profiler、样式处理器与 MCP 服务
     session.onGameProcessStarted(pid);
+    if (backgroundGuard) {
+        backgroundGuard->armFor(std::chrono::minutes(3));
+        backgroundGuard->start(static_cast<std::uint32_t>(pid));
+    }
     if (sessionRecord) {
         sessionRecord->start(pid, mcdk::runtime::gameLifecycleStateName(session.gameLifecycle()->state()));
     }
@@ -1140,6 +1246,13 @@ mcdk::GameRunResult mcdk::launchGameExe(
 
     if (enableAnyHotReload && modDirList != nullptr) {
         std::cout << "[HotReload] Watchers\n";
+        // 自动化会话的窗口多半不在前台，等焦点就永远不会重载。
+        const bool requireForeground = userConfig.automation.sessionName.empty();
+        pyReloadTask.setRequireForeground(requireForeground);
+        uiReloadTask.setRequireForeground(requireForeground);
+        shaderReloadTask.setRequireForeground(requireForeground);
+        materialReloadTask.setRequireForeground(requireForeground);
+        particleReloadTask.setRequireForeground(requireForeground);
         if (modDirList) {
             for (const auto& modDirConfig : *modDirList) {
                 if (modDirConfig.hotReload) {
@@ -1238,6 +1351,9 @@ mcdk::GameRunResult mcdk::launchGameExe(
     // 插件已经全部终结，把运行期子系统从接口层解绑，释放那几个 shared_ptr。
     mcdk::plugin_host::unbindSession();
 
+    if (backgroundGuard) {
+        backgroundGuard->stop();
+    }
     // 按依赖关系逆序停止全部子系统，顺序约束见 mcdk::runtime::Session::shutdown 的实现
     session.shutdown(minecraftExitCode);
 

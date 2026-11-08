@@ -38,6 +38,22 @@ Parameters:
 - order: "asc" for oldest to newest, "desc" for newest to oldest
 )";
 
+        constexpr auto ReadLogsName = "read_logs";
+        constexpr auto ReadLogsDescription =
+            R"(Reads game log lines incrementally with a cursor and an optional filter. Prefer this over get_latest_logs: a long session produces far more log than is worth reading, so read only what is new and only what matches.
+
+Every line has an increasing sequence number. Each result ends with "[logs] next=N"; pass N as "since" on the next call to get only lines written after this one. Without "since", the newest "limit" matching lines are returned, which is the usual way to take a first look and obtain a cursor.
+"skipped=K" means K lines after "since" were dropped from the in-memory buffer (it keeps about the last 1000 lines, and reload_game clears it) before they could be read. "more" means the limit was reached and the same call with the new cursor continues.
+
+Parameters:
+- since: cursor from a previous result (inclusive)
+- limit: maximum lines to return, default 50, at most 500
+- contains: keep only lines containing this text
+- regex: keep only lines matching this ECMAScript regular expression
+- ignore_case: apply contains/regex case-insensitively
+- stream: "all" (default) or "errors" for stderr only; each stream has its own cursor
+- format: "text" (default) or "json" ({lines:[{seq,text}], next, skipped, more}))";
+
         constexpr auto ExecuteCodeName        = "execute_code";
         constexpr auto ExecuteCodeDescription = R"(Executes provided code in the game environment.
 Parameters:
@@ -47,10 +63,18 @@ Parameters:
 
         constexpr auto ReloadGameName = "reload_game";
         constexpr auto ReloadGameDescription =
-            R"(Reloads the running game environment. Prefer automatic Python/UI/Shader/Material hot reload when available; use this only when a full engine-side refresh is still needed.
+            R"(Reloads the running game environment. For Python changes try reload_scripts first. Reload the game when many modules changed together and in-place reload fails because of reload order, or when a full engine-side refresh is needed. The player leaves and re-enters the world; in the CLI, note readyCount from mcdk ps and run mcdk wait --after <readyCount>.
 
 Parameters:
 - reload_addons: When true, trigger the more complete addon-data + game reload path. Use it for resource changes such as JSON, PNG, audio, or other addon files not handled by automatic hot reload.)";
+
+        constexpr auto ReloadScriptsName = "reload_scripts";
+        constexpr auto ReloadScriptsDescription =
+            R"(Synchronously reloads the Python modules whose source files changed since the last reload, and reports which modules were reloaded and which failed (with tracebacks).
+
+Works whether or not the game window has focus. In automated tests, call it after editing scripts instead of waiting for automatic hot reload, so the result is known before the next step. Only modules the game has already imported are reloaded; a brand-new file is loaded when something imports it.
+
+In-place reload replaces modules one at a time, so after changing many files at once (renamed functions, moved classes, changed imports between modules) a module may briefly see another one's old or new version and fail, even though the code is correct. In that case call reload_game to reload the world instead of retrying. Do not add getattr/hasattr checks, try/except fallbacks or other defensive code to make in-place reload pass: that hides real errors and stays in the code after the test.)";
 
         constexpr auto CaptureGameWindowName = "capture_game_window";
         constexpr auto CaptureGameWindowDescription =
@@ -98,6 +122,20 @@ Parameters:
             .build();
     }
 
+    mcp::tool buildReadLogsTool() {
+        return mcp::tool_builder(ReadLogsName)
+            .with_description(ReadLogsDescription)
+            .with_number_param("since", "Cursor from a previous result's next=", false)
+            .with_number_param("limit", "Maximum lines to return (default 50, max 500)", false)
+            .with_string_param("contains", "Keep only lines containing this text", false)
+            .with_string_param("regex", "Keep only lines matching this ECMAScript regex", false)
+            .with_boolean_param("ignore_case", "Case-insensitive contains/regex", false)
+            .with_string_param("stream", "all or errors", false)
+            .with_string_param("format", "text or json", false)
+            .with_read_only_hint(true)
+            .build();
+    }
+
     mcp::tool buildExecuteCodeTool() {
         return mcp::tool_builder(ExecuteCodeName)
             .with_description(ExecuteCodeDescription)
@@ -115,6 +153,13 @@ Parameters:
         return mcp::tool_builder(ReloadGameName)
             .with_description(ReloadGameDescription)
             .with_boolean_param("reload_addons", "Reload addon data together with the game environment", false)
+            .with_read_only_hint(false)
+            .build();
+    }
+
+    mcp::tool buildReloadScriptsTool() {
+        return mcp::tool_builder(ReloadScriptsName)
+            .with_description(ReloadScriptsDescription)
             .with_read_only_hint(false)
             .build();
     }
@@ -166,7 +211,7 @@ Parameters:
             "reports window geometry and whether the game currently holds the pointer. Coordinates default to the "
             "0.0-1.0 percentage space shared with capture_game_window. delivery='post' sends input straight to the "
             "game window without taking the foreground or the real mouse, so several instances can run side by side; "
-            "look is unavailable in that mode. A successful result means input was dispatched "
+            "look is unavailable in that mode; use the turn step to rotate the camera by degrees. A successful result means input was dispatched "
             "to the system queue, not that the game reacted - verify with capture_game_window or logs. Input uses "
             "{op:'/...', args:{...}}.";
         tool.parameters_schema = {
@@ -236,12 +281,14 @@ Parameters:
 
     std::vector<mcp::tool> buildAllTools() {
         return {
+            buildReadLogsTool(),
             buildGetLatestLogsTool(),
             buildGetLogRangeTool(),
             buildGetLatestErrorLogsTool(),
             buildExecuteCodeTool(),
             buildJsonUiDebuggerTool(),
             buildReloadGameTool(),
+            buildReloadScriptsTool(),
             buildCaptureGameWindowTool(),
             buildMcInputTool(),
             buildMcProfilerTool(),
