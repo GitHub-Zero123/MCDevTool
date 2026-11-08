@@ -1,5 +1,10 @@
 #include <mcdk/cli.hpp>
 
+#ifdef _MSC_VER
+// 命令行代码不在性能路径上，按体积优化。CLI11 全部内联在这个编译单元里。
+#pragma optimize("s", on)
+#endif
+
 #include <mcdk/application.hpp>
 #include <mcdk/config.hpp>
 #include <mcdk/lane.hpp>
@@ -27,6 +32,10 @@
 #include <utility>
 #include <vector>
 
+// 参数由 parse() 自己转成 UTF-8，CLI11 用不到 codecvt（它会带进上百 KB 的宽字符 locale 代码），
+// 也用不到文件系统校验器。
+#define CLI11_HAS_CODECVT 0
+#define CLI11_HAS_FILESYSTEM 0
 #include <CLI11.hpp>
 #include <mcdevtool/env.h>
 #include <mcdevtool/utils.h>
@@ -418,13 +427,13 @@ namespace {
         auto command = quoteArgument(currentExecutablePath()) + L" run --config " + quoteArgument(configPath.wstring())
                      + L" --log-file " + quoteArgument(logPath.wstring());
         if (!options.session.empty()) {
-            command += L" --session " + quoteArgument(CLI::widen(options.session));
+            command += L" --session " + quoteArgument(fs::u8path(options.session).wstring());
         }
         for (const auto& expression : options.overrides) {
-            command += L" --set " + quoteArgument(CLI::widen(expression));
+            command += L" --set " + quoteArgument(fs::u8path(expression).wstring());
         }
         if (!options.lane.empty()) {
-            command += L" --lane " + quoteArgument(CLI::widen(options.lane));
+            command += L" --lane " + quoteArgument(fs::u8path(options.lane).wstring());
         }
         if (!options.laneRootPath.empty()) {
             command += L" --lane-root " + quoteArgument(options.laneRootPath.wstring());
@@ -1135,15 +1144,25 @@ namespace mcdk::cli {
         call->add_option("--output", callOutput, "结果写入文件而不是 stdout，适合截图")->type_name("FILE");
         call->add_option("--timeout", callOptions.timeoutSeconds, "超时秒数（默认 60）");
 
+        // CLI11 的 vector 重载按逆序消费参数。
+        std::vector<std::string> arguments;
+        for (int index = argc - 1; index > 0; --index) {
+#ifdef _WIN32
+            arguments.push_back(MCDevTool::Utils::pathToUtf8(fs::path(argv[index])));
+#else
+            arguments.emplace_back(argv[index]);
+#endif
+        }
+
         try {
             // 拼错的命令名在 CLI11 里会被报成“缺少子命令”，先自己认出来。
-            if (argc > 1) {
-                const auto first = CLI::narrow(argv[1]);
+            if (!arguments.empty()) {
+                const auto& first = arguments.back();
                 if (!first.starts_with('-') && app.get_subcommand_no_throw(first) == nullptr) {
                     return reportUsage("未知命令：" + first + suggestion(first, commandNames(app)), "");
                 }
             }
-            app.parse(argc, argv);
+            app.parse(arguments);
 
             if (help->parsed()) {
                 return helpCommand(app, helpProject, helpTopic);
