@@ -23,6 +23,9 @@ namespace mcdk {
         void armFor(std::chrono::milliseconds duration);
         void stop();
 
+        // 游戏窗口抢到前台时是否交还；launching 表示还在启动阶段。参数是 HWND，避免头文件引入 windows.h。
+        [[nodiscard]] bool shouldReturn(void* game, bool launching);
+
     private:
         void run();
 
