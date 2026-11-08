@@ -44,7 +44,7 @@ namespace mcdk {
 
         // 游标超过当前序号说明来自上一次运行，从头读。
         const auto first = firstSeq();
-        const auto since = *query.since > mNextSeq ? first : *query.since;
+        const auto since = *query.since > mNextSeq ? first : std::max<std::uint64_t>(*query.since, 1);
         page.skipped     = since < first ? first - since : 0;
         page.next        = mNextSeq;
         const auto begin = std::ranges::lower_bound(mBuffer, since, {}, &Entry::seq);

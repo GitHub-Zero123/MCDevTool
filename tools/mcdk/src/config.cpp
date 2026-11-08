@@ -247,6 +247,32 @@ namespace mcdk {
         }
     } // namespace
 
+    std::vector<std::string> knownConfigKeys() {
+        std::vector<std::string> keys(std::begin(kWorldKeys), std::end(kWorldKeys));
+        for (const auto* key : {"game_executable_path", "included_mod_dirs", "user_name", "skin_info",
+                                "include_debug_mod", "pack_link_mode", "auto_hot_reload_mods", "auto_hot_reload_ui",
+                                "auto_hot_reload_shaders", "auto_hot_reload_materials", "auto_hot_reload_particles",
+                                "debug_options", "log_protocol", "modpc_debugger", "ptvsd_debugger", "window_style",
+                                "netease_config", "mcp_server_config", "plugins"}) {
+            keys.emplace_back(key);
+        }
+        return keys;
+    }
+
+    std::vector<std::string>
+    unknownOverrideKeys(const std::filesystem::path& path, const std::vector<std::string>& overrides) {
+        const auto root  = std::filesystem::is_regular_file(path) ? readConfigJson(path) : Json::object();
+        const auto known = knownConfigKeys();
+        std::vector<std::string> unknown;
+        for (const auto& expression : overrides) {
+            const auto key = expression.substr(0, expression.find_first_of(".="));
+            if (std::ranges::find(known, key) == known.end() && !(root.is_object() && root.contains(key))) {
+                unknown.push_back(key);
+            }
+        }
+        return unknown;
+    }
+
     bool isWorldConfigKey(std::string_view key) noexcept {
         return std::find(std::begin(kWorldKeys), std::end(kWorldKeys), key) != std::end(kWorldKeys);
     }

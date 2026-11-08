@@ -33,6 +33,7 @@ namespace mcdk {
         std::string                  lane; // Lane 级别，空表示没有隔离
         std::string                  laneRoot;
         std::string                  configFingerprint; // run --reuse 据此判断能否复用
+        std::string                  launch;            // 启动参数 JSON，复用被拒时用来说明差异
         std::uint32_t                readyCount = 0;    // 进入存档的次数，重载存档后加一
         std::optional<std::uint32_t> exitCode;
     };

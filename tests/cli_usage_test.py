@@ -17,6 +17,9 @@ CASES = [
     (["call", "execute_code", "--args", '{"cod":"1"}'], "cod（是不是 code）", "用法见 mcdk help execute_code"),
     (["call", "execute_code", "--args", "{}"], "缺少必需参数：code", "用法见 mcdk help execute_code"),
     (["call", "read_logs", "--args", "[1]"], "工具参数必须是 JSON 对象", "用法见 mcdk help call"),
+    (["lane", "remove"], "缺少必需参数：--session", "用法见 mcdk help lane remove"),
+    (["help", "lane", "nosuch"], "未知命令或工具：lane nosuch", "用法见 mcdk help\n"),
+    (["run", "--set", "wrold_name=a"], "wrold_name（是不是 world_name）", "用法见 mcdk help run"),
 ]
 
 

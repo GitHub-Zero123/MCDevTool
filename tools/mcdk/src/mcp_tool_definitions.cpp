@@ -58,7 +58,7 @@ Parameters:
         constexpr auto ExecuteCodeDescription = R"(Executes provided code in the game environment.
 Parameters:
 - code: The code to Py2 execute. Expression code returns the expression value; statement code may assign _result to define the returned value.
-- is_client: Whether to execute on client side (true) or server side (false)
+- is_client: Execute on the client (true, the default) or the server (false)
 - direct_return: Whether to wait for and directly return the execution result (default true). Set false to use the legacy async log-based behavior.)";
 
         constexpr auto ReloadGameName = "reload_game";

@@ -304,9 +304,23 @@ def _JSON_SAFE_VALUE(value, depth=0):
 
 
 def _CODE_TEXT(codeText):
-    if isinstance(codeText, _UNICODE_TYPE) and not isinstance(codeText, str):
-        return codeText.encode("utf-8")
-    return str(codeText)
+    # 按 Unicode 编译，u"中文" 才不会被当成 latin-1 解码。
+    if isinstance(codeText, _UNICODE_TYPE):
+        return codeText
+    try:
+        return codeText.decode("utf-8")
+    except Exception:
+        return codeText
+
+
+def _COMPILE(codeText, mode):
+    try:
+        return compile(codeText, "<string>", mode)
+    except SyntaxError as e:
+        # 带编码声明的源码不能以 Unicode 编译，退回字节串。
+        if "encoding declaration" not in str(e) or not isinstance(codeText, _UNICODE_TYPE):
+            raise
+        return compile(codeText.encode("utf-8"), "<string>", mode)
 
 
 def _EXEC_CODE_OBJECT(code, globalVars):
@@ -317,10 +331,10 @@ def _EXEC_CODE_VALUE(codeText):
     codeText = _CODE_TEXT(codeText)
     globalVars = globals()
     try:
-        code = compile(codeText, "<string>", "eval")
+        code = _COMPILE(codeText, "eval")
         return eval(code, globalVars, globalVars)
     except SyntaxError:
-        code = compile(codeText, "<string>", "exec")
+        code = _COMPILE(codeText, "exec")
         resultName = "_result"
         hadResult = resultName in globalVars
         oldResult = globalVars.get(resultName, None)

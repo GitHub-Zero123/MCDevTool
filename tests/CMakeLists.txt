@@ -210,6 +210,9 @@ if(TARGET mcdk)
         add_test(NAME cli-usage COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/cli_usage_test.py $<TARGET_FILE:mcdk>)
         set_tests_properties(cli-usage PROPERTIES TIMEOUT 120)
+        add_test(NAME cli-session COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/cli_session_test.py $<TARGET_FILE:mcdk>)
+        set_tests_properties(cli-session PROPERTIES TIMEOUT 120)
     endif()
 endif()
 

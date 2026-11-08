@@ -80,6 +80,9 @@ namespace mcdk {
             {"configFingerprint", record.configFingerprint},
             {"readyCount", record.readyCount},
         };
+        if (!record.launch.empty()) {
+            json["launch"] = Json::parse(record.launch, nullptr, false);
+        }
         if (record.exitCode) {
             json["exitCode"] = *record.exitCode;
             json["stopped"]  = *record.exitCode == SessionStopExitCode;
@@ -129,6 +132,9 @@ namespace mcdk {
         record.laneRoot        = json.value("laneRoot", "");
         record.configFingerprint = json.value("configFingerprint", "");
         record.readyCount      = json.value("readyCount", std::uint32_t{0});
+        if (const auto launch = json.find("launch"); launch != json.end()) {
+            record.launch = launch->dump();
+        }
         if (const auto exitCode = json.find("exitCode"); exitCode != json.end()) {
             record.exitCode = exitCode->get<std::uint32_t>();
         }

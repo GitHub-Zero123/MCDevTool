@@ -44,9 +44,12 @@ mcdk run --session b --detach --config tests/另一份配置.json
 mcdk --help
 mcdk help run
 mcdk help execute_code
+mcdk help lane remove
 ```
 
 工具说明由工具定义直接生成，内置工具和项目插件在 `plugin.json` 中声明的工具都会列出。新增或修改工具后，帮助内容自动更新，不需要另外维护。
+
+插件只能实现 `plugin.json` 里声明过的工具，所以 CLI 不启动游戏也能知道全部插件工具。工具列表按 `<project>/.mcdev.json` 读取；会话如果用 `--config` 或 `--set` 换了插件，`call` 和 `help <工具>` 在工程配置里找不到该工具时，会改问运行中的会话实际发布了哪些工具。
 
 ## `mcdk run`
 
@@ -66,6 +69,7 @@ mcdk run [--project DIR] [--config FILE] [--set KEY=VALUE]... [--session NAME] [
 | `--detach` | mcdk 转入后台：游戏进程创建后打印会话信息并返回。输出写入 `.mcdev/sessions/<名称>.log`，超过 8 MB 时改名为 `.log.1` 再开新文件，最多保留两份 |
 | `--reuse` | 同名会话已在运行，且配置文件内容与 `--set`、`--lane`、`--lane-root`、`--background` 都相同时，直接打印它的会话信息并返回 0；有任何不同返回 3。会话不在运行时照常启动 |
 | `--background` | 后台模式，见下文。和 `--detach` 无关：`--detach` 指 mcdk 进程不占终端，`--background` 指游戏窗口不打扰用户 |
+| `--hot-reload` | 保存文件就自动热更新（不等窗口焦点）。默认关闭，见下文“重载” |
 
 `--config` 只决定读哪个文件，不改变相对路径的基准。这样放在别处的测试配置里，`"./"` 仍然指项目目录。配置文件不存在时直接失败，不会创建。
 
@@ -102,7 +106,8 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 - **MCP：** 已启用但端口监听失败时中止启动，游戏不会运行。无参启动只打印红色警告并继续，因为联机调试的子进程实例可能与主实例共用配置。
 - **进程绑定：** mcdk 退出时游戏随之结束。无参启动不绑定，关掉 mcdk 不影响游戏。
 - **输出：** stdout 不缓冲，管道另一端能实时读到日志；不打印启动 Logo。
-- **热更新：** 会话里的自动热更新不等游戏窗口回到前台，文件一改就触发。无参启动仍只在窗口回到前台时触发。
+- **热更新：** 自动热更新默认关闭，配置里的 `auto_hot_reload_*` 不生效，改完代码用 `reload_scripts`。加 `--hot-reload` 才自动重载，而且不等游戏窗口回到前台。无参启动仍按配置，在窗口回到前台时触发。
+- **`--set` 校验：** 顶层键既不是 mcdk 认识的配置项、也不在配置文件里时报用法错误，并给出最接近的键名。
 - **MCP 请求日志：** 会话里只输出 warning 以上，每次工具调用不再打印几行请求记录。
 
 ## `pack_link_mode`
@@ -124,10 +129,10 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 
 | 命令 | 说明 |
 | --- | --- |
-| `mcdk ps` | 列出本项目的会话 |
+| `mcdk ps [--all] [--prune]` | 列出本项目运行中的会话。`--all` 连已结束的一起列出，`--prune` 删除已结束会话的记录和日志（不碰 Lane） |
 | `mcdk wait [--state ready\|exited] [--after N] [--timeout 秒]` | 等待进入存档或退出。默认等 `ready`，超时 120 秒。会话还没启动时会继续等。`--after N` 等到 `readyCount` 大于 N，用于重载存档后确认已重新进入 |
 | `mcdk logs [--since N] [--limit N] [--grep TEXT] [--regex RE] [-i] [--errors] [--json] [--wait-for RE --timeout 秒]` | 按游标读取日志，见下文“日志” |
-| `mcdk call <工具> [--args JSON] [--args-file FILE] [--output FILE] [--timeout 秒]` | 调用工具。截图等大结果用 `--output` 写入文件 |
+| `mcdk call <工具> [--args JSON] [--args-file FILE] [--output FILE] [--image FILE] [--timeout 秒]` | 调用工具。`--output` 把完整结果 JSON 写入文件；`--image` 把结果里的图片解码存成文件（如截图存成 .jpg），stdout 里的图片数据换成文件路径。工具返回错误时，原因同时写到 stderr |
 | `mcdk stop [--all] [--timeout 秒]` | 结束游戏并等 mcdk 退出。返回后端口已释放，可以马上重开同名会话 |
 | `mcdk lane remove --session NAME [--lane-root DIR]` | 删除会话的 Lane 目录，并摘掉空闲的入口槽位。遇到联接只摘链接，不会删到真实游戏数据。会话仍在运行时拒绝 |
 
@@ -171,6 +176,8 @@ mcdk logs --session a --json                   # {lines:[{seq,text}], next, skip
 | --- | --- |
 | `mcdk call reload_scripts` | 改了 Python 脚本。同步执行，返回重载了哪些模块、哪些失败及其 traceback，失败时退出码 7 |
 | `mcdk call reload_game` | 改了 JSON、贴图等资源（加 `reload_addons`），或一次改了很多 Python 模块 |
+
+`mcdk run` 默认关闭自动热更新：保存文件不会触发重载，代码何时生效由 `reload_scripts` 决定。否则同一工程的多个会话会被一次保存一起带动，接着调用的 `reload_scripts` 还会把模块再执行一遍。确实需要保存即生效时，启动时加 `--hot-reload`。
 
 `reload_scripts` 只重载游戏已经导入过的模块，按修改时间判断，不依赖窗口焦点。模块是逐个替换的：一次改了很多文件（改名的函数、挪动的类、模块之间的导入关系）时，先重载的模块可能读到后者的旧版本而报错，代码本身并没有问题。这时应当重载存档，而不是往代码里加 `getattr`、`try` 之类的兜底让热更新通过，这些代码会掩盖真正的错误，测试结束后也留在代码里。
 
@@ -220,12 +227,12 @@ assert code == 0 and "[TEST] PASS" in out
 | 退出码 | 含义 |
 | --- | --- |
 | 0 | 成功 |
-| 2 | 用法错误：命令、参数、工具名或工具参数名写错 |
+| 2 | 用法错误：命令、参数、`--set` 的键、工具名或工具的顶层参数名写错 |
 | 3 | 配置错误，或找不到可用的会话 |
 | 4 | 启动失败：MCP 端口被占用、进程创建失败、被插件否决 |
 | 5 | 游戏不是由 `mcdk stop` 结束的，原始退出码打印到 stderr |
 | 6 | 等待超时 |
-| 7 | 工具调用返回错误 |
+| 7 | 工具调用返回错误，包括工具自己校验参数失败（如 `mc_input` 的步骤字段写错），原因同时写到 stderr |
 
 用法错误时，stderr 先写出错之处，再写应该查看的帮助：
 
@@ -276,5 +283,6 @@ CLI 不替代 MCP，两者共用同一份工具定义和同一个服务。MCP �
 - 后台模式下，游戏窗口刚创建时可能短暂抢到前台（实测约 100 毫秒）后被交还；这段时间里的按键会进入游戏。之后进出存档未再观察到。
 - `addons`、`worlds` 级别的 Lane 仍与真实目录共享游戏设置和日志；需要完全独立请用 `full`。
 - 不带 `--session` 的 `run` 不要同时运行多个：全局包清理发生在 MCP 端口检查之前。
-- Lane 不会自动删除，用 `mcdk lane remove` 清理。
+- Lane 不会自动删除，用 `mcdk lane remove` 清理；已结束会话的记录用 `mcdk ps --prune` 清理。
+- 各会话的游戏窗口标题相同，按窗口区分会话请看 `mcdk ps` 里的 `gamePid`。
 - Lane 依赖 `mcdev-lane-shim.dll`，只有 CMake 会构建它；缺少时隔离会话拒绝启动。

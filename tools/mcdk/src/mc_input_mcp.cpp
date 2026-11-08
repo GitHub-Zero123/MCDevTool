@@ -600,7 +600,7 @@ namespace {
         {"WINDOW_MINIMIZED", "/state", "Confirm the window was restored before sending input."},
         {"FOCUS_DENIED", "/state", "Check which window holds the foreground, or retry with delivery=post."},
         {"FOCUS_LOST", "/state", "Re-check the window state, then resume from the reported step."},
-        {"POINTER_MODE_MISMATCH", "/state", "Read pointer_locked and switch to look or an in-place click."},
+        {"POINTER_MODE_MISMATCH", "/state", "Read pointer_locked and switch to look (sendinput), turn, or an in-place click."},
         {"BUSY", "/state", "Another batch is running; check state and retry shortly."},
         {"PARTIAL_FAILURE", "/state", "Verify the window state before resuming from the reported step."},
         {"DEADLINE_EXCEEDED", "/help", "Split the work into smaller batches or raise budget_ms."},
@@ -865,7 +865,7 @@ namespace {
                   Json{{"op", "/release-all"}, {"summary", "释放所有以 leave_held 保留按下的输入"}},
                   Json{
                       {"op", "/click 等单步糖"},
-                      {"summary", "move / click / drag / scroll / look / key / text / wait，等价于只有一步的 /run"}
+                      {"summary", "move / click / drag / scroll / look / turn / key / text / wait，等价于只有一步的 /run"}
                   }}
              )},
             {"coords", "一律是客户区百分比 0.0-1.0，与 capture_game_window 截图同构；(0,0) 左上，(1,1) 右下"},
@@ -938,7 +938,7 @@ namespace {
                     const std::string summary =
                         "Game window " + std::to_string(window.width) + "x" + std::to_string(window.height)
                         + (window.foreground ? ", foreground" : ", background")
-                        + (window.pointerLocked ? ", pointer held by the game (use look / in-place click)"
+                        + (window.pointerLocked ? ", pointer held by the game (use look / turn / in-place click)"
                                                 : ", pointer free (absolute coordinates apply)")
                         + (window.imeOpen ? ", IME is on (input batches suppress it by default)." : ".");
                     return Payload{std::move(data), Json::array(), summary, std::nullopt};

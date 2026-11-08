@@ -68,12 +68,12 @@ namespace {
 
     constexpr auto ExitCodeHelp = "退出码：\n"
                                   "  0  成功\n"
-                                  "  2  用法错误：命令、参数、工具名或工具参数名写错，stderr 会指出对应的 help\n"
+                                  "  2  用法错误：命令、参数、工具名或工具的顶层参数名写错，stderr 会指出对应的 help\n"
                                   "  3  配置错误，或找不到可用的会话\n"
                                   "  4  启动失败（含 MCP 端口被占用、被插件否决）\n"
                                   "  5  游戏不是由 mcdk stop 结束的（自行退出、窗口被关闭或崩溃）\n"
                                   "  6  等待超时\n"
-                                  "  7  工具调用返回错误";
+                                  "  7  工具调用返回错误，包括工具自己校验参数失败（如 mc_input 的步骤字段写错），原因同时写到 stderr";
 
     constexpr auto LaneHelp =
         "隔离会话（--session）使用 Lane：\n"
@@ -97,11 +97,15 @@ namespace {
         "\n";
 
     constexpr auto WorkflowHelp =
+        "注意：不带任何参数的 mcdk 是给编辑器用的交互式启动，会以前台、不隔离的方式直接启动游戏，\n"
+        "并可能按配置重置存档。自动化请始终使用 mcdk run。\n"
+        "\n"
         "测试流程：启动一次，反复迭代\n"
         "  mcdk run --session t --detach --reuse   启动会话；已在运行且配置相同时直接复用\n"
         "  mcdk wait --session t                   阻塞到玩家进入存档\n"
         "  mcdk logs --session t                   看最新日志并拿到游标，末行 [logs] next=N\n"
         "  改代码后 mcdk call reload_scripts       同步重载改过的 py，返回重载与失败的模块\n"
+        "                                          （自动热更新默认关闭，需要时 run 加 --hot-reload）\n"
         "  mcdk logs --session t --since N         只看游标之后的新日志，可加 --errors、--grep\n"
         "  不要每个小测试都重启游戏；整轮工作结束后再 mcdk stop。\n"
         "\n"
@@ -202,8 +206,34 @@ namespace {
         std::string              logFile;      // --detach 拉起的后台实例自己写轮转日志
         bool                     reuse      = false;
         bool                     background = false;
+        bool                     hotReload  = false;
         std::string              fingerprint;
     };
+
+    // 本次启动的参数，写进会话记录；--reuse 不能复用时据此说清哪里不同。
+    Json launchSummary(const RunOptions& options, const fs::path& configPath) {
+        return Json{
+            {"config", MCDevTool::Utils::pathToGenericUtf8(configPath)},
+            {"set", options.overrides},
+            {"lane", options.lane.empty() ? std::string("worlds") : options.lane},
+            {"laneRoot", MCDevTool::Utils::pathToGenericUtf8(options.laneRootPath)},
+            {"background", options.background},
+            {"hotReload", options.hotReload},
+        };
+    }
+
+    std::string describeLaunchDifference(const std::string& recorded, const Json& current) {
+        const auto  previous = Json::parse(recorded, nullptr, false);
+        std::string text;
+        if (previous.is_object()) {
+            for (const auto& [key, value] : current.items()) {
+                if (previous.value(key, Json()) != value) {
+                    text += "  " + key + "：运行中 " + previous.value(key, Json()).dump() + "，本次 " + value.dump() + "\n";
+                }
+            }
+        }
+        return text.empty() ? "  启动参数相同，配置文件内容已改动\n" : text;
+    }
 
     // 配置文件内容与影响启动结果的参数。相同才允许 --reuse 复用正在运行的会话。
     std::string runFingerprint(const RunOptions& options, const fs::path& configPath) {
@@ -218,6 +248,9 @@ namespace {
         material += '\0' + MCDevTool::Utils::pathToGenericUtf8(options.laneRootPath);
         if (options.background) {
             material += std::string_view("\0background", 11);
+        }
+        if (options.hotReload) {
+            material += std::string_view("\0hot-reload", 11);
         }
         std::uint64_t hash = 14695981039346656037ull;
         for (const unsigned char c : material) {
@@ -309,6 +342,15 @@ namespace {
         config.automation.killGameWithMcdk = true;
         config.automation.sessionName      = options.session.empty() ? DefaultSessionName : options.session;
         config.automation.configFingerprint = options.fingerprint;
+        config.automation.launchSummary     = launchSummary(options, configPath).dump();
+        // 自动化默认不自动热更新：代码何时生效由 reload_scripts 决定，同一工程的多个会话也不会被一次保存一起带动。
+        if (!options.hotReload) {
+            config.hotReload.mods      = false;
+            config.hotReload.ui        = false;
+            config.hotReload.shaders   = false;
+            config.hotReload.materials = false;
+            config.hotReload.particles = false;
+        }
         if (options.background) {
             config.automation.background        = true;
             config.mcpServer.preferPostInput    = true;
@@ -441,6 +483,9 @@ namespace {
         if (options.background) {
             command += L" --background";
         }
+        if (options.hotReload) {
+            command += L" --hot-reload";
+        }
 
         // 后台实例自己把输出写进轮转日志，这里只给它 NUL。
         SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
@@ -564,13 +609,23 @@ namespace {
             return ExitConfig;
         }
 
+        if (const auto unknown = mcdk::unknownOverrideKeys(configPath, options.overrides); !unknown.empty()) {
+            const auto known = mcdk::knownConfigKeys();
+            std::vector<std::string> described;
+            for (const auto& key : unknown) {
+                const auto best = closestName(key, known);
+                described.push_back(key + (best.empty() ? std::string{} : "（是不是 " + best + "）"));
+            }
+            return reportUsage("--set 的配置键不存在：" + joinNames(described), "run");
+        }
         options.fingerprint = runFingerprint(options, configPath);
         const auto name     = options.session.empty() ? std::string(DefaultSessionName) : options.session;
         if (options.reuse) {
             const auto record = mcdk::readSessionRecord(mcdk::sessionRecordPath(fs::current_path(), name));
             if (record && mcdk::isSessionAlive(*record)) {
                 if (record->configFingerprint != options.fingerprint) {
-                    std::cerr << "[ERROR] 会话 " << name << " 正在运行，但配置或启动参数与本次不同，不能复用。"
+                    std::cerr << "[ERROR] 会话 " << name << " 正在运行，但与本次启动不同，不能复用：\n"
+                              << describeLaunchDifference(record->launch, launchSummary(options, configPath))
                               << "先 mcdk stop --session " << name << " 再启动\n";
                     return ExitConfig;
                 }
@@ -587,11 +642,23 @@ namespace {
         }
     }
 
-    int psCommand(const SessionOptions& options) {
+    int psCommand(const SessionOptions& options, bool all, bool prune) {
         enterProject(options.project);
         auto sessions = Json::array();
         for (const auto& record : mcdk::listSessionRecords(fs::current_path())) {
-            sessions.push_back(sessionToJson(record));
+            const bool alive = mcdk::isSessionAlive(record);
+            if (prune && !alive) {
+                const auto path = mcdk::sessionRecordPath(fs::current_path(), record.name);
+                std::error_code ignored;
+                fs::remove(path, ignored);
+                for (const auto* suffix : {".log", ".log.1"}) {
+                    fs::remove(mcdk::sessionsDirectory(fs::current_path()) / (record.name + suffix), ignored);
+                }
+                continue;
+            }
+            if (alive || all) {
+                sessions.push_back(sessionToJson(record));
+            }
         }
         printJson(sessions);
         return ExitOk;
@@ -602,9 +669,18 @@ namespace {
         const auto wanted   = target == "exited" ? std::string(mcdk::SessionStateExited) : std::string(mcdk::SessionStateReady);
         const auto deadline = Clock::now() + std::chrono::seconds(options.timeoutSeconds);
         std::string lastError = "会话尚未出现";
+        bool        seen      = false;
         while (true) {
+            if (options.session.empty()) {
+                auto records = mcdk::listSessionRecords(fs::current_path());
+                std::erase_if(records, [](const auto& record) { return !mcdk::isSessionAlive(record); });
+                if (records.size() > 1) {
+                    resolveSession(options.session); // 抛出列出全部会话名的错误
+                }
+            }
             try {
                 const auto record = resolveSession(options.session);
+                seen              = true;
                 const auto state  = mcdk::effectiveSessionState(record);
                 // --after N：要等第 N 次之后的那次进入存档，用于重载存档后确认已重新进入。
                 if (state == wanted && (!after || state != mcdk::SessionStateReady || record.readyCount > *after)) {
@@ -622,7 +698,7 @@ namespace {
             }
             if (Clock::now() >= deadline) {
                 std::cerr << "[ERROR] 等待超时，" << lastError << '\n';
-                return ExitTimeout;
+                return seen ? ExitTimeout : ExitConfig;
             }
             std::this_thread::sleep_for(PollInterval);
         }
@@ -730,6 +806,25 @@ namespace {
         SessionConnection(const SessionConnection&)            = delete;
         SessionConnection& operator=(const SessionConnection&) = delete;
 
+        // 会话实际发布的工具。会话可能用 --config 或 --set 换了插件，与工程配置里声明的不同。
+        std::vector<mcp::tool> listTools() {
+            Json        response;
+            std::string error;
+            const Json  request{{"jsonrpc", "2.0"}, {"id", mClient.nextId()}, {"method", "tools/list"}};
+            std::vector<mcp::tool> tools;
+            if (!mClient.post(request, response, error) || !response.contains("result")) {
+                return tools;
+            }
+            for (const auto& item : response["result"].value("tools", Json::array())) {
+                mcp::tool tool;
+                tool.name              = item.value("name", std::string{});
+                tool.description       = item.value("description", std::string{});
+                tool.parameters_schema = mcp::json::parse(item.value("inputSchema", Json::object()).dump());
+                tools.push_back(std::move(tool));
+            }
+            return tools;
+        }
+
         // 返回 tools/call 的 result；连接或协议出错时抛出。
         Json callTool(const std::string& tool, const Json& arguments) {
             Json        response;
@@ -770,9 +865,24 @@ namespace {
 
     std::vector<mcp::tool> availableTools();
 
+    // 能明确指到一个运行中的会话时返回它，否则返回空，不报错。
+    std::optional<mcdk::SessionRecord> liveSession(const std::string& name) {
+        try {
+            auto record = resolveSession(name);
+            if (mcdk::isSessionAlive(record)) {
+                return record;
+            }
+        } catch (const std::runtime_error&) {
+        }
+        return std::nullopt;
+    }
+
+    bool hasTool(const std::vector<mcp::tool>& tools, const std::string& name) {
+        return std::ranges::find(tools, name, &mcp::tool::name) != tools.end();
+    }
+
     // 连接游戏之前按工具定义检查，写错的工具名或参数名不会被静默忽略。
-    void checkToolCall(const std::string& name, const Json& arguments) {
-        const auto tools = availableTools();
+    void checkToolCall(const std::string& name, const Json& arguments, const std::vector<mcp::tool>& tools) {
         const auto tool  = std::ranges::find(tools, name, &mcp::tool::name);
         if (tool == tools.end()) {
             std::vector<std::string> names;
@@ -819,23 +929,72 @@ namespace {
         }
     }
 
+    std::string decodeBase64(std::string_view text) {
+        std::string out;
+        int         buffer = 0;
+        int         bits   = 0;
+        for (const char c : text) {
+            int value = -1;
+            if (c >= 'A' && c <= 'Z') value = c - 'A';
+            else if (c >= 'a' && c <= 'z') value = c - 'a' + 26;
+            else if (c >= '0' && c <= '9') value = c - '0' + 52;
+            else if (c == '+') value = 62;
+            else if (c == '/') value = 63;
+            if (value < 0) continue;
+            buffer = (buffer << 6) | value;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out.push_back(static_cast<char>((buffer >> bits) & 0xFF));
+            }
+        }
+        return out;
+    }
+
+    // 把结果里第一张图片解码写入文件，原位置换成文件路径，stdout 不再塞满 base64。
+    void saveFirstImage(Json& result, const std::string& path) {
+        for (auto& item : result["content"]) {
+            if (item.value("type", std::string{}) == "image") {
+                std::ofstream(fs::u8path(path), std::ios::binary) << decodeBase64(item.value("data", std::string{}));
+                item["data"] = "<saved to " + path + ">";
+                return;
+            }
+        }
+        throw std::runtime_error("工具结果里没有图片，未写入 " + path);
+    }
+
     int callCommand(
         const SessionOptions& options,
         const std::string&    tool,
         const std::string&    argumentsText,
         const std::string&    argumentsFile,
-        const std::string&    output
+        const std::string&    output,
+        const std::string&    image
     ) {
         const auto arguments = readCallArguments(argumentsText, argumentsFile);
         enterProject(options.project);
-        checkToolCall(tool, arguments);
-        SessionConnection connection(resolveSession(options.session), options.timeoutSeconds);
+        // 先按工程配置检查；不认识的工具再问运行中的会话，它可能是用别的配置启动的。
+        auto                             tools = availableTools();
+        std::optional<SessionConnection> connection;
+        if (!hasTool(tools, tool)) {
+            if (const auto record = liveSession(options.session)) {
+                connection.emplace(*record, options.timeoutSeconds);
+                tools = connection->listTools();
+            }
+        }
+        checkToolCall(tool, arguments, tools);
+        if (!connection) {
+            connection.emplace(resolveSession(options.session), options.timeoutSeconds);
+        }
         Json              result;
         try {
-            result = connection.callTool(tool, arguments);
+            result = connection->callTool(tool, arguments);
         } catch (const std::runtime_error& error) {
             std::cerr << "[ERROR] " << error.what() << '\n';
             return ExitToolError;
+        }
+        if (!image.empty()) {
+            saveFirstImage(result, image);
         }
         if (output.empty()) {
             printJson(result);
@@ -843,7 +1002,12 @@ namespace {
             std::ofstream(fs::u8path(output), std::ios::binary)
                 << result.dump(2, ' ', false, Json::error_handler_t::replace);
         }
-        return result.value("isError", false) ? ExitToolError : ExitOk;
+        if (result.value("isError", false)) {
+            const auto text = firstText(result);
+            std::cerr << "[ERROR] " << text.substr(0, text.find('\n')) << '\n';
+            return ExitToolError;
+        }
+        return ExitOk;
     }
 
     struct LogsOptions {
@@ -877,7 +1041,11 @@ namespace {
             request.update(extra);
             const auto result = connection.callTool("read_logs", request);
             if (result.value("isError", false)) {
-                throw std::runtime_error(firstText(result));
+                const auto text = firstText(result);
+                if (text.starts_with("Invalid regex")) {
+                    throw UsageError("正则表达式无效：" + request.value("regex", std::string{}), "logs");
+                }
+                throw std::runtime_error(text);
             }
             return Json::parse(firstText(result));
         };
@@ -956,9 +1124,15 @@ namespace {
 
     // CLI11 的报错是英文，且只提示 --help；改成中文并指向出错命令自己的帮助。
     int reportParseError(const CLI::App& app, const CLI::ParseError& error) {
-        std::string topic;
-        for (const auto* command : app.get_subcommands()) {
-            topic = command->get_name();
+        std::string     topic;
+        const CLI::App* current = &app;
+        while (true) {
+            const auto parsed = current->get_subcommands();
+            if (parsed.empty()) {
+                break;
+            }
+            current = parsed.back();
+            topic += (topic.empty() ? "" : " ") + current->get_name();
         }
         std::string message = error.what();
         const auto  detail  = [&message] {
@@ -980,7 +1154,11 @@ namespace {
         return reportUsage(message, topic);
     }
 
-    int helpCommand(const CLI::App& app, const std::string& project, const std::string& topic) {
+    int helpCommand(const CLI::App& app, const std::string& project, const std::vector<std::string>& words) {
+        std::string topic;
+        for (const auto& word : words) {
+            topic += (topic.empty() ? "" : " ") + word;
+        }
         enterProject(project);
         // App::help 会转发给已解析的子命令，也就是 help 自己，这里要绕过。
         const auto print = [](const CLI::App* target, const std::string& name) {
@@ -990,12 +1168,28 @@ namespace {
             print(&app, "mcdk");
             return ExitOk;
         }
-        if (const auto* command = app.get_subcommand_no_throw(topic)) {
+        const CLI::App* command = &app;
+        for (const auto& word : words) {
+            command = command->get_subcommand_no_throw(word);
+            if (command == nullptr) {
+                break;
+            }
+        }
+        if (command != nullptr) {
             print(command, "mcdk " + topic);
             return ExitOk;
         }
-        const auto tools = availableTools();
-        const auto tool  = std::ranges::find(tools, topic, &mcp::tool::name);
+        auto tools = availableTools();
+        if (!hasTool(tools, topic)) {
+            if (const auto record = liveSession("")) {
+                try {
+                    tools = SessionConnection(*record, 10).listTools();
+                } catch (const std::runtime_error&) {
+                    // 连不上会话时按工程配置回答即可，帮助不该因此失败。
+                }
+            }
+        }
+        const auto tool = std::ranges::find(tools, topic, &mcp::tool::name);
         if (tool == tools.end()) {
             auto names = commandNames(app);
             for (const auto& known : tools) {
@@ -1023,17 +1217,17 @@ namespace mcdk::cli {
 #else
     int parse(int argc, char* argv[]) {
 #endif
-        CLI::App app{"MCDK 游戏自动化命令行。不带参数运行 mcdk 时按 .mcdev.json 交互式启动。", "mcdk"};
+        CLI::App app{"MCDK 游戏自动化命令行", "mcdk"};
         app.require_subcommand(1);
         // 工具列表和退出码自带排版，不能让 CLI11 重新折行。
         app.get_formatter()->enable_footer_formatting(false);
         app.footer(toolListFooter);
 
-        std::string helpProject;
-        std::string helpTopic;
-        auto*       help = app.add_subcommand("help", "查看命令或工具的说明");
+        std::string              helpProject;
+        std::vector<std::string> helpTopic;
+        auto*                    help = app.add_subcommand("help", "查看命令或工具的说明");
         addProjectOption(help, helpProject);
-        help->add_option("topic", helpTopic, "命令名或工具名");
+        help->add_option("topic", helpTopic, "命令名或工具名，子命令用空格隔开，如 lane remove");
         help->footer("");
 
         RunOptions runOptions;
@@ -1061,6 +1255,12 @@ namespace mcdk::cli {
             "后台模式：游戏窗口不激活、待在其他窗口之下，游戏抢前台时交还给你；mc_input 只允许 post，"
             "转视角用 turn 步骤。适合自动化期间继续做自己的事"
         );
+        run->add_flag(
+            "--hot-reload",
+            runOptions.hotReload,
+            "保存文件就自动热更新。默认关闭：改完代码用 mcdk call reload_scripts 重载并拿到结果，"
+            "避免同一工程的多个会话被一次保存一起带动、模块被重复执行"
+        );
         run->add_option("--log-file", runOptions.logFile)->group("");
         run->footer(std::string(LaneHelp) + ExitCodeHelp);
 
@@ -1075,9 +1275,22 @@ namespace mcdk::cli {
             ->type_name("DIR");
 
         SessionOptions psOptions;
-        auto*          ps = app.add_subcommand("ps", "列出会话");
+        bool           psAll   = false;
+        bool           psPrune = false;
+        auto*          ps      = app.add_subcommand("ps", "列出运行中的会话");
         addProjectOption(ps, psOptions.project);
-        ps->footer("");
+        ps->add_flag("--all", psAll, "也列出已结束的会话");
+        ps->add_flag("--prune", psPrune, "删除已结束会话的记录和日志，不碰 Lane（Lane 用 mcdk lane remove）");
+        ps->footer(
+            "会话状态：\n"
+            "  process_started   游戏进程已创建，还没进入存档\n"
+            "  game_ready        已进入存档，工具可用\n"
+            "  game_unavailable  不在存档内，或没有包含调试 MOD\n"
+            "  exited            已退出，见 exitCode；stopped=true 表示由 mcdk stop 结束\n"
+            "                    （此时 exitCode 是 1296254027，即 0x4D43444B，\"MCDK\"）\n"
+            "  lost              mcdk 进程已不在，但记录没有写完\n"
+            "readyCount 是进入存档的次数，重载存档后加一，配合 mcdk wait --after 使用。"
+        );
 
         SessionOptions waitOptions{.timeoutSeconds = 120};
         std::string    waitState = "ready";
@@ -1126,7 +1339,8 @@ namespace mcdk::cli {
             "skipped=K 表示游标之后有 K 行在读取前已被挤出内存缓冲（约保留最近 1000 行，reload_game 会清空）。\n"
             "more 表示达到 --limit，用新游标继续读。\n"
             "--wait-for 不带 --since 时只看命令开始之后的行；要避免漏掉先前触发的输出，\n"
-            "先记下触发动作之前的游标再传给 --since。\n\n"
+            "先记下触发动作之前的游标再传给 --since。\n"
+            "游标比当前序号还大时视为上一次运行留下的，从头读起。\n\n"
             + std::string(ExitCodeHelp)
         );
 
@@ -1141,7 +1355,9 @@ namespace mcdk::cli {
         addSessionOption(call, callOptions.session);
         call->add_option("--args", callArguments, "工具参数，JSON 对象")->type_name("JSON");
         call->add_option("--args-file", callArgumentsFile, "从文件读取工具参数")->type_name("FILE");
-        call->add_option("--output", callOutput, "结果写入文件而不是 stdout，适合截图")->type_name("FILE");
+        std::string callImage;
+        call->add_option("--output", callOutput, "完整结果 JSON 写入文件而不是 stdout")->type_name("FILE");
+        call->add_option("--image", callImage, "把结果里的图片解码保存为文件，例如截图存成 .jpg")->type_name("FILE");
         call->add_option("--timeout", callOptions.timeoutSeconds, "超时秒数（默认 60）");
 
         // CLI11 的 vector 重载按逆序消费参数。
@@ -1171,7 +1387,7 @@ namespace mcdk::cli {
                 return runCommand(runOptions);
             }
             if (ps->parsed()) {
-                return psCommand(psOptions);
+                return psCommand(psOptions, psAll, psPrune);
             }
             if (wait->parsed()) {
                 return waitCommand(waitOptions, waitState, waitAfter);
@@ -1185,7 +1401,7 @@ namespace mcdk::cli {
             if (laneRemove->parsed()) {
                 return laneRemoveCommand(laneOptions, laneRemoveRoot);
             }
-            return callCommand(callOptions, callTool, callArguments, callArgumentsFile, callOutput);
+            return callCommand(callOptions, callTool, callArguments, callArgumentsFile, callOutput, callImage);
         } catch (const CLI::ParseError& error) {
             // --help 这类“错误”的退出码是 0，交给 CLI11 打印帮助。
             return error.get_exit_code() == 0 ? app.exit(error) : reportParseError(app, error);

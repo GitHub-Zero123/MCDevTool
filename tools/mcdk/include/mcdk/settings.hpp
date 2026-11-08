@@ -104,6 +104,7 @@ namespace mcdk {
         std::filesystem::path      laneRoot;  // 工程里的 Lane 目录
         std::filesystem::path      laneEntry; // 游戏实际使用的入口，见 lane::EntrySlot
         std::string                configFingerprint;
+        std::string                launchSummary; // 启动参数 JSON，记进会话记录
         // 不激活游戏窗口、不抢前台，输入只走窗口消息。
         bool                       background = false;
     };

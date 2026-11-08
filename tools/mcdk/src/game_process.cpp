@@ -297,6 +297,7 @@ mcdk::GameRunResult mcdk::launchGameExe(
                    .laneRoot        = laneLevel ? MCDevTool::Utils::pathToGenericUtf8(userConfig.automation.laneRoot)
                                                 : std::string{},
                    .configFingerprint = userConfig.automation.configFingerprint,
+                   .launch            = userConfig.automation.launchSummary,
             }
         );
     }

@@ -26,6 +26,12 @@ namespace mcdk {
 
     // 存档相关的键（world_name、reset_world、game_mode……），.mcdev.json 与插件改写共用。
     [[nodiscard]] bool isWorldConfigKey(std::string_view key) noexcept;
+
+    // mcdk 读取的全部顶层配置键。
+    [[nodiscard]] std::vector<std::string> knownConfigKeys();
+    // 覆写项里既不是已知配置键、也不在配置文件里的顶层键，多半是拼错了。
+    [[nodiscard]] std::vector<std::string>
+    unknownOverrideKeys(const std::filesystem::path& path, const std::vector<std::string>& overrides);
     // 只改 source 里出现的存档键，其余保持 world 原值。类型不对时抛异常。
     void applyWorldConfig(const nlohmann::json& source, WorldProjectConfig& world);
     // 全部存档键的当前值。

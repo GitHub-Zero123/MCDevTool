@@ -413,7 +413,7 @@ mcdk run --session a --detach --reuse             # 启动；已在运行且配�
 mcdk wait --session a                             # 等到进入存档
 mcdk logs --session a                             # 看最新日志，末行给出游标 [logs] next=N
 # 修改脚本
-mcdk call reload_scripts --session a              # 同步重载改过的 py，返回重载与失败的模块
+mcdk call reload_scripts --session a              # 同步重载改过的 py，返回重载与失败的模块（自动热更新默认关闭）
 mcdk call execute_code --session a --args '{"code":"...","is_client":false}'
 mcdk logs --session a --since N --errors          # 只看游标之后的新错误
 # ……重复，整轮工作结束后
