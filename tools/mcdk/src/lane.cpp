@@ -5,6 +5,8 @@
 #include <cctype>
 #include <format>
 #include <fstream>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -133,30 +135,127 @@ namespace mcdk::lane {
 
     void remove(const fs::path& root) { MCDevTool::removeAllNoFollow(root); }
 
-    fs::path gameEntry(const fs::path& realAppData, const fs::path& root, std::string_view session) {
-        // 入口名带上 Lane 目录的哈希，同名会话在不同工程里不会互相覆盖。
-        std::uint64_t hash = 14695981039346656037ull;
-        for (const unsigned char byte : utf8(fs::absolute(root).lexically_normal())) {
-            hash = (hash ^ static_cast<unsigned char>(std::tolower(byte))) * 1099511628211ull;
+    std::size_t pathSegments(const fs::path& path) {
+        std::size_t count = 0;
+        for (const auto& part : fs::absolute(path).lexically_normal()) {
+            if (!part.empty() && part != part.root_directory() && part.native() != L"\\" && part.native() != L"/") {
+                ++count;
+            }
         }
-        return realAppData.parent_path()
-             / fs::u8path(std::format("mcdk-lane-{}-{:08x}", session, static_cast<std::uint32_t>(hash ^ (hash >> 32))));
+        return count;
     }
 
-    void linkGameEntry(const fs::path& entry, const fs::path& root) {
-        if (pathExists(entry) && !isLink(entry)) {
-            throw std::runtime_error("Lane 入口位置已被占用：" + utf8(entry));
+#ifdef _WIN32
+    namespace {
+        constexpr int EntrySlotCount = 64;
+
+        std::mutex& ownedLock() {
+            static std::mutex lock;
+            return lock;
         }
-        if (!MCDevTool::createDirectoryJunction(root, entry)) {
-            throw std::runtime_error("无法创建 Lane 入口：" + utf8(entry));
+
+        // 本进程占着的槽位。命名互斥量对同一线程可重入，不能只靠它判断。
+        std::set<fs::path>& ownedSlots() {
+            static std::set<fs::path> slots;
+            return slots;
         }
+
+        bool ownedHere(const fs::path& slot) {
+            std::lock_guard guard(ownedLock());
+            return ownedSlots().contains(slot);
+        }
+
+        std::wstring slotMutexName(const fs::path& directory, int slot) {
+            std::uint64_t hash = 14695981039346656037ull;
+            for (const unsigned char byte : utf8(fs::absolute(directory).lexically_normal())) {
+                hash = (hash ^ static_cast<unsigned char>(std::tolower(byte))) * 1099511628211ull;
+            }
+            return std::format(L"Local\\mcdk-lane-entry-{:016x}-{}", hash, slot);
+        }
+
+        // 拿到就返回句柄，被别的进程占着返回 nullptr。被弃置的互斥量说明上一个占用者已经退出，可以接手。
+        HANDLE tryLock(const fs::path& directory, int slot) {
+            HANDLE mutex = CreateMutexW(nullptr, FALSE, slotMutexName(directory, slot).c_str());
+            if (mutex == nullptr) return nullptr;
+            const DWORD result = WaitForSingleObject(mutex, 0);
+            if (result == WAIT_OBJECT_0 || result == WAIT_ABANDONED) return mutex;
+            CloseHandle(mutex);
+            return nullptr;
+        }
+
+        void unlock(HANDLE mutex) {
+            ReleaseMutex(mutex);
+            CloseHandle(mutex);
+        }
+    } // namespace
+
+    fs::path defaultEntryDirectory() {
+        const DWORD length = GetEnvironmentVariableW(L"USERPROFILE", nullptr, 0);
+        std::wstring profile(length, L'\0');
+        profile.resize(GetEnvironmentVariableW(L"USERPROFILE", profile.data(), length));
+        const auto directory = fs::path(profile) / ".mcdk-lanes";
+        if (profile.empty() || pathSegments(directory) != GameAppDataSegments - 1) {
+            throw std::runtime_error(std::format(
+                "Lane 入口需要正好 {} 段的路径，{} 下的槽位不满足：游戏的模组加载器写死了路径层数",
+                GameAppDataSegments,
+                utf8(directory)
+            ));
+        }
+        return directory;
     }
 
-    void unlinkGameEntry(const fs::path& entry) {
-        if (isLink(entry)) {
-            MCDevTool::removeAllNoFollow(entry);
+    EntrySlot::EntrySlot(const fs::path& directory, const fs::path& root) {
+        fs::create_directories(directory);
+        for (int slot = 0; slot < EntrySlotCount && mMutex == nullptr; ++slot) {
+            const auto path = directory / std::to_string(slot);
+            if (ownedHere(path)) continue;
+            HANDLE mutex = tryLock(directory, slot);
+            if (mutex == nullptr) continue;
+            // 槽位上是真实目录说明不是 mcdk 建的，绝不删除。
+            if (pathExists(path) && !isLink(path)) {
+                unlock(mutex);
+                continue;
+            }
+            if (!MCDevTool::createDirectoryJunction(root, path)) {
+                unlock(mutex);
+                throw std::runtime_error("无法创建 Lane 入口：" + utf8(path));
+            }
+            mMutex = mutex;
+            mPath  = path;
+            std::lock_guard guard(ownedLock());
+            ownedSlots().insert(path);
+        }
+        if (mMutex == nullptr) {
+            throw std::runtime_error("没有空闲的 Lane 入口槽位：" + utf8(directory));
+        }
+        sweepEntries(directory);
+    }
+
+    EntrySlot::~EntrySlot() {
+        if (mMutex == nullptr) return;
+        {
+            std::lock_guard guard(ownedLock());
+            ownedSlots().erase(mPath);
+        }
+        unlock(mMutex);
+    }
+
+    void sweepEntries(const fs::path& directory) {
+        for (int slot = 0; slot < EntrySlotCount; ++slot) {
+            const auto path = directory / std::to_string(slot);
+            if (!pathExists(path) || !isLink(path) || ownedHere(path)) continue;
+            if (HANDLE mutex = tryLock(directory, slot)) {
+                MCDevTool::removeAllNoFollow(path);
+                unlock(mutex);
+            }
         }
     }
+#else
+    fs::path defaultEntryDirectory() { throw std::runtime_error("Lane 仅支持 Windows"); }
+    EntrySlot::EntrySlot(const fs::path&, const fs::path&) { throw std::runtime_error("Lane 仅支持 Windows"); }
+    EntrySlot::~EntrySlot() = default;
+    void sweepEntries(const fs::path&) {}
+#endif
 
     fs::path shimPath(const fs::path& executableDirectory) { return executableDirectory / "mcdev-lane-shim.dll"; }
 

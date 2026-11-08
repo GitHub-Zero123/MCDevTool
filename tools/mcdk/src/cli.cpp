@@ -70,8 +70,9 @@ namespace {
         "  mcdk 在游戏入口点之前注入 mcdev-lane-shim.dll，让游戏取到的 AppData 指向 Lane 目录。\n"
         "  这不是沙盒，游戏仍能访问其他路径；它只决定游戏把数据读写在哪里。\n"
         "  shim 没装上时游戏会被直接结束，不会在未隔离的状态下运行。\n"
-        "  游戏经由 AppData 旁的入口联接 mcdk-lane-<会话名>-<哈希> 访问 Lane 目录：游戏按真实 Roaming\n"
-        "  的路径层数推算模组的模块名，入口与 Roaming 同级才能对上。数据本身仍在 Lane 目录里。\n"
+        "  游戏的模组加载器写死了 AppData 必须是 5 段路径，所以游戏经由入口联接\n"
+        "  %USERPROFILE%\\.mcdk-lanes\\<槽位> 访问 Lane 目录，数据本身仍在 Lane 目录里。\n"
+        "  槽位按需复用，数量不超过同时运行的实例数，空闲槽位的联接会被自动摘掉。\n"
         "\n"
         "级别（--lane，默认 worlds）：\n"
         "  addons  只独享包目录。存档、设置、日志通过目录联接共享真实数据，存档名带 __<会话名> 后缀\n"
@@ -224,15 +225,16 @@ namespace {
         std::setvbuf(stdout, nullptr, _IONBF, 0);
 
         mcdk::UserConfig config;
+        // 入口槽位要占到游戏退出为止。
+        std::optional<mcdk::lane::EntrySlot> laneEntry;
         try {
             config = loadRunConfig(options, configPath);
             if (config.automation.laneLevel) {
                 const auto& laneRoot = config.automation.laneRoot;
                 ensureIgnored(options.laneRootPath.empty() ? laneRoot.parent_path() : laneRoot);
-                const auto realAppData = MCDevTool::getAppDataPath();
-                mcdk::lane::prepare(realAppData, laneRoot, *config.automation.laneLevel);
-                config.automation.laneEntry = mcdk::lane::gameEntry(realAppData, laneRoot, options.session);
-                mcdk::lane::linkGameEntry(config.automation.laneEntry, laneRoot);
+                mcdk::lane::prepare(MCDevTool::getAppDataPath(), laneRoot, *config.automation.laneLevel);
+                laneEntry.emplace(mcdk::lane::defaultEntryDirectory(), laneRoot);
+                config.automation.laneEntry = laneEntry->path();
                 // 之后 mcdk 计算的包目录、存档目录也走同一个入口，和游戏看到的路径一致。
                 MCDevTool::setAppDataPathOverride(config.automation.laneEntry);
             }
@@ -525,8 +527,9 @@ namespace {
             std::cerr << "[ERROR] Lane 不存在：" << MCDevTool::Utils::pathToGenericUtf8(root) << '\n';
             return ExitConfig;
         }
-        mcdk::lane::unlinkGameEntry(mcdk::lane::gameEntry(MCDevTool::getAppDataPath(), root, options.session));
         mcdk::lane::remove(root);
+        // 顺带摘掉空闲槽位的入口，其中可能有指向刚删除目录的。
+        mcdk::lane::sweepEntries(mcdk::lane::defaultEntryDirectory());
         printJson(Json{{"removed", MCDevTool::Utils::pathToGenericUtf8(root)}});
         return ExitOk;
     }

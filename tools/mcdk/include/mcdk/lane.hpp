@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -30,16 +31,36 @@ namespace mcdk::lane {
     // 删除 Lane。遇到联接只摘链接，不进入，联接指向的真实数据不受影响。
     void remove(const std::filesystem::path& root);
 
-    // 游戏按真实 Roaming 的路径段数推算 Python 模组的模块名，Lane 路径段数不同就会加载失败。
-    // 所以游戏实际使用的是 Roaming 旁边的一个入口联接，它指向工程里的 Lane 目录。
-    [[nodiscard]] std::filesystem::path
-    gameEntry(const std::filesystem::path& realAppData, const std::filesystem::path& root, std::string_view session);
+    // 游戏的 Python 加载器把模组脚本路径按 '/' 切开后直接丢掉前 10 段，剩下的拼成模块名
+    // （ModSDK mod/common/minecraftMod.py 中 LoadWindowsAddonPy 等处的 split('/')[10:]）。
+    // 所以游戏看到的 AppData 必须正好 5 段。工程里的 Lane 目录做不到，游戏经由一个 5 段的入口访问它。
+    inline constexpr std::size_t GameAppDataSegments = 5;
 
-    // 建好或更新入口联接。入口位置已有真实目录时抛异常，不会覆盖。
-    void linkGameEntry(const std::filesystem::path& entry, const std::filesystem::path& root);
+    // 路径段数，盘符算一段。
+    [[nodiscard]] std::size_t pathSegments(const std::filesystem::path& path);
 
-    // 只摘入口联接本身。
-    void unlinkGameEntry(const std::filesystem::path& entry);
+    // %USERPROFILE%\.mcdk-lanes，槽位是它的子目录，正好 5 段。用户目录段数不符时抛异常。
+    [[nodiscard]] std::filesystem::path defaultEntryDirectory();
+
+    // 入口槽位：directory\<编号> 是指向 Lane 目录的联接。
+    // 占用期间持有以槽位命名的系统互斥量，进程退出（含被强杀）时由内核释放，空闲与否永远准确。
+    // 入口数量不会超过同时运行的实例数，空闲槽位的联接在下次占用或 sweepEntries 时摘掉。
+    class EntrySlot {
+    public:
+        EntrySlot(const std::filesystem::path& directory, const std::filesystem::path& root);
+        ~EntrySlot();
+        EntrySlot(const EntrySlot&)            = delete;
+        EntrySlot& operator=(const EntrySlot&) = delete;
+
+        [[nodiscard]] const std::filesystem::path& path() const noexcept { return mPath; }
+
+    private:
+        void*                 mMutex = nullptr;
+        std::filesystem::path mPath;
+    };
+
+    // 摘掉空闲槽位留下的联接；正在使用的槽位和不是联接的条目都不动。
+    void sweepEntries(const std::filesystem::path& directory);
 
     // 在挂起的游戏进程里排队加载 shim。恢复主线程后调用 waitArmed 确认它已经布防。
     class ShimInjection {

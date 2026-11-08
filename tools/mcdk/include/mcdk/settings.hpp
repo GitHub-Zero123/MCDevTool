@@ -101,7 +101,7 @@ namespace mcdk {
         // 设置后游戏的 AppData 指向 laneRoot，见 mcdk/lane.hpp。
         std::optional<lane::Level> laneLevel;
         std::filesystem::path      laneRoot;  // 工程里的 Lane 目录
-        std::filesystem::path      laneEntry; // 游戏实际使用的入口，见 lane::gameEntry
+        std::filesystem::path      laneEntry; // 游戏实际使用的入口，见 lane::EntrySlot
     };
 
     struct UserConfig {

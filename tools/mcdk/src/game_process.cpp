@@ -1053,7 +1053,8 @@ mcdk::GameRunResult mcdk::launchGameExe(
                 laneShim->waitArmed(std::chrono::seconds(15));
                 printColoredAtomic(
                     "[MCDK] Lane " + std::string(mcdk::lane::levelName(*laneLevel)) + "："
-                        + MCDevTool::Utils::pathToGenericUtf8(userConfig.automation.laneRoot),
+                        + MCDevTool::Utils::pathToGenericUtf8(userConfig.automation.laneRoot) + "（入口 "
+                        + MCDevTool::Utils::pathToGenericUtf8(userConfig.automation.laneEntry) + "）",
                     ConsoleColor::Cyan
                 );
             }

@@ -49,19 +49,28 @@ mcdk 恢复主线程后会等 shim 发出就绪信号，超时或游戏先退出
 
 不存在“以为隔离了其实没有”的情况，安全不依赖任何事后清理。
 
-### 入口联接
+### 入口槽位
 
-游戏的 Python 模组加载器按真实 Roaming 的路径**段数**推算模块名，比如 `C:\Users\<用户>\AppData\Roaming` 是 5 段。Lane 目录在工程里，段数通常不同，模块名就会算错，调试 MOD 和你的脚本都会加载失败。
+游戏的 Python 模组加载器把模组脚本路径按 `/` 切开后，直接丢掉前 10 段，剩下的拼成模块名。见 ModSDK 中 `mod/common/minecraftMod.py` 的 `LoadWindowsAddonPy`：
 
-所以游戏实际使用的是 `Roaming` 旁边的一个入口联接：
-
-```text
-C:\Users\<用户>\AppData\mcdk-lane-<会话名>-<哈希>  →  <工程>/.mcdev/lanes/<会话名>
+```python
+tempPyFilePathList = filePathName.split('/')[10:]
 ```
 
-入口与 `Roaming` 同级，段数天然一致；数据本身仍在工程的 Lane 目录里。入口名里的哈希来自 Lane 目录路径，不同工程里的同名会话不会互相覆盖。入口指向的是 Lane 数据，不是你的源码。`mcdk lane remove` 会一并摘掉它。
+它默认前 10 段一定是 `C:/Users/<用户>/AppData/Roaming/MinecraftPE_Netease/games/com.netease/behavior_packs/<uuid>`。所以游戏看到的 AppData 必须**正好 5 段**，与盘符、与真实 Roaming 都无关。工程里的 Lane 目录通常更深，模块名会算错，调试 MOD 和你的脚本都会加载失败。
 
-顺带的好处是游戏看到的路径变短了，不容易超过 Windows 的 260 字符限制。
+所以游戏实际使用的是一个 5 段的入口联接：
+
+```text
+%USERPROFILE%\.mcdk-lanes\<槽位编号>  →  <工程>/.mcdev/lanes/<会话名>
+```
+
+- **槽位复用：** 每个槽位对应一个系统命名互斥量，mcdk 运行期间持有，进程结束时由内核释放，被强杀也一样。启动时占一个空闲槽位，把联接改指到本次的 Lane。
+- **不会泄漏累积：** 每次占用槽位和 `mcdk lane remove` 时，会摘掉其他空闲槽位留下的联接。`.mcdk-lanes` 里的入口数量不超过同时运行的实例数，不随工程、会话名或 worktree 增长。
+- **不会误删：** 槽位位置上如果是真实目录，一律跳过、绝不删除。
+- **用户目录段数不符：** 用户目录不是 `C:\Users\<用户>` 这样的 3 段时，入口凑不出 5 段，mcdk 会报错并拒绝启动。
+
+入口只是联接，数据本身仍在工程的 Lane 目录里。顺带的好处是游戏看到的路径变短，不容易超过 Windows 的 260 字符限制。
 
 ### 目录布局
 

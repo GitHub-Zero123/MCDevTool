@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -112,26 +113,48 @@ namespace {
         lane::remove(root / "missing");
     }
 
-    void testGameEntry(const fs::path& real, const fs::path& root) {
-        const auto laneRoot = root / "entry";
-        lane::prepare(real, laneRoot, lane::Level::Full);
-        const auto entry = lane::gameEntry(real, laneRoot, "s1");
-        require(entry.parent_path() == real.parent_path(), "entry sits next to Roaming");
-        require(entry != lane::gameEntry(real, root / "other", "s1"), "different lanes get different entries");
-        require(entry == lane::gameEntry(real, laneRoot, "s1"), "entry name is stable");
+    bool pointsTo(const fs::path& link, const fs::path& target) {
+        return MCDevTool::isLink(link) && fs::equivalent(link, target);
+    }
 
-        lane::linkGameEntry(entry, laneRoot);
-        require(isJunction(entry) && fs::is_directory(entry / "MinecraftPE_Netease"), "entry reaches the lane");
-        lane::linkGameEntry(entry, laneRoot);
-        require(isJunction(entry), "relinking is idempotent");
+    void testEntrySlots(const fs::path& base) {
+        const auto directory = base / "entries";
+        const auto laneA     = base / "laneA";
+        const auto laneB     = base / "laneB";
+        fs::create_directories(laneA);
+        fs::create_directories(laneB);
 
-        lane::unlinkGameEntry(entry);
-        require(!fs::exists(entry) && fs::is_directory(laneRoot / "MinecraftPE_Netease"), "unlink keeps the lane");
+        // 槽位上已有的真实目录不是 mcdk 建的，要跳过并保留。
+        write(directory / "0" / "user.txt", "keep");
 
-        fs::create_directories(entry);
-        require(throws([&] { lane::linkGameEntry(entry, laneRoot); }), "a real directory is never replaced");
-        fs::remove(entry);
-        lane::remove(laneRoot);
+        std::optional<lane::EntrySlot> first;
+        first.emplace(directory, laneA);
+        require(first->path() == directory / "1", "a real directory is skipped");
+        require(pointsTo(first->path(), laneA), "the slot links to the lane");
+
+        {
+            lane::EntrySlot second(directory, laneB);
+            require(second.path() == directory / "2", "a held slot is not reused");
+            require(pointsTo(first->path(), laneA), "the other slot is untouched");
+        }
+        require(MCDevTool::isLink(directory / "2"), "a released slot keeps its link until swept");
+
+        {
+            lane::EntrySlot third(directory, laneB);
+            require(third.path() == directory / "2", "a free slot is reused instead of growing");
+        }
+
+        first.reset();
+        lane::sweepEntries(directory);
+        require(!fs::exists(directory / "1") && !fs::exists(directory / "2"), "free slots are swept");
+        require(fs::is_regular_file(directory / "0" / "user.txt"), "real directories survive the sweep");
+        require(fs::is_directory(laneA) && fs::is_directory(laneB), "sweeping keeps the lanes");
+    }
+
+    void testSegments() {
+        require(lane::pathSegments(fs::u8path("C:/Users/用户/AppData/Roaming")) == lane::GameAppDataSegments, "Roaming");
+        require(lane::pathSegments(fs::u8path("C:\\Users\\用户\\.mcdk-lanes\\0")) == lane::GameAppDataSegments, "slot");
+        require(lane::pathSegments(fs::u8path("C:/Users/用户/.mcdk-lanes")) == 4, "entry directory");
     }
 
     void testLevels() {
@@ -156,7 +179,8 @@ int main() {
         testWorlds(real, lanes);
         testAddons(real, lanes);
         testExistingPrivateDirectoryIsKept(real, lanes);
-        testGameEntry(real / "Roaming", lanes);
+        testEntrySlots(lanes / "slots");
+        testSegments();
         testRemoveNeverFollowsLinks(real, lanes);
         fs::remove_all(base);
     } catch (const std::exception& exception) {

@@ -23,6 +23,7 @@
 - 支持 Shader / Material 单文件热更新，可在资源包文件变化后回到游戏前台触发增量重载。
 - 内置调试 MOD，可重定向 Python 输出、绑定热更新快捷键，并提供调试期 IPC 能力。
 - 可选启用 MCP 服务，让 AI / 自动化客户端读取日志、执行代码、分析 JSON UI、截图和点击游戏窗口。
+- 提供面向 Agent 和脚本的命令行（`mcdk run` / `wait` / `call` / `stop`），用退出码报告结果；隔离会话运行在 Lane 里，可多开并在后台操作输入。
 - 支持 C++ 插件扩展 mcdk 自身：订阅生命周期事件、注册自己的 MCP 工具。插件**只从 `.mcdev.json` 的 `plugins` 显式声明加载，不扫描任何目录**。
 
 ## 配置mcdk
@@ -294,7 +295,7 @@ mcdk stop --session a
 
 用 `mcdk --help` 查看命令和工具，`mcdk help <命令或工具>` 查看详情，完整说明见 [docs/cli.md](docs/cli.md)。不带参数的 `mcdk` 行为不变。
 
-隔离会话运行在 [Lane](docs/lane.md) 里：游戏的数据根目录指向工程内 `.mcdev/lanes/<会话名>`，可选只隔离包目录、隔离包和存档、或隔离整个数据目录，多开时各实例的存档与包互不冲突。
+隔离会话运行在 [Lane](docs/lane.md) 里：游戏的数据根目录指向工程内 `.mcdev/lanes/<会话名>`，可选只隔离包目录、隔离包和存档、或隔离整个数据目录，多开时各实例的存档与包互不冲突。删除 Lane 请用 `mcdk lane remove`，不要手动删除目录。
 
 ## MCP客户端配置
 
@@ -390,6 +391,37 @@ MCDK MCP 的定位不是让通用 Agent 仅凭 LLM、截图和点击完成复杂
 5. 仅在视觉效果本身是测试目标时使用截图和点击能力。
 
 详细规范见 [MCP 游戏测试功能介绍与工作流策略规范](docs/mcp-game-testing-workflow.md)。
+
+### 用 CLI 跑测试
+
+需要由 Agent 或脚本自己启动、等待、结束游戏时，用 `mcdk` 命令行。它调用的是同一套工具，上面的策略同样适用，区别是游戏的整个生命周期都由命令控制，并用退出码报告结果。
+
+**先运行 help，不要凭记忆拼参数。** 命令、参数和工具会随版本变化，`help` 的内容直接由当前版本生成：
+
+```bash
+mcdk --help                 # 全部命令，以及当前可用的工具列表
+mcdk help run               # 启动参数、Lane 隔离级别、退出码
+mcdk help execute_code      # 某个工具的参数和调用示例
+mcdk call mc_input --session a --args '{"op":"/help"}'   # 命令式工具自带的详细说明
+```
+
+一轮测试的基本流程：
+
+```bash
+mcdk run --session a --detach                     # 后台启动隔离会话，立即返回会话信息
+mcdk wait --session a                             # 等到进入存档
+mcdk call get_latest_error_logs --session a       # 记录错误日志基线
+mcdk call execute_code --session a --args '{"code":"...","is_client":false}'
+mcdk call get_latest_error_logs --session a       # 确认没有新增异常
+mcdk stop --session a                             # 结束游戏，返回后可以马上重开同名会话
+```
+
+- **判断结果：** 看退出码，不要解析日志里的提示文字。`0` 成功，`6` 等待超时，`7` 工具返回错误，`5` 表示游戏不是由 `mcdk stop` 结束的；完整列表见 `mcdk help run`。
+- **多开：** 用不同的 `--session` 名称。每个会话在自己的 Lane 里，存档、包和 MCP 端口互不冲突，`mc_input` 默认后台投递，不抢前台和鼠标。
+- **Lane 目录：** 放在对应的工程或 worktree 下（默认 `.mcdev/lanes/<会话名>`），不要放进系统临时目录；清理用 `mcdk lane remove --session a`。
+- **结束游戏：** 用 `mcdk stop`。手动关闭窗口时游戏自身会异常退出，`run` 会返回 `5`。
+
+完整说明见 [docs/cli.md](docs/cli.md) 和 [docs/lane.md](docs/lane.md)。
 
 ## 第三方依赖
 | 库名 | 用途 | 备注 |

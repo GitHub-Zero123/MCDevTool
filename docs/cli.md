@@ -114,7 +114,7 @@ mcdk run --set included_mod_dirs='["./","D:/共用模组"]'
 | `mcdk wait [--state ready\|exited] [--timeout 秒]` | 等待进入存档或退出。默认等 `ready`，超时 120 秒。会话还没启动时会继续等 |
 | `mcdk call <工具> [--args JSON] [--args-file FILE] [--output FILE] [--timeout 秒]` | 调用工具。截图等大结果用 `--output` 写入文件 |
 | `mcdk stop [--all] [--timeout 秒]` | 结束游戏并等 mcdk 退出。返回后端口已释放，可以马上重开同名会话 |
-| `mcdk lane remove --session NAME [--lane-root DIR]` | 删除会话的 Lane 目录和入口联接。遇到联接只摘链接，不会删到真实游戏数据。会话仍在运行时拒绝 |
+| `mcdk lane remove --session NAME [--lane-root DIR]` | 删除会话的 Lane 目录，并摘掉空闲的入口槽位。遇到联接只摘链接，不会删到真实游戏数据。会话仍在运行时拒绝 |
 
 `stop` 直接结束游戏进程，不走正常保存流程。原因见下文的“退出码”。
 
