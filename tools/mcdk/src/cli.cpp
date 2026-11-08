@@ -59,7 +59,7 @@ namespace {
 
     constexpr auto ExitCodeHelp = "退出码：\n"
                                   "  0  成功\n"
-                                  "  2  命令行用法错误\n"
+                                  "  2  用法错误：命令、参数、工具名或工具参数名写错，stderr 会指出对应的 help\n"
                                   "  3  配置错误，或找不到可用的会话\n"
                                   "  4  启动失败（含 MCP 端口被占用、被插件否决）\n"
                                   "  5  游戏不是由 mcdk stop 结束的（自行退出、窗口被关闭或崩溃）\n"
@@ -114,6 +114,69 @@ namespace {
         "  每个命令都阻塞到完成或超时，用退出码判断结果；会话信息、call 的结果、logs --json 都是 JSON。\n"
         "  脚本放在工程目录里，每一步都设超时。\n"
         "\n";
+
+    // 调用方写错了命令、参数或工具。带上应该查看的帮助主题，空表示 mcdk help。
+    class UsageError : public std::runtime_error {
+    public:
+        UsageError(const std::string& message, std::string topic)
+        : std::runtime_error(message),
+          mTopic(std::move(topic)) {}
+
+        [[nodiscard]] const std::string& topic() const noexcept { return mTopic; }
+
+    private:
+        std::string mTopic;
+    };
+
+    int reportUsage(const std::string& message, const std::string& topic) {
+        std::cerr << "[ERROR] " << message << '\n'
+                  << "用法见 mcdk help" << (topic.empty() ? std::string{} : " " + topic) << '\n';
+        return ExitUsage;
+    }
+
+    std::size_t editDistance(std::string_view a, std::string_view b) {
+        std::vector<std::size_t> row(b.size() + 1);
+        for (std::size_t j = 0; j <= b.size(); ++j) {
+            row[j] = j;
+        }
+        for (std::size_t i = 1; i <= a.size(); ++i) {
+            std::size_t diagonal = row[0];
+            row[0]               = i;
+            for (std::size_t j = 1; j <= b.size(); ++j) {
+                const auto above = row[j];
+                row[j] = std::min({row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] == b[j - 1] ? 0 : 1)});
+                diagonal = above;
+            }
+        }
+        return row[b.size()];
+    }
+
+    // 与 word 最接近的候选，差得太远时不猜。
+    std::string closestName(std::string_view word, const std::vector<std::string>& candidates) {
+        std::string best;
+        std::size_t bestDistance = std::max<std::size_t>(2, word.size() / 3) + 1;
+        for (const auto& candidate : candidates) {
+            const auto distance = editDistance(word, candidate);
+            if (distance < bestDistance) {
+                best         = candidate;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    std::string suggestion(std::string_view word, const std::vector<std::string>& candidates) {
+        const auto best = closestName(word, candidates);
+        return best.empty() ? std::string{} : "，是不是 " + best + "？";
+    }
+
+    std::string joinNames(const std::vector<std::string>& names) {
+        std::string text;
+        for (const auto& name : names) {
+            text += (text.empty() ? "" : "、") + name;
+        }
+        return text;
+    }
 
     constexpr auto DefaultSessionName = "default";
     constexpr auto PollInterval       = std::chrono::milliseconds(200);
@@ -628,7 +691,7 @@ namespace {
         }
         auto arguments = Json::parse(content, nullptr, false);
         if (!arguments.is_object()) {
-            throw std::runtime_error("工具参数必须是 JSON 对象");
+            throw UsageError("工具参数必须是 JSON 对象：" + content.substr(0, 80), "call");
         }
         return arguments;
     }
@@ -696,6 +759,57 @@ namespace {
         return content->front().value("text", std::string{});
     }
 
+    std::vector<mcp::tool> availableTools();
+
+    // 连接游戏之前按工具定义检查，写错的工具名或参数名不会被静默忽略。
+    void checkToolCall(const std::string& name, const Json& arguments) {
+        const auto tools = availableTools();
+        const auto tool  = std::ranges::find(tools, name, &mcp::tool::name);
+        if (tool == tools.end()) {
+            std::vector<std::string> names;
+            for (const auto& known : tools) {
+                names.push_back(known.name);
+            }
+            throw UsageError("未知工具：" + name + suggestion(name, names), "");
+        }
+        const auto& schema = tool->parameters_schema;
+        if (!schema.is_object()) {
+            return;
+        }
+        if (const auto properties = schema.find("properties");
+            properties != schema.end() && properties->is_object() && !schema.value("additionalProperties", false)) {
+            std::vector<std::string> known;
+            for (const auto& [key, value] : properties->items()) {
+                known.push_back(key);
+            }
+            std::vector<std::string> unknown;
+            for (const auto& [key, value] : arguments.items()) {
+                if (!properties->contains(key)) {
+                    const auto best = closestName(key, known);
+                    unknown.push_back(key + (best.empty() ? std::string{} : "（是不是 " + best + "）"));
+                }
+            }
+            if (!unknown.empty()) {
+                throw UsageError(
+                    "工具 " + name + " 没有这些参数：" + joinNames(unknown)
+                        + (known.empty() ? "。它不接受参数" : "。可用参数：" + joinNames(known)),
+                    name
+                );
+            }
+        }
+        if (const auto required = schema.find("required"); required != schema.end() && required->is_array()) {
+            std::vector<std::string> missing;
+            for (const auto& key : *required) {
+                if (key.is_string() && !arguments.contains(key.get<std::string>())) {
+                    missing.push_back(key.get<std::string>());
+                }
+            }
+            if (!missing.empty()) {
+                throw UsageError("工具 " + name + " 缺少必需参数：" + joinNames(missing), name);
+            }
+        }
+    }
+
     int callCommand(
         const SessionOptions& options,
         const std::string&    tool,
@@ -705,6 +819,7 @@ namespace {
     ) {
         const auto arguments = readCallArguments(argumentsText, argumentsFile);
         enterProject(options.project);
+        checkToolCall(tool, arguments);
         SessionConnection connection(resolveSession(options.session), options.timeoutSeconds);
         Json              result;
         try {
@@ -822,6 +937,40 @@ namespace {
              + mcdk::mcp_tool_help::formatToolList(availableTools());
     }
 
+    std::vector<std::string> commandNames(const CLI::App& app) {
+        std::vector<std::string> names;
+        for (const auto* command : app.get_subcommands([](const CLI::App*) { return true; })) {
+            names.push_back(command->get_name());
+        }
+        return names;
+    }
+
+    // CLI11 的报错是英文，且只提示 --help；改成中文并指向出错命令自己的帮助。
+    int reportParseError(const CLI::App& app, const CLI::ParseError& error) {
+        std::string topic;
+        for (const auto* command : app.get_subcommands()) {
+            topic = command->get_name();
+        }
+        std::string message = error.what();
+        const auto  detail  = [&message] {
+            const auto colon = message.find(": ");
+            return colon == std::string::npos ? message : message.substr(colon + 2);
+        };
+        if (dynamic_cast<const CLI::ExtrasError*>(&error) != nullptr) {
+            message = "无法识别的参数：" + detail();
+        } else if (dynamic_cast<const CLI::ConversionError*>(&error) != nullptr) {
+            message = "参数值无法转换：" + detail();
+        } else if (dynamic_cast<const CLI::RequiredError*>(&error) != nullptr) {
+            const auto suffix = message.rfind(" is required");
+            message           = message.starts_with("A subcommand")
+                                  ? std::string("缺少子命令")
+                                  : "缺少必需参数：" + (suffix == std::string::npos ? message : message.substr(0, suffix));
+        } else if (dynamic_cast<const CLI::ValidationError*>(&error) != nullptr) {
+            message = "参数值无效：" + message;
+        }
+        return reportUsage(message, topic);
+    }
+
     int helpCommand(const CLI::App& app, const std::string& project, const std::string& topic) {
         enterProject(project);
         // App::help 会转发给已解析的子命令，也就是 help 自己，这里要绕过。
@@ -839,8 +988,11 @@ namespace {
         const auto tools = availableTools();
         const auto tool  = std::ranges::find(tools, topic, &mcp::tool::name);
         if (tool == tools.end()) {
-            std::cerr << "未知命令或工具：" << topic << '\n';
-            return ExitUsage;
+            auto names = commandNames(app);
+            for (const auto& known : tools) {
+                names.push_back(known.name);
+            }
+            return reportUsage("未知命令或工具：" + topic + suggestion(topic, names), "");
         }
         std::cout << mcdk::mcp_tool_help::formatToolHelp(*tool);
         return ExitOk;
@@ -984,6 +1136,13 @@ namespace mcdk::cli {
         call->add_option("--timeout", callOptions.timeoutSeconds, "超时秒数（默认 60）");
 
         try {
+            // 拼错的命令名在 CLI11 里会被报成“缺少子命令”，先自己认出来。
+            if (argc > 1) {
+                const auto first = CLI::narrow(argv[1]);
+                if (!first.starts_with('-') && app.get_subcommand_no_throw(first) == nullptr) {
+                    return reportUsage("未知命令：" + first + suggestion(first, commandNames(app)), "");
+                }
+            }
             app.parse(argc, argv);
 
             if (help->parsed()) {
@@ -1009,7 +1168,10 @@ namespace mcdk::cli {
             }
             return callCommand(callOptions, callTool, callArguments, callArgumentsFile, callOutput);
         } catch (const CLI::ParseError& error) {
-            return app.exit(error) == 0 ? ExitOk : ExitUsage;
+            // --help 这类“错误”的退出码是 0，交给 CLI11 打印帮助。
+            return error.get_exit_code() == 0 ? app.exit(error) : reportParseError(app, error);
+        } catch (const UsageError& error) {
+            return reportUsage(error.what(), error.topic());
         } catch (const std::exception& exception) {
             std::cerr << "[ERROR] " << exception.what() << '\n';
             return ExitConfig;

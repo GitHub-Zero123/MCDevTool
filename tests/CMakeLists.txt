@@ -204,6 +204,15 @@ if(TARGET mcdk_stdio_bridge)
     endif()
 endif()
 
+if(TARGET mcdk)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME cli-usage COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/cli_usage_test.py $<TARGET_FILE:mcdk>)
+        set_tests_properties(cli-usage PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
 if(TARGET mcdk-api)
     add_executable(mcdk_api_test mcdk_api_test.c)
     target_link_libraries(mcdk_api_test PRIVATE mcdk-api)
