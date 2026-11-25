@@ -14,6 +14,7 @@
 #include <mcdk/plugin_declarations.hpp>
 #include <mcdk/session_file.hpp>
 #include <mcdk/session_log.hpp>
+#include <mcdk/version.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -1299,6 +1300,8 @@ namespace mcdk::cli {
 #endif
         CLI::App app{"MCDK 游戏自动化命令行", "mcdk"};
         app.require_subcommand(1);
+        // 版本号只输出一行纯文本，便于脚本直接取用。CLI11 在检查必需子命令之前处理它。
+        app.set_version_flag("-v,--version", std::string(mcdk::kVersion), "输出 mcdk 版本号并退出");
         // 工具列表和退出码自带排版，不能让 CLI11 重新折行。
         app.get_formatter()->enable_footer_formatting(false);
         app.footer(toolListFooter);
@@ -1309,6 +1312,9 @@ namespace mcdk::cli {
         addProjectOption(help, helpProject);
         help->add_option("topic", helpTopic, "命令名或工具名，子命令用空格隔开，如 lane remove");
         help->footer("");
+
+        auto* version = app.add_subcommand("version", "输出 mcdk 版本号，与 --version 相同");
+        version->footer("");
 
         RunOptions runOptions;
         auto*      run = app.add_subcommand("run", "启动游戏，全程不询问、不改配置文件");
@@ -1477,6 +1483,10 @@ namespace mcdk::cli {
 
             if (help->parsed()) {
                 return helpCommand(app, helpProject, helpTopic);
+            }
+            if (version->parsed()) {
+                std::cout << mcdk::kVersion << '\n';
+                return ExitOk;
             }
             if (run->parsed()) {
                 return runCommand(runOptions);
