@@ -1,9 +1,12 @@
-"""mcdk 命令行写错时的行为：退出码 2，提示出错之处并指向对应的帮助。不需要游戏。"""
+"""mcdk 命令行写错时的行为：退出码 2，提示出错之处并指向对应的帮助。另测版本号查询。不需要游戏。"""
+import pathlib
+import re
 import subprocess
 import sys
 import tempfile
 
 MCDK = sys.argv[1]
+VERSION_HEADER = pathlib.Path(__file__).resolve().parent.parent / "tools/mcdk/include/mcdk/version.hpp"
 
 CASES = [
     (["runn"], "未知命令：runn，是不是 run？", "用法见 mcdk help\n"),
@@ -20,11 +23,18 @@ CASES = [
     (["lane", "remove"], "缺少必需参数：--session", "用法见 mcdk help lane remove"),
     (["help", "lane", "nosuch"], "未知命令或工具：lane nosuch", "用法见 mcdk help\n"),
     (["run", "--set", "wrold_name=a"], "wrold_name（是不是 world_name）", "用法见 mcdk help run"),
+    # -v 只属于顶层，不能被子命令吞掉。
+    (["run", "-v"], "无法识别的参数：-v", "用法见 mcdk help run"),
+    (["version", "--bogus"], "无法识别的参数：--bogus", "用法见 mcdk help version"),
 ]
+
+# 这些参数只输出版本号一行，退出码 0。
+VERSION_ARGS = [["-v"], ["--version"], ["version"]]
 
 
 def main():
     failures = []
+    version = re.search(r'kVersion = "([^"]+)"', VERSION_HEADER.read_text(encoding="utf-8")).group(1)
     # 空目录：没有会话、没有插件声明，校验发生在连接游戏之前。
     with tempfile.TemporaryDirectory() as project:
         for args, message, hint in CASES:
@@ -34,6 +44,13 @@ def main():
             stderr = result.stderr.decode("utf-8", "replace").replace("\r\n", "\n")
             if result.returncode != 2 or message not in stderr or hint not in stderr:
                 failures.append(f"{args}: exit={result.returncode} stderr={stderr!r}")
+        for args in VERSION_ARGS:
+            result = subprocess.run(
+                [MCDK, *args], cwd=project, capture_output=True, stdin=subprocess.DEVNULL, timeout=30
+            )
+            stdout = result.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+            if result.returncode != 0 or stdout != version + "\n" or result.stderr:
+                failures.append(f"{args}: exit={result.returncode} stdout={stdout!r} stderr={result.stderr!r}")
     if failures:
         print("FAILED:\n" + "\n".join(failures))
         return 1

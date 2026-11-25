@@ -47,6 +47,8 @@ mcdk help execute_code
 mcdk help lane remove
 ```
 
+查看版本号用 `mcdk -v`、`mcdk --version` 或 `mcdk version`，三者等价，只输出一行版本号（如 `1.6.5`），退出码 0，脚本可以直接取用。版本号格式为 `MAJOR.MINOR.PATCH`，与发版 tag 去掉前缀 `v` 后一致。
+
 工具说明由工具定义直接生成，内置工具和项目插件在 `plugin.json` 中声明的工具都会列出。新增或修改工具后，帮助内容自动更新，不需要另外维护。
 
 插件只能实现 `plugin.json` 里声明过的工具，所以 CLI 不启动游戏也能知道全部插件工具。工具列表按 `<project>/.mcdev.json` 读取；会话如果用 `--config` 或 `--set` 换了插件，`call` 和 `help <工具>` 在工程配置里找不到该工具时，会改问运行中的会话实际发布了哪些工具。

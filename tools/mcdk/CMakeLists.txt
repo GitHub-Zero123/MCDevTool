@@ -1,5 +1,35 @@
 project(MC_DEV_TOOL_MCDK)
 
+# 版本号的唯一真源是 include/mcdk/version.hpp，发版 tag 为 v<版本号>。
+# 常量落后于最近的 tag 说明发版时漏改了。只警告不报错：历史 tag 本身就可能带着落后的常量，
+# 不能因此编不过。没有 git、不在仓库根目录或拿不到 tag（如浅克隆）时跳过。
+set(_mcdk_version_header "${CMAKE_CURRENT_SOURCE_DIR}/include/mcdk/version.hpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mcdk_version_header}")
+file(STRINGS "${_mcdk_version_header}" _mcdk_version_line REGEX "kVersion = \"")
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" MCDK_VERSION "${_mcdk_version_line}")
+if(NOT MCDK_VERSION)
+    message(WARNING "无法从 ${_mcdk_version_header} 读出 kVersion，跳过版本号与 tag 的比对")
+else()
+    message(STATUS "mcdk version: ${MCDK_VERSION}")
+    find_package(Git QUIET)
+    if(GIT_FOUND AND EXISTS "${MC_DEV_TOOL_ROOT_SOURCE_DIR}/.git")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --tags --abbrev=0 --match "v[0-9]*"
+            WORKING_DIRECTORY "${MC_DEV_TOOL_ROOT_SOURCE_DIR}"
+            OUTPUT_VARIABLE _mcdk_latest_tag
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE _mcdk_describe_result
+        )
+        string(REGEX MATCH "^v([0-9]+\\.[0-9]+\\.[0-9]+)" _mcdk_tag_match "${_mcdk_latest_tag}")
+        if(_mcdk_describe_result EQUAL 0 AND _mcdk_tag_match AND MCDK_VERSION VERSION_LESS CMAKE_MATCH_1)
+            message(WARNING
+                "kVersion（${MCDK_VERSION}）落后于最近的 tag ${_mcdk_latest_tag}，"
+                "发版时漏改了 include/mcdk/version.hpp"
+            )
+        endif()
+    endif()
+endif()
 
 set(_mcdk_native_profiler_supported OFF)
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
